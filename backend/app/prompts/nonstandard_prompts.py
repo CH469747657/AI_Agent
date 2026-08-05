@@ -1,0 +1,160 @@
+"""非标准票据 VLM 分析提示词
+
+三种非标类型：支付截图、收据、交易流水单
+每种类型包含：类型确认 + 结构化提取 + 语义一致性校验
+"""
+
+# ===== 类型确认提示词 =====
+NONSTANDARD_TYPE_CONFIRM_PROMPT = """你是一个专业的财务票据分析助手。请分析这张图片，判断票据类型。
+
+可选类型：
+- payment_screenshot: 支付截图（微信/支付宝/银行APP等转账/付款截图）
+- handwritten_receipt: 手写收据/白条
+- printed_receipt: 机打收据/小票（如POS机小票、打印收款凭证）
+- bank_statement: 银行流水/电子回单/交易记录截图
+- other_nonstandard: 其他非标准票据
+
+请返回JSON：
+{
+  "detected_type": "上面其中一个类型",
+  "confidence": 0.0到1.0的置信度,
+  "reason": "判断理由（一句话）"
+}
+
+注意：只返回JSON，不要包含其他文字。"""
+
+# ===== 支付截图提取提示词 =====
+PAYMENT_SCREENSHOT_EXTRACT_PROMPT = """请从这张支付截图/转账凭证中提取以下信息，严格按JSON格式返回：
+{
+  "payment_platform": "支付平台（微信/支付宝/银行APP/其他），无法识别返回null",
+  "payment_method": "支付方式（转账/扫码/代扣/红包/付款等），无法识别返回null",
+  "payer_name": "付款方名称，无法识别返回null",
+  "payer_account": "付款方账号（保留前4后4，中间用*号脱敏），无法识别返回null",
+  "payee_name": "收款方名称，无法识别返回null",
+  "payee_account": "收款方账号（保留前4后4，中间用*号脱敏），无法识别返回null",
+  "amount": "金额，纯数字（单位元），无法识别返回null",
+  "currency": "币种（CNY/USD等），默认CNY",
+  "transaction_time": "交易时间（YYYY-MM-DD HH:mm:ss格式），无法识别返回null",
+  "transaction_id": "交易单号/流水号，无法识别返回null",
+  "transaction_status": "交易状态（成功/处理中/失败），无法识别返回null",
+  "purpose": "交易用途/备注/留言，无法识别返回null",
+  "merchant_name": "商户名称（如有），无法识别返回null"
+}
+
+关键规则：
+1. 金额只取数字，不要包含货币符号（¥、￥等）
+2. 无法识别的字段必须设为null，不要猜测或编造
+3. 账号信息应脱敏处理
+4. 如果截图显示的是支付失败，请如实标注transaction_status为"失败"
+5. 交易时间必须是YYYY-MM-DD HH:mm:ss格式
+6. 只返回JSON，不要包含其他文字"""
+
+# ===== 收据提取提示词（手写/机打/电子） =====
+RECEIPT_EXTRACT_PROMPT = """请从这张收据中提取以下信息，严格按JSON格式返回：
+{
+  "receipt_number": "收据编号，无法识别返回null",
+  "receipt_title": "收据标题（如'收据'、'收款凭证'），无法识别返回null",
+  "issue_date": "开具日期（YYYY-MM-DD格式），无法识别返回null",
+  "payer_name": "交款人/付款方名称，无法识别返回null",
+  "payee_name": "收款人/收款单位名称，无法识别返回null",
+  "amount": "金额，纯数字（单位元），无法识别返回null",
+  "amount_capital": "大写金额（如'叁佰元整'），无法识别返回null",
+  "purpose": "款项用途/事由，无法识别返回null",
+  "item_details": "明细项目列表JSON字符串，如[{\"name\":\"项目名\",\"amount\":\"金额\"}]，无法识别返回null",
+  "receipt_method": "收款方式（现金/转账等），无法识别返回null",
+  "issuer_signature": "开票人/签名，无法识别返回null",
+  "seal_present": "是否有印章（true/false），无法判断返回null",
+  "is_handwritten": "是否手写（true/false），无法判断返回null"
+}
+
+关键规则：
+1. 收据字迹可能模糊，尽力识别，无法辨认的字段设为null
+2. 同时有大小写金额时，两个都要提取
+3. 金额只取数字，不含货币符号
+4. 无法识别的字段必须设为null，不要猜测或编造
+5. 只返回JSON，不要包含其他文字"""
+
+# ===== 银行流水提取提示词 =====
+BANK_STATEMENT_EXTRACT_PROMPT = """请从这张银行流水/交易记录中提取以下信息，严格按JSON格式返回：
+{
+  "bank_name": "银行名称，无法识别返回null",
+  "account_name": "账户名称，无法识别返回null",
+  "account_number": "账号（保留前4后4，中间用*号脱敏），无法识别返回null",
+  "transaction_date": "交易日期（YYYY-MM-DD格式），无法识别返回null",
+  "transaction_type": "交易类型（收入/支出/转账），无法识别返回null",
+  "counterpart_name": "对方户名，无法识别返回null",
+  "counterpart_account": "对方账号（脱敏），无法识别返回null",
+  "amount": "金额，纯数字（正数表示收入，负数表示支出，单位元），无法识别返回null",
+  "balance": "余额，纯数字，无法识别返回null",
+  "transaction_id": "交易流水号，无法识别返回null",
+  "remark": "摘要/备注，无法识别返回null"
+}
+
+关键规则：
+1. 金额正负方向很重要：收入为正数，支出为负数
+2. 如果截图中有多笔交易，优先提取金额最大的或与报销最相关的那一笔
+3. 流水号通常较长，请完整提取
+4. 无法识别的字段必须设为null，不要猜测或编造
+5. 只返回JSON，不要包含其他文字"""
+
+# ===== 语义一致性校验提示词 =====
+NONSTANDARD_CONSISTENCY_CHECK_PROMPT = """请对以下非标准票据提取结果进行语义一致性校验。
+
+票据类型: {receipt_type}
+提取结果: {extracted_fields}
+当前日期: {current_date}
+
+请检查以下维度并返回JSON：
+{{
+  "amount_consistent": true/false,
+  "amount_issue": "金额问题描述，无问题返回null",
+  "date_reasonable": true/false,
+  "date_issue": "日期问题描述，无问题返回null",
+  "info_complete": true/false,
+  "missing_critical_fields": ["缺失的关键字段列表"],
+  "contradictions": ["矛盾描述列表，无矛盾返回空数组"],
+  "suspicious_features": ["可疑特征列表，无则返回空数组"],
+  "risk_level": "low/medium/high",
+  "overall_confidence": 0.0到1.0
+}}
+
+检查要点：
+1. 金额一致性：大小写金额是否匹配？金额是否在合理范围？
+2. 日期合理性：交易日期是否在合理范围？必须早于或等于当前日期({current_date})，晚于当前日期即为异常
+3. 信息完整性：关键字段（金额、日期、交易方）是否都已提取？
+4. 矛盾检测：付款方和收款方是否相同？金额方向是否与交易类型矛盾？
+5. 可疑特征：是否有编辑痕迹、截图拼接、模糊篡改等？
+
+只返回JSON，不要包含其他文字。"""
+
+# ===== 非标分类规则关键词 =====
+NONSTANDARD_CLASSIFY_RULES = {
+    "支付截图": {
+        "差旅交通": ["滴滴", "出租", "高铁", "机票", "打车", "出行", "嘀嗒", "哈啰", "T3出行"],
+        "通讯费": ["话费", "流量", "充值", "移动", "联通", "电信", "手机"],
+        "餐饮": ["美团", "饿了么", "餐", "饭", "食", "肯德基", "麦当劳", "星巴克"],
+        "办公": ["打印", "文具", "快递", "顺丰", "京东", "办公"],
+        "培训费": ["培训", "课程", "考试", "报名"],
+    },
+    "收据": {
+        "办公": ["办公用品", "耗材", "纸张", "打印"],
+        "维修": ["维修", "修", "安装", "维护"],
+        "搬运费": ["搬运", "搬家", "吊装"],
+        "配合费": ["配合", "协调", "工地"],
+    },
+    "交易流水单": {
+        "往来款": ["往来", "借款", "还款", "暂付"],
+        "保证金": ["保证金", "押金", "担保", "投标"],
+        "咨询费": ["咨询", "服务", "代理"],
+    },
+}
+
+# ===== 票据类型到提取Prompt的映射 =====
+EXTRACT_PROMPT_MAP = {
+    "支付截图": PAYMENT_SCREENSHOT_EXTRACT_PROMPT,
+    "收据": RECEIPT_EXTRACT_PROMPT,
+    "交易流水单": BANK_STATEMENT_EXTRACT_PROMPT,
+}
+
+# ===== 非标准票据类型集合 =====
+NONSTANDARD_RECEIPT_TYPES = {"收据", "支付截图", "交易流水单"}

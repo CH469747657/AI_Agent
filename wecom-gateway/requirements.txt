@@ -1,0 +1,6 @@
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+httpx==0.26.0
+redis>=5.0.1
+pycryptodome>=3.20.0
+lxml>=4.9.0

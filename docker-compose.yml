@@ -1,0 +1,83 @@
+services:
+  # ===== 后端 API 服务 =====
+  backend:
+    build: ./backend
+    ports:
+      - "18080:8080"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://reimburse:reimburse123@db:5432/reimbursement
+      - REDIS_URL=redis://redis:6379/0
+      - LLM_PROVIDER=${LLM_PROVIDER:-qwen}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-qwen3-vl-plus}
+      - LLM_TEXT_MODEL=${LLM_TEXT_MODEL:-}
+      - OCR_MAX_WORKERS=2
+      - LLM_MAX_WORKERS=4
+      - UPLOAD_DIR=/app/uploads
+      - REPORT_DIR=/app/reports
+      - VERIFY_PROVIDER=${VERIFY_PROVIDER:-aliyun}
+      - VERIFY_API_KEY=${VERIFY_API_KEY:-}
+      - VERIFY_SECRET_KEY=${VERIFY_SECRET_KEY:-}
+      - ALIYUN_VERIFY_APPCODE=${ALIYUN_VERIFY_APPCODE:-}
+      - ALIYUN_VERIFY_APPSECRET=${ALIYUN_VERIFY_APPSECRET:-}
+      - WECOM_CORP_ID=${WECOM_CORP_ID:-}
+      - WECOM_SECRET=${WECOM_SECRET:-}
+      - JWT_SECRET=${JWT_SECRET:-}
+      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
+      - JWT_EXPIRE_HOURS=${JWT_EXPIRE_HOURS:-24}
+      - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-http://localhost:5173}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./uploads:/app/uploads
+      - ./reports:/app/reports
+    restart: unless-stopped
+
+  # ===== 企业微信回调网关 =====
+  wecom-gateway:
+    build: ./wecom-gateway
+    ports:
+      - "18090:8090"
+    environment:
+      - WECOM_CORP_ID=${WECOM_CORP_ID:-}
+      - WECOM_SECRET=${WECOM_SECRET:-}
+      - WECOM_TOKEN=${WECOM_TOKEN:-}
+      - WECOM_ENCODING_AES_KEY=${WECOM_ENCODING_AES_KEY:-}
+      - WECOM_AGENT_ID=${WECOM_AGENT_ID:-}
+      - WECOM_WEB_BASE=${WECOM_WEB_BASE:-}
+      - BACKEND_URL=http://backend:8080
+      - REDIS_URL=redis://redis:6379/1
+    depends_on:
+      - backend
+      - redis
+    restart: unless-stopped
+
+  # ===== PostgreSQL + pgvector =====
+  db:
+    image: pgvector/pgvector:pg15
+    environment:
+      POSTGRES_DB: reimbursement
+      POSTGRES_USER: reimburse
+      POSTGRES_PASSWORD: reimburse123
+    ports:
+      - "15432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reimburse -d reimbursement"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ===== Redis 缓存/队列 =====
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

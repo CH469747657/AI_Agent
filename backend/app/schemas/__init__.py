@@ -1,0 +1,215 @@
+"""Pydantic 数据验证模型"""
+
+from pydantic import BaseModel, Field
+from datetime import datetime
+
+
+class InvoiceUploadRequest(BaseModel):
+    receipt_type: str = "增值税普通发票"
+    user_id: str
+    user_description: str = Field(..., min_length=1)
+
+
+class InvoiceResponse(BaseModel):
+    id: int
+    receipt_type: str
+    status: str
+    user_id: str | None = None
+    uploader_name: str | None = None  # 上传者显示名（员工: 姓名(工号)，管理员: admin）
+    invoice_number: str | None = None
+    invoice_code: str | None = None
+    check_code: str | None = None
+    issue_date: str | None = None
+    buyer_name: str | None = None
+    buyer_tax_id: str | None = None
+    seller_name: str | None = None
+    seller_tax_id: str | None = None
+    item_name: str | None = None
+    total_with_tax: str | None = None
+    amount: str | None = None
+    tax_amount: str | None = None
+    tax_rate: str | None = None
+    fee_category: str | None = None
+    fee_subcategory: str | None = None
+    project_id: int | None = None
+    diff_confidence: float | None = None
+    diff_conflicts: list | None = None
+    verify_status: str | None = None
+    verify_message: str | None = None
+    duplicate_status: str | None = None
+    user_description: str | None = None
+    reimbursement_id: int | None = None
+    is_nonstandard: bool | None = None
+    vlm_confidence: float | None = None
+    risk_level: str | None = None
+    receipt_detail: dict | None = None
+    processing_pipeline: str | None = None
+    created_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class InvoiceUpdateRequest(BaseModel):
+    fee_category: str | None = None
+    fee_subcategory: str | None = None
+    project_id: int | None = None
+    status: str | None = None
+    user_description: str | None = None
+
+
+class InvoiceVerifyRequest(BaseModel):
+    verify_status: str  # VALID / INVALID / UNABLE_TO_VERIFY
+
+
+class OnlineVerifyResponse(BaseModel):
+    """在线验真接口返回"""
+    invoice_id: int
+    verify_status: str  # VALID / INVALID / PENDING / UNABLE_TO_VERIFY
+    message: str
+    is_verified: bool | None = None  # None=降级未执行, True=验真通过, False=验真未通过
+    invoice_status: str | None = None  # N=正常, Y=已作废, H=已冲红
+    verified_fields: dict | None = None  # 百度返回的票面信息（交叉验证用）
+    invoice: InvoiceResponse | None = None
+
+
+class NoReceiptRequest(BaseModel):
+    user_id: str
+    user_description: str
+    amount: str = ""
+
+
+class ProjectCreateRequest(BaseModel):
+    name: str
+    code: str | None = None
+    member_ids: list[str] = []
+    supplier_names: list[str] = []
+    description: str | None = None
+
+
+class ProjectResponse(BaseModel):
+    id: int
+    name: str
+    code: str | None = None
+    status: str
+
+    class Config:
+        from_attributes = True
+
+
+class ReimbursementCreateRequest(BaseModel):
+    applicant_id: str
+    applicant_name: str | None = None
+    department: str | None = None
+    period: str | None = None
+    reason: str | None = None
+    invoice_ids: list[int] = []
+
+
+class ReimbursementResponse(BaseModel):
+    id: int
+    applicant_id: str
+    applicant_name: str | None = None
+    department: str | None = None
+    period: str | None = None
+    reason: str | None = None
+    total_amount: float | None = None
+    status: str
+    excel_path: str | None = None
+    pdf_path: str | None = None
+    zip_path: str | None = None
+    created_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class ReimbursementLinkRequest(BaseModel):
+    invoice_ids: list[int]
+
+
+class StatisticsResponse(BaseModel):
+    total_invoices: int
+    total_amount: float
+    total_tax: float
+    pending_review: int
+    confirmed: int
+    duplicates: int
+    nonstandard_count: int = 0
+    high_risk_count: int = 0
+
+
+class WeComProcessRequest(BaseModel):
+    """企微网关转发到后端的处理请求"""
+    user_id: str
+    file_data: str = ""  # base64编码
+    file_type: str = "jpg"
+    receipt_type: str = "增值税普通发票"
+    description: str = ""
+
+
+# ===== 员工管理 =====
+
+class EmployeeCreateRequest(BaseModel):
+    wecom_user_id: str | None = None  # 手动创建时可留空，自动生成
+    name: str
+    employee_no: str | None = None
+    department: str | None = None
+    department_id: int | None = None
+    position: str | None = None
+    mobile: str | None = None
+    email: str | None = None
+    status: int = 1  # 1=在职 2=离职
+    password: str | None = None  # 员工端登录密码（明文，存储时哈希）
+
+
+class EmployeeUpdateRequest(BaseModel):
+    name: str | None = None
+    employee_no: str | None = None
+    department: str | None = None
+    department_id: int | None = None
+    position: str | None = None
+    mobile: str | None = None
+    email: str | None = None
+    status: int | None = None
+    password: str | None = None  # 设置/重置密码
+
+
+class EmployeeResponse(BaseModel):
+    id: int
+    wecom_user_id: str
+    name: str
+    employee_no: str | None = None
+    department: str | None = None
+    department_id: int | None = None
+    position: str | None = None
+    mobile: str | None = None
+    email: str | None = None
+    has_password: bool | None = None  # 是否已设置登录密码
+    status: int
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class EmployeeSyncResult(BaseModel):
+    """企微通讯录同步结果"""
+    total: int
+    created: int
+    updated: int
+    errors: list[str] = []
+
+
+# ===== 员工端认证 =====
+
+class PortalLoginRequest(BaseModel):
+    employee_no: str
+    password: str
+
+
+class PortalChangePasswordRequest(BaseModel):
+    employee_no: str
+    old_password: str
+    new_password: str

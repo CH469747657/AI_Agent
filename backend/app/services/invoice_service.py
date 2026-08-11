@@ -97,6 +97,9 @@ class InvoiceService:
                     file_type=file_type,
                     user_description=user_description,
                 )
+
+                # 非标票据处理完成，不自动归集报销单
+                # 归集时机：管理员主动生成或每月21号定时生成
                 return invoice
 
             # 3. 并行执行 OCR + LLM
@@ -314,6 +317,11 @@ class InvoiceService:
                 f"category={invoice.fee_subcategory}, "
                 f"duplicate={invoice.duplicate_status.value}"
             )
+
+            # 12. 发票处理完成，不自动归集报销单
+            # 归集时机：管理员主动调用 /api/reimbursements/aggregate 或每月21号定时任务
+            # 发票以「游离」状态保存（reimbursement_id=None），可随时删除
+
             return invoice
 
         except Exception as e:
@@ -491,6 +499,9 @@ class InvoiceService:
         await self.db.commit()
         await self.db.refresh(invoice)
 
+        # 无票报销不自动归集，与标准/非标票据保持一致
+        # 归集时机：管理员主动生成或每月21号定时生成
+
         return invoice
 
     async def get_invoices_by_user(self, user_id: str, status: str = None) -> list[Invoice]:
@@ -508,8 +519,19 @@ class InvoiceService:
         invoices = list(result.scalars().all())
 
         total = len(invoices)
-        total_amount = sum(float(i.total_with_tax) for i in invoices if i.total_with_tax)
-        total_tax = sum(float(i.tax_amount) for i in invoices if i.tax_amount)
+        def _safe_float(val) -> float:
+            """安全转换金额字符串（如 '500元'、'¥3,840.00'）为浮点数"""
+            if val is None:
+                return 0.0
+            import re
+            cleaned = re.sub(r'[^\d.\-]', '', str(val).replace(',', ''))
+            try:
+                return float(cleaned) if cleaned else 0.0
+            except ValueError:
+                return 0.0
+
+        total_amount = sum(_safe_float(i.total_with_tax) for i in invoices)
+        total_tax = sum(_safe_float(i.tax_amount) for i in invoices)
         pending_review = len([i for i in invoices if i.status == InvoiceStatus.reviewing])
         confirmed = len([i for i in invoices if i.status == InvoiceStatus.confirmed])
         duplicates = len([i for i in invoices if i.duplicate_status == DuplicateStatus.duplicate])
@@ -526,3 +548,80 @@ class InvoiceService:
             "nonstandard_count": nonstandard_count,
             "high_risk_count": high_risk_count,
         }
+
+    # ============================================================
+    # 删除发票（硬删除 — 物理删除记录 + 关联数据 + 原始文件）
+    # ============================================================
+
+    async def delete_invoice(
+        self,
+        invoice_id: int,
+        user_id: str | None = None,
+    ) -> dict:
+        """删除发票及其关联的 OCR/LLM 结果
+
+        仅供「未关联报销单」的发票删除（已提交报销单的发票不允许删除）。
+
+        Args:
+            invoice_id: 发票 ID
+            user_id: 可选的用户 ID，传入则校验归属归属
+
+        Returns:
+            {"message": "发票 #N 已删除", "deleted": True}
+
+        Raises:
+            HTTPException: 404 不存在 / 403 无权操作 / 409 已关联报销单
+        """
+        from fastapi import HTTPException
+
+        result = await self.db.execute(
+            select(Invoice).where(Invoice.id == invoice_id)
+        )
+        invoice = result.scalars().first()
+        if not invoice:
+            raise HTTPException(status_code=404, detail="发票不存在")
+
+        # 归属校验（user_id 传入时才校验）
+        if user_id and invoice.user_id != user_id:
+            raise HTTPException(status_code=403, detail="无权操作该发票")
+
+        # 关联报销单检查 — 已关联的不允许删除
+        if invoice.reimbursement_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="该发票已关联报销单，无法删除。请先从报销单中移除。",
+            )
+
+        # 删除关联的 OCR / LLM 结果
+        ocr_results = await self.db.execute(
+            select(OcrResult).where(OcrResult.invoice_id == invoice_id)
+        )
+        for ocr in ocr_results.scalars().all():
+            await self.db.delete(ocr)
+
+        llm_results = await self.db.execute(
+            select(LlmResult).where(LlmResult.invoice_id == invoice_id)
+        )
+        for llm in llm_results.scalars().all():
+            await self.db.delete(llm)
+
+        # 删除关联的报销单明细行（reimbursement_items）并在有变更时重算报销单
+        from app.models.reimbursement import ReimbursementItem
+        from app.services.aggregation_service import detach_invoice_from_cycle
+        affected_reimb = await detach_invoice_from_cycle(self.db, invoice)
+        if affected_reimb:
+            await self.db.commit()  # 保存重算结果
+
+        # 删除原始文件
+        if invoice.file_path and os.path.exists(invoice.file_path):
+            try:
+                os.remove(invoice.file_path)
+            except OSError:
+                pass  # 文件删除失败不阻塞
+
+        # 删除发票记录
+        await self.db.delete(invoice)
+        await self.db.commit()
+
+        logger.info("Invoice deleted: id=%s user=%s", invoice_id, user_id or "N/A")
+        return {"message": f"发票 #{invoice_id} 已删除", "deleted": True}

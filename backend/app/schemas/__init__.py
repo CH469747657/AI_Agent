@@ -1,7 +1,7 @@
 """Pydantic 数据验证模型"""
 
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import datetime, date
 
 
 class InvoiceUploadRequest(BaseModel):
@@ -20,6 +20,8 @@ class InvoiceResponse(BaseModel):
     invoice_code: str | None = None
     check_code: str | None = None
     issue_date: str | None = None
+    expense_date: date | None = None  # 费用发生日期（三级判定后回填）
+    expense_date_source: str | None = None  # note/issue_date/receipt_date/upload_time
     buyer_name: str | None = None
     buyer_tax_id: str | None = None
     seller_name: str | None = None
@@ -114,7 +116,17 @@ class ReimbursementResponse(BaseModel):
     period: str | None = None
     reason: str | None = None
     total_amount: float | None = None
+    expense_total: float | None = None
+    subsidy_total: float | None = None
     status: str
+    cycle_start: date | None = None
+    cycle_end: date | None = None
+    cycle_key: str | None = None
+    auto_generated: bool = False
+    is_cycle_locked: bool = False
+    locked_at: datetime | None = None
+    submitted_at: datetime | None = None
+    confirmed_at: datetime | None = None
     excel_path: str | None = None
     pdf_path: str | None = None
     zip_path: str | None = None
@@ -124,8 +136,55 @@ class ReimbursementResponse(BaseModel):
         from_attributes = True
 
 
+class ReimbursementItemResponse(BaseModel):
+    """报销单明细行"""
+    id: int
+    invoice_id: int | None = None
+    item_date: date | None = None
+    item_date_source: str | None = None
+    weekday: int | None = None
+    fee_category: str | None = None
+    fee_subcategory: str | None = None
+    amount: float
+    description: str | None = None
+    is_late_charge: bool = False
+    intended_cycle_key: str | None = None
+    sort_order: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class ReimbursementDaySubsidyResponse(BaseModel):
+    """日补贴记录"""
+    id: int
+    subsidy_date: date
+    weekday: int | None = None
+    day_type: str | None = None
+    base_rate: float | None = None
+    subsidy_amount: float
+    included: bool = True
+    exclude_reason: str | None = None
+    trigger_invoice_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
 class ReimbursementLinkRequest(BaseModel):
     invoice_ids: list[int]
+
+
+class SubsidyToggleRequest(BaseModel):
+    """手动切换日补贴计入/取消"""
+    subsidy_date: date
+    included: bool
+    exclude_reason: str | None = None
+
+
+class AggregateRequest(BaseModel):
+    """批量归集游离发票到报销单"""
+    user_id: str | None = None  # None=全公司，指定则只归集该用户
 
 
 class StatisticsResponse(BaseModel):

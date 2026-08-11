@@ -5,7 +5,8 @@ services:
     ports:
       - "18080:8080"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://reimburse:reimburse123@db:5432/reimbursement
+      - DATABASE_URL=postgresql+asyncpg://reimburse:${DB_PASSWORD:-reimburse123}@db:5432/reimbursement
+      - DB_PASSWORD=${DB_PASSWORD:-reimburse123}
       - REDIS_URL=redis://redis:6379/0
       - LLM_PROVIDER=${LLM_PROVIDER:-qwen}
       - LLM_API_KEY=${LLM_API_KEY:-}
@@ -15,6 +16,7 @@ services:
       - LLM_MAX_WORKERS=4
       - UPLOAD_DIR=/app/uploads
       - REPORT_DIR=/app/reports
+      - COMPANY_NAME=${COMPANY_NAME:-常州华一防静电活动地板有限公司}
       - VERIFY_PROVIDER=${VERIFY_PROVIDER:-aliyun}
       - VERIFY_API_KEY=${VERIFY_API_KEY:-}
       - VERIFY_SECRET_KEY=${VERIFY_SECRET_KEY:-}
@@ -61,13 +63,13 @@ services:
     environment:
       POSTGRES_DB: reimbursement
       POSTGRES_USER: reimburse
-      POSTGRES_PASSWORD: reimburse123
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-reimburse123}
     ports:
       - "15432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U reimburse -d reimbursement"]
+      test: ["CMD-SHELL", "pg_isready -U reimburse -d reimbursement -q"]
       interval: 5s
       timeout: 5s
       retries: 10

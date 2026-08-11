@@ -5,9 +5,8 @@ import {
   Receipt,
   UploadSimple,
   Stack,
-  FileText,
-  FolderOpen,
   Users,
+  GearSix,
 } from "@phosphor-icons/react";
 
 const navItems = [
@@ -15,9 +14,8 @@ const navItems = [
   { to: "/invoices", label: "发票列表", icon: Receipt },
   { to: "/upload", label: "上传发票", icon: UploadSimple },
   { to: "/reimbursements", label: "报销单管理", icon: Stack },
-  { to: "/reports", label: "报表下载", icon: FileText },
-  { to: "/projects", label: "项目管理", icon: FolderOpen },
   { to: "/employees", label: "员工管理", icon: Users },
+  { to: "/settings", label: "LLM 设置", icon: GearSix },
 ];
 
 export function Sidebar() {

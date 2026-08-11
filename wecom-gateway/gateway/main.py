@@ -137,22 +137,46 @@ async def receive_message(
 # ====================================================================
 
 async def _dispatch_message(msg_dict: dict, user_id: str):
-    """消息分发调度器"""
+    """消息分发调度器
+
+    方案B：wecom-gateway 退化为纯消息转发层，
+    所有消息统一走后端 /api/dialog/message 对话引擎处理。
+    保留旧路径作为 fallback（环境变量 DIALOG_ENGINE_MODE=legacy 时启用）。
+    """
     try:
         msg_type = msg_dict.get("MsgType", "")
+        mode = os.getenv("DIALOG_ENGINE_MODE", "dialog")  # dialog | legacy
 
-        if msg_type == "image":
-            await _handle_image(msg_dict, user_id)
-        elif msg_type == "text":
-            await _handle_text(msg_dict, user_id)
-        elif msg_type == "voice":
-            await _handle_voice(msg_dict, user_id)  # 预留
-        elif msg_type == "event":
-            await _handle_event(msg_dict, user_id)
+        if mode == "dialog":
+            # 方案B：统一走后端对话引擎
+            if msg_type == "image":
+                await _handle_image_via_dialog(msg_dict, user_id)
+            elif msg_type == "file":
+                await _handle_file_via_dialog(msg_dict, user_id)
+            elif msg_type == "text":
+                await _handle_text_via_dialog(msg_dict, user_id)
+            elif msg_type == "voice":
+                await _handle_voice_via_dialog(msg_dict, user_id)
+            elif msg_type == "event":
+                await _handle_event(msg_dict, user_id)
+            else:
+                await wecom_client.send_text(
+                    user_id, f"暂不支持 {msg_type} 类型的消息，请发送图片或文字。"
+                )
         else:
-            await wecom_client.send_text(
-                user_id, f"暂不支持 {msg_type} 类型的消息，请发送图片或文字。"
-            )
+            # 旧模式（legacy）：保留原有逻辑
+            if msg_type == "image":
+                await _handle_image(msg_dict, user_id)
+            elif msg_type == "text":
+                await _handle_text(msg_dict, user_id)
+            elif msg_type == "voice":
+                await _handle_voice(msg_dict, user_id)
+            elif msg_type == "event":
+                await _handle_event(msg_dict, user_id)
+            else:
+                await wecom_client.send_text(
+                    user_id, f"暂不支持 {msg_type} 类型的消息，请发送图片或文字。"
+                )
     except Exception as e:
         logger.error(f"消息处理异常: {e}", exc_info=True)
         await wecom_client.send_text(
@@ -161,33 +185,33 @@ async def _dispatch_message(msg_dict: dict, user_id: str):
 
 
 async def _handle_image(msg_dict: dict, user_id: str):
-    """处理图片消息 → 票据识别"""
+    """处理图片消息 → 票据识别（legacy模式）"""
     media_id = msg_dict.get("MediaId", "")
 
     # 先回复"正在处理"
-    await wecom_client.send_text(user_id, "📋 正在识别票据，请稍候...")
+    await wecom_client.send_text(user_id, "正在识别票据，请稍候...")
 
     # 下载企微媒体文件
     file_data = await wecom_client.download_media(media_id)
     file_b64 = base64.b64encode(file_data).decode()
 
-    # 调用后端处理API
+    # 调用后端处理API — 注意：此处不再硬编码 receipt_type 和 description
     try:
         resp = await backend.post(
             "/api/invoices/wecom-process",
             json={
                 "user_id": user_id,
                 "file_data": file_b64,
-                "file_type": "jpg",
-                "receipt_type": "增值税普通发票",
-                "description": "",
+                "file_type": "jpg",  # 企微图片消息固定为 jpg
+                "receipt_type": "",  # 不硬编码，让后端自动识别
+                "description": "",   # 不硬编码，走对话引擎追问
             },
         )
         resp.raise_for_status()
         result = resp.json()
     except Exception as e:
         logger.error(f"后端处理失败: {e}")
-        await wecom_client.send_text(user_id, "❌ 票据处理失败，请重新发送或稍后重试。")
+        await wecom_client.send_text(user_id, "票据处理失败，请重新发送或稍后重试。")
         return
 
     # 根据处理结果展示
@@ -381,6 +405,181 @@ async def _check_pending_action(user_id: str, result: dict):
     else:
         # 正常完成，加入批量
         await session_mgr.add_to_batch(user_id, result["id"])
+
+
+# ====================================================================
+# 方案B：通过后端对话引擎处理（/api/dialog/message）
+# ====================================================================
+
+async def _handle_text_via_dialog(msg_dict: dict, user_id: str):
+    """方案B：文字消息 → 后端对话引擎统一处理"""
+    content = msg_dict.get("Content", "").strip()
+    if not content:
+        return
+
+    try:
+        resp = await backend.post(
+            "/api/dialog/message",
+            json={
+                "user_id": user_id,
+                "text": content,
+                "role": _resolve_user_role(user_id),
+            },
+        )
+        resp.raise_for_status()
+        result = resp.json()
+    except Exception as e:
+        logger.error(f"对话引擎调用失败: {e}")
+        # fallback 到旧逻辑
+        await _handle_text(msg_dict, user_id)
+        return
+
+    # 将对话引擎的回复推送给用户
+    text = result.get("text", "")
+    if text:
+        # Markdown 表格用 markdown 格式推送，纯文本用 text
+        if "|" in text and "---" in text:
+            await wecom_client.send_markdown(user_id, text)
+        else:
+            await wecom_client.send_text(user_id, text)
+
+    # 处理快捷回复（如有）
+    quick_replies = result.get("quick_replies", [])
+    if quick_replies:
+        # 企微不支持快捷回复按钮，用文本提示
+        hints = " | ".join(f"[{r}]" for r in quick_replies[:4])
+        await wecom_client.send_text(user_id, f"快捷回复：{hints}")
+
+
+async def _handle_image_via_dialog(msg_dict: dict, user_id: str):
+    """方案B：图片消息 → 下载 → 转发 base64 到对话引擎"""
+    media_id = msg_dict.get("MediaId", "")
+
+    # 先回复"正在处理"
+    await wecom_client.send_text(user_id, "正在识别票据，请稍候...")
+
+    # 下载企微媒体文件
+    try:
+        file_data = await wecom_client.download_media(media_id)
+        file_b64 = base64.b64encode(file_data).decode()
+    except Exception as e:
+        logger.error(f"下载媒体文件失败: {e}")
+        await wecom_client.send_text(user_id, "下载图片失败，请重新发送。")
+        return
+
+    # 调用对话引擎
+    try:
+        resp = await backend.post(
+            "/api/dialog/message",
+            json={
+                "user_id": user_id,
+                "text": "",
+                "role": _resolve_user_role(user_id),
+                "has_attachment": True,
+                "attachment_base64": file_b64,
+                "attachment_file_type": "jpg",
+            },
+        )
+        resp.raise_for_status()
+        result = resp.json()
+    except Exception as e:
+        logger.error(f"对话引擎处理图片失败: {e}")
+        # fallback 到旧逻辑
+        msg_dict["MediaId"] = media_id  # 确保 media_id 存在
+        await _handle_image(msg_dict, user_id)
+        return
+
+    # 将对话引擎的回复推送给用户
+    text = result.get("text", "")
+    if text:
+        if "|" in text and "---" in text:
+            await wecom_client.send_markdown(user_id, text)
+        else:
+            await wecom_client.send_text(user_id, text)
+
+
+async def _handle_file_via_dialog(msg_dict: dict, user_id: str):
+    """方案B：文件消息（PDF/OFD等）→ 下载 → 转发 base64 到对话引擎
+
+    企微文件消息 MsgType="file"，含 MediaId 和 FileName。
+    旧版 wecom-gateway 不处理 file 消息，这是新增功能。
+    """
+    media_id = msg_dict.get("MediaId", "")
+    file_name = msg_dict.get("FileName", "unknown")
+    file_ext = os.path.splitext(file_name)[1].lower().lstrip(".")
+
+    # 映射文件扩展名到 file_type
+    file_type_map = {
+        "pdf": "pdf",
+        "ofd": "ofd",
+        "jpg": "jpg", "jpeg": "jpg", "png": "png", "webp": "webp",
+    }
+    file_type = file_type_map.get(file_ext, "pdf")  # 默认当 pdf 处理
+
+    await wecom_client.send_text(user_id, f"正在处理文件 {file_name}，请稍候...")
+
+    # 下载企微媒体文件
+    try:
+        file_data = await wecom_client.download_media(media_id)
+        file_b64 = base64.b64encode(file_data).decode()
+    except Exception as e:
+        logger.error(f"下载文件失败: {e}")
+        await wecom_client.send_text(user_id, "文件下载失败，请重新发送。")
+        return
+
+    # 调用对话引擎
+    try:
+        resp = await backend.post(
+            "/api/dialog/message",
+            json={
+                "user_id": user_id,
+                "text": "",
+                "role": _resolve_user_role(user_id),
+                "has_attachment": True,
+                "attachment_base64": file_b64,
+                "attachment_file_type": file_type,
+            },
+        )
+        resp.raise_for_status()
+        result = resp.json()
+    except Exception as e:
+        logger.error(f"对话引擎处理文件失败: {e}")
+        await wecom_client.send_text(user_id, "文件处理失败，请重新发送或联系管理员。")
+        return
+
+    text = result.get("text", "")
+    if text:
+        if "|" in text and "---" in text:
+            await wecom_client.send_markdown(user_id, text)
+        else:
+            await wecom_client.send_text(user_id, text)
+
+
+async def _handle_voice_via_dialog(msg_dict: dict, user_id: str):
+    """方案B：语音消息 → 识别转文字 → 对话引擎处理"""
+    recognition = msg_dict.get("Recognition", "").strip()
+    if recognition:
+        logger.info(f"Voice recognition from {user_id}: {recognition}")
+        msg_dict["Content"] = recognition
+        await _handle_text_via_dialog(msg_dict, user_id)
+    else:
+        await wecom_client.send_text(
+            user_id,
+            "未识别到语音内容。请发送文字消息，或联系管理员在企业管理后台开启语音识别功能后重试。"
+        )
+
+
+def _resolve_user_role(user_id: str) -> str:
+    """解析用户角色（方案B：对话引擎需要角色信息）
+
+    默认返回 employee；管理员角色通过环境变量 ADMIN_USER_IDS 配置。
+    后续可对接企微通讯录API获取真实角色。
+    """
+    admin_ids = os.getenv("ADMIN_USER_IDS", "").split(",")
+    admin_ids = [s.strip() for s in admin_ids if s.strip()]
+    if user_id in admin_ids:
+        return "admin"
+    return "employee"
 
 
 async def _handle_category_reply(user_id: str, content: str, state: dict):

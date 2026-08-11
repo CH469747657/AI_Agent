@@ -18,6 +18,8 @@ from app.schemas import (
     ReimbursementCreateRequest,
     ReimbursementResponse,
     ReimbursementLinkRequest,
+    SubsidyToggleRequest,
+    AggregateRequest,
 )
 from app.services import reimbursement_service as svc
 
@@ -73,40 +75,9 @@ async def list_reimbursements(
 
 @router.get("/{reimbursement_id}")
 async def get_reimbursement(reimbursement_id: int, db: AsyncSession = Depends(get_db)):
-    """获取报销单详情（含附件列表）"""
+    """获取报销单详情（含明细行、日补贴、附件）"""
     reimbursement = await svc.get_reimbursement_or_404(db, reimbursement_id)
-
-    att_result = await db.execute(
-        select(ReimbursementAttachment)
-        .where(ReimbursementAttachment.reimbursement_id == reimbursement_id)
-        .order_by(ReimbursementAttachment.created_at.desc())
-    )
-    attachments = list(att_result.scalars().all())
-
-    return {
-        "id": reimbursement.id,
-        "applicant_id": reimbursement.applicant_id,
-        "applicant_name": reimbursement.applicant_name,
-        "department": reimbursement.department,
-        "period": reimbursement.period,
-        "reason": reimbursement.reason,
-        "total_amount": reimbursement.total_amount,
-        "status": reimbursement.status.value,
-        "excel_path": reimbursement.excel_path,
-        "pdf_path": reimbursement.pdf_path,
-        "zip_path": reimbursement.zip_path,
-        "created_at": reimbursement.created_at.isoformat() if reimbursement.created_at else None,
-        "attachments": [
-            {
-                "id": a.id,
-                "filename": a.filename,
-                "file_size": a.file_size,
-                "file_type": a.file_type,
-                "created_at": a.created_at.isoformat() if a.created_at else None,
-            }
-            for a in attachments
-        ],
-    }
+    return await svc.serialize_reimbursement_detail(db, reimbursement, include_invoices=False)
 
 
 @router.put("/{reimbursement_id}/invoices", response_model=ReimbursementResponse)
@@ -141,6 +112,101 @@ async def submit_reimbursement(reimbursement_id: int, db: AsyncSession = Depends
 async def withdraw_reimbursement(reimbursement_id: int, db: AsyncSession = Depends(get_db)):
     """撤回报销单（SUBMITTED → DRAFT）"""
     return await svc.withdraw_reimbursement(db, reimbursement_id)
+
+
+@router.put("/{reimbursement_id}/approve", response_model=ReimbursementResponse)
+async def approve_reimbursement(reimbursement_id: int, db: AsyncSession = Depends(get_db)):
+    """审核通过（SUBMITTED → REVIEWED）"""
+    return await svc.approve_reimbursement(db, reimbursement_id)
+
+
+@router.put("/{reimbursement_id}/reject", response_model=ReimbursementResponse)
+async def reject_reimbursement(
+    reimbursement_id: int,
+    reason: str = "",
+    db: AsyncSession = Depends(get_db),
+):
+    """驳回报销单（SUBMITTED → DRAFT）"""
+    return await svc.reject_reimbursement(db, reimbursement_id, reason=reason)
+
+
+@router.put("/{reimbursement_id}/reimburse", response_model=ReimbursementResponse)
+async def reimburse_reimbursement(reimbursement_id: int, db: AsyncSession = Depends(get_db)):
+    """标记已报销（SUBMITTED/REVIEWED → REIMBURSED）"""
+    return await svc.mark_reimbursed(db, reimbursement_id)
+
+
+@router.put("/{reimbursement_id}/subsidy/toggle")
+async def toggle_subsidy(
+    reimbursement_id: int,
+    request: SubsidyToggleRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """手动切换某天的补贴计入/取消（仅草稿状态）"""
+    return await svc.toggle_day_subsidy(
+        db,
+        reimbursement_id,
+        request.subsidy_date,
+        included=request.included,
+        exclude_reason=request.exclude_reason,
+    )
+
+
+@router.post("/cycle/lock/{cycle_key}")
+async def lock_cycle(
+    cycle_key: str,
+    auto_submit: bool = True,
+    db: AsyncSession = Depends(get_db),
+):
+    """手动封账指定周期（管理端）
+
+    - auto_submit=True 时自动提交该周期的 DRAFT 报销单
+    - 已封账的周期重复封账无副作用（幂等）
+    """
+    from app.services.cycle_lock_service import lock_cycle as do_lock
+    return await do_lock(db, cycle_key, auto_submit_drafts=auto_submit)
+
+
+@router.get("/cycle/status/{cycle_key}")
+async def cycle_lock_status(
+    cycle_key: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """查询某周期封账状态"""
+    from app.services.cycle_lock_service import get_cycle_lock_status
+    return await get_cycle_lock_status(db, cycle_key)
+
+
+@router.post("/aggregate")
+async def aggregate_invoices(
+    request: AggregateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """批量归集游离发票到报销单（管理端）
+
+    将所有未关联报销单的游离发票按费用发生日归入对应周期报销单。
+    - user_id=None: 归集全公司游离发票
+    - user_id="xxx": 只归集指定用户的游离发票
+
+    归集后可继续提交/审批报销单。
+    """
+    from app.services.aggregation_service import aggregate_pending_invoices
+    result = await aggregate_pending_invoices(db, user_id=request.user_id)
+
+    if result["total"] == 0:
+        return {
+            "message": "没有需要归集的游离发票",
+            **result,
+        }
+
+    return {
+        "message": (
+            f"归集完成：共 {result['total']} 张游离发票，"
+            f"成功归集 {result['attached']} 张到 {len(result['reimb_ids'])} 份报销单"
+            + (f"，{len(result['errors'])} 张失败" if result["errors"] else "")
+        ),
+        **result,
+    }
 
 
 @router.delete("/{reimbursement_id}")

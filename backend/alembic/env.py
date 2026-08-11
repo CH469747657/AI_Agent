@@ -17,10 +17,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import settings  # noqa: E402
 from app.database import Base  # noqa: E402
 from app.models import invoice, project, reimbursement, employee  # noqa: E402, F401
+from app.models import settings as _settings_model  # noqa: E402, F401  (避免覆盖 config.settings)
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    try:
+        fileConfig(config.config_file_name)
+    except Exception:
+        # logging 配置不是关键路径，跳过即可
+        pass
 
 target_metadata = Base.metadata
 
@@ -71,6 +76,9 @@ async def run_migrations_online_async() -> None:
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
+        # SQLAlchemy 2.0 异步连接不会自动 commit，
+        # 必须显式提交，否则 alembic_version 表和迁移结果会被回滚
+        await connection.commit()
 
     await connectable.dispose()
 

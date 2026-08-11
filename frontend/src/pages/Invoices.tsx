@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useEffect, useState, useMemo, useCallback } from "react";
+import { useDebounce } from "../hooks/useDebounce";
 import {
   Receipt,
   Warning,
@@ -68,6 +69,7 @@ export function Invoices() {
   const [dupFilter, setDupFilter] = useState("");
   const [receiptTypeFilter, setReceiptTypeFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearch = useDebounce(searchQuery, 300);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -98,30 +100,30 @@ export function Invoices() {
     fetchInvoices();
   }, [fetchInvoices]);
 
-  // Client-side search + filter
-  const filtered = useMemo(() => {
-    return invoices.filter((inv) => {
-      if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        const matchNum = inv.invoice_number?.toLowerCase().includes(q) ?? false;
-        const matchSeller = inv.seller_name?.toLowerCase().includes(q) ?? false;
-        const matchDate = inv.issue_date?.includes(searchQuery) ?? false;
-        if (!matchNum && !matchSeller && !matchDate) return false;
-      }
-      if (verifyFilter && inv.verify_status !== verifyFilter) return false;
-      if (dupFilter && inv.duplicate_status !== dupFilter) return false;
-      if (receiptTypeFilter === "standard" && inv.is_nonstandard) return false;
-      if (receiptTypeFilter === "nonstandard" && !inv.is_nonstandard) return false;
-      return true;
-    });
-  }, [invoices, searchQuery, verifyFilter, dupFilter, receiptTypeFilter]);
+// Client-side search + filter
+const filtered = useMemo(() => {
+  return invoices.filter((inv) => {
+    if (debouncedSearch) {
+      const q = debouncedSearch.toLowerCase();
+      const matchNum = inv.invoice_number?.toLowerCase().includes(q) ?? false;
+      const matchSeller = inv.seller_name?.toLowerCase().includes(q) ?? false;
+      const matchDate = inv.issue_date?.includes(debouncedSearch) ?? false;
+      if (!matchNum && !matchSeller && !matchDate) return false;
+    }
+    if (verifyFilter && inv.verify_status !== verifyFilter) return false;
+    if (dupFilter && inv.duplicate_status !== dupFilter) return false;
+    if (receiptTypeFilter === "standard" && inv.is_nonstandard) return false;
+    if (receiptTypeFilter === "nonstandard" && !inv.is_nonstandard) return false;
+    return true;
+  });
+}, [invoices, debouncedSearch, verifyFilter, dupFilter, receiptTypeFilter]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const paged = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   useEffect(() => {
-    setCurrentPage(1);
-  }, [statusFilter, verifyFilter, dupFilter, receiptTypeFilter, searchQuery]);
+  setCurrentPage(1);
+}, [statusFilter, verifyFilter, dupFilter, receiptTypeFilter, debouncedSearch]);
 
   const toggleSelect = useCallback((id: number) => {
     setSelectedIds((prev) => {
@@ -141,13 +143,15 @@ export function Invoices() {
 
   const clearSelection = () => setSelectedIds(new Set());
 
-  // 提取所有上传者（去重）
+  // 提取所有上传者（去重）— 按 user_id 去重，显示名来自后端 uploader_name
   const uploaderOptions = useMemo(() => {
     const map = new Map<string, string>();
     invoices.forEach((inv) => {
-      const name = inv.uploader_name || "admin";
-      const uid = inv.user_id || "admin";
-      if (!map.has(uid)) map.set(uid, name);
+      const uid = inv.user_id;
+      if (!uid) return; // 跳过无 user_id 的记录
+      if (!map.has(uid)) {
+        map.set(uid, inv.uploader_name || uid);
+      }
     });
     return Array.from(map.entries()).map(([uid, name]) => ({ value: uid, label: name }));
   }, [invoices]);

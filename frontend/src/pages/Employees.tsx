@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useState, useCallback } from "react";
+import { useDebounce } from "../hooks/useDebounce";
 import {
   Users,
   Plus,
@@ -15,12 +16,14 @@ import {
 import { employeeApi } from "../api/client";
 import type { Employee, EmployeeSyncResult, EmployeeCreate, EmployeeUpdate } from "../types";
 import { EmptyState } from "../components/EmptyState";
+import { ConfirmModal } from "../components/ConfirmModal";
 
 export function Employees() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [keyword, setKeyword] = useState("");
+  const debouncedKeyword = useDebounce(keyword, 300);
   const [statusFilter, setStatusFilter] = useState<number | undefined>(undefined);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Employee | null>(null);
@@ -41,23 +44,20 @@ export function Employees() {
   const [resetPassword, setResetPassword] = useState("");
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Employee | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
     employeeApi
-      .list({ keyword: keyword || undefined, status: statusFilter })
+      .list({ keyword: debouncedKeyword || undefined, status: statusFilter })
       .then(setEmployees)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [keyword, statusFilter]);
+  }, [debouncedKeyword, statusFilter]);
 
   useEffect(load, [load]);
-
-  // 防抖搜索
-  useEffect(() => {
-    const timer = setTimeout(load, 300);
-    return () => clearTimeout(timer);
-  }, [keyword, statusFilter, load]);
 
   const resetForm = () => {
     setForm({
@@ -129,13 +129,18 @@ export function Employees() {
     }
   };
 
-  const handleDelete = async (emp: Employee) => {
-    if (!confirm(`确认删除员工「${emp.name}」吗？`)) return;
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError(null);
     try {
-      await employeeApi.delete(emp.id);
+      await employeeApi.delete(deleteTarget.id);
+      setDeleteTarget(null);
       load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "删除失败");
+      setDeleteError(e instanceof Error ? e.message : "删除失败");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -361,7 +366,10 @@ export function Employees() {
                         <Key size={16} />
                       </button>
                       <button
-                        onClick={() => handleDelete(emp)}
+                        onClick={() => {
+                          setDeleteTarget(emp);
+                          setDeleteError(null);
+                        }}
                         className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
                         title="删除"
                       >
@@ -581,6 +589,19 @@ export function Employees() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* 删除确认弹窗 */}
+      <ConfirmModal
+        open={!!deleteTarget}
+        title="删除员工"
+        description={`确定要删除员工「${deleteTarget?.name ?? ""}」吗？此操作不可撤销。`}
+        confirmText="确认删除"
+        variant="danger"
+        loading={deleting}
+        error={deleteError}
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }

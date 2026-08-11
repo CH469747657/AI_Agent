@@ -105,22 +105,32 @@ async def list_invoices(
     invoices = list(result.scalars().all())
 
     # 批量查员工表，构建 user_id → uploader_name 映射
+    # 同时按 employee_no 和 wecom_user_id 匹配，覆盖更多场景
     user_ids = {inv.user_id for inv in invoices if inv.user_id}
     uploader_map: dict[str, str] = {}
     if user_ids:
+        from sqlalchemy import or_
         emp_result = await db.execute(
-            select(Employee.employee_no, Employee.name).where(
-                Employee.employee_no.in_(user_ids)
+            select(Employee.employee_no, Employee.name, Employee.wecom_user_id).where(
+                or_(
+                    Employee.employee_no.in_(user_ids),
+                    Employee.wecom_user_id.in_(user_ids),
+                )
             )
         )
-        for emp_no, emp_name in emp_result.all():
-            uploader_map[emp_no] = f"{emp_name}（{emp_no}）"
+        for emp_no, emp_name, wecom_uid in emp_result.all():
+            display = f"{emp_name}（{emp_no}）" if emp_no else emp_name
+            if emp_no:
+                uploader_map[emp_no] = display
+            if wecom_uid:
+                uploader_map[wecom_uid] = display
 
     # 组装返回：手动构建 dict 以附加 uploader_name
+    # 未匹配到员工记录的 user_id 直接显示原始 ID，不再统一回退为 "admin"
     resp = []
     for inv in invoices:
         item = InvoiceResponse.model_validate(inv)
-        item.uploader_name = uploader_map.get(inv.user_id, "admin")
+        item.uploader_name = uploader_map.get(inv.user_id, inv.user_id or "未知")
         resp.append(item)
     return resp
 
@@ -145,17 +155,25 @@ async def export_invoices(
     result = await db.execute(query)
     invoices = list(result.scalars().all())
 
-    # 构建 uploader_map
+    # 构建 uploader_map — 同时按 employee_no 和 wecom_user_id 匹配
     user_ids = {inv.user_id for inv in invoices if inv.user_id}
     uploader_map: dict[str, str] = {}
     if user_ids:
+        from sqlalchemy import or_ as _or
         emp_result = await db.execute(
-            select(Employee.employee_no, Employee.name).where(
-                Employee.employee_no.in_(user_ids)
+            select(Employee.employee_no, Employee.name, Employee.wecom_user_id).where(
+                _or(
+                    Employee.employee_no.in_(user_ids),
+                    Employee.wecom_user_id.in_(user_ids),
+                )
             )
         )
-        for emp_no, emp_name in emp_result.all():
-            uploader_map[emp_no] = f"{emp_name}（{emp_no}）"
+        for emp_no, emp_name, wecom_uid in emp_result.all():
+            display = f"{emp_name}（{emp_no}）" if emp_no else emp_name
+            if emp_no:
+                uploader_map[emp_no] = display
+            if wecom_uid:
+                uploader_map[wecom_uid] = display
 
     # 枚举翻译
     def translate_verify(v: VerifyStatus | None) -> str:
@@ -232,7 +250,7 @@ async def export_invoices(
             translate_verify(inv.verify_status),
             translate_dup(inv.duplicate_status),
             translate_status(inv.status),
-            uploader_map.get(inv.user_id, "admin"),
+            uploader_map.get(inv.user_id, inv.user_id or "未知"),
             inv.created_at.strftime("%Y/%m/%d") if inv.created_at else "",
         ]
         ws.append(row_data)
@@ -346,18 +364,22 @@ async def get_invoice(invoice_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     resp = InvoiceResponse.model_validate(invoice)
-    # 关联员工表获取上传者显示名
+    # 关联员工表获取上传者显示名（同时按 employee_no 和 wecom_user_id 匹配）
     if invoice.user_id:
+        from sqlalchemy import or_ as _or2
         emp_result = await db.execute(
-            select(Employee.name, Employee.employee_no).where(
-                Employee.employee_no == invoice.user_id
+            select(Employee.name, Employee.employee_no, Employee.wecom_user_id).where(
+                _or2(
+                    Employee.employee_no == invoice.user_id,
+                    Employee.wecom_user_id == invoice.user_id,
+                )
             )
         )
         emp = emp_result.first()
         if emp:
-            resp.uploader_name = f"{emp.name}（{emp.employee_no}）"
+            resp.uploader_name = f"{emp.name}（{emp.employee_no}）" if emp.employee_no else emp.name
         else:
-            resp.uploader_name = "admin"
+            resp.uploader_name = invoice.user_id
     return resp
 
 

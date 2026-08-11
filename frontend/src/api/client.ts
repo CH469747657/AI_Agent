@@ -1,4 +1,7 @@
 import type {
+  DialogAPIResponse,
+  DialogRole,
+  DialogStateInfo,
   Employee,
   EmployeeCreate,
   EmployeeSyncResult,
@@ -6,6 +9,9 @@ import type {
   Invoice,
   InvoiceDetail,
   InvoiceUpdate,
+  LlmProviderInfo,
+  LlmSettings,
+  LlmTestResult,
   OnlineVerifyResponse,
   OcrResult,
   PortalDashboard,
@@ -13,8 +19,6 @@ import type {
   PortalProfile,
   PortalReimbursement,
   PortalReimbursementDetail,
-  Project,
-  ProjectCreate,
   Reimbursement,
   ReimbursementCreate,
   ReimbursementAttachment,
@@ -146,18 +150,6 @@ export const invoiceApi = {
   },
 };
 
-// ===== 项目 API =====
-
-export const projectApi = {
-  list: () => request<Project[]>("/projects"),
-  create: (data: ProjectCreate) =>
-    request<Project>("/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    }),
-};
-
 // ===== 报销单 API =====
 
 export const reimbursementApi = {
@@ -169,6 +161,39 @@ export const reimbursementApi = {
   },
 
   detail: (id: number) => request<Reimbursement>(`/reimbursements/${id}`),
+
+  toggleSubsidy: (id: number, subsidyDate: string, included: boolean, excludeReason?: string) =>
+    request<{
+      subsidy_date: string;
+      included: boolean;
+      subsidy_amount: number;
+      subsidy_total: number;
+      total_amount: number;
+    }>(`/reimbursements/${id}/subsidy/toggle`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subsidy_date: subsidyDate, included, exclude_reason: excludeReason || null }),
+    }),
+
+  lockCycle: (cycleKey: string, autoSubmit: boolean = true) =>
+    request<{
+      cycle_key: string;
+      locked: boolean;
+      locked_at: string;
+      submitted_count: number;
+      total_locked: number;
+    }>(`/reimbursements/cycle/lock/${cycleKey}?auto_submit=${autoSubmit}`, {
+      method: "POST",
+    }),
+
+  cycleStatus: (cycleKey: string) =>
+    request<{
+      cycle_key: string;
+      is_locked: boolean;
+      locked_at: string | null;
+      draft_count: number;
+      submitted_count: number;
+    }>(`/reimbursements/cycle/status/${cycleKey}`),
 
   create: (data: ReimbursementCreate) =>
     request<Reimbursement>("/reimbursements", {
@@ -198,6 +223,33 @@ export const reimbursementApi = {
     request<Reimbursement>(`/reimbursements/${id}/withdraw`, {
       method: "PUT",
     }),
+
+  approve: (id: number) =>
+    request<Reimbursement>(`/reimbursements/${id}/approve`, {
+      method: "PUT",
+    }),
+
+  reject: (id: number, reason?: string) =>
+    request<Reimbursement>(`/reimbursements/${id}/reject${reason ? `?reason=${encodeURIComponent(reason)}` : ""}`, {
+      method: "PUT",
+    }),
+
+  reimburse: (id: number) =>
+    request<Reimbursement>(`/reimbursements/${id}/reimburse`, {
+      method: "PUT",
+    }),
+
+  // 节假日
+  syncHolidays: (year: number) =>
+    request<{ year: number; holidays_added: number; workdays_added: number; total: number }>(
+      `/holidays/sync/${year}`,
+      { method: "POST" }
+    ),
+
+  listHolidays: (year: number) =>
+    request<{ id: number; holiday_date: string; holiday_name: string | null; day_type: string; year: number | null; source: string | null }[]>(
+      `/holidays/${year}`
+    ),
 
   delete: (id: number) =>
     request<{ message: string; deleted: boolean }>(`/reimbursements/${id}`, {
@@ -422,20 +474,6 @@ export const portalApi = {
   myReimbursementDetail: (id: number) =>
     portalRequest<PortalReimbursementDetail>(`/reimbursements/${id}`),
 
-  createReimbursement: (data: {
-    reason?: string;
-    period?: string;
-    invoice_ids?: number[];
-  }) =>
-    portalRequest<{ id: number; status: string; total_amount: number | null; message: string }>(
-      "/reimbursements",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      }
-    ),
-
   updateReimbursement: (id: number, data: { reason?: string; period?: string }) =>
     portalRequest<{
       id: number;
@@ -481,6 +519,19 @@ export const portalApi = {
       `/reimbursements/${id}/withdraw`,
       { method: "POST" }
     ),
+
+  toggleSubsidy: (id: number, subsidyDate: string, included: boolean, excludeReason?: string) =>
+    portalRequest<{
+      subsidy_date: string;
+      included: boolean;
+      subsidy_amount: number;
+      subsidy_total: number;
+      total_amount: number;
+    }>(`/reimbursements/${id}/subsidy/toggle`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subsidy_date: subsidyDate, included, exclude_reason: excludeReason || null }),
+    }),
 
   deleteReimbursement: (id: number) =>
     portalRequest<{ message: string; deleted: boolean }>(
@@ -604,4 +655,106 @@ export const portalApi = {
     // 延迟释放，确保浏览器完成读取
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   },
+};
+
+// ===== 对话引擎 API =====
+
+export const dialogApi = {
+  /**
+   * 发送消息
+   * employee → JWT 鉴权端点 /api/portal/dialog/message（user_id 从 token 推导）
+   * admin/boss → 通用端点 /api/dialog/message
+   */
+  sendMessage: (params: {
+    user_id: string;
+    text: string;
+    role: DialogRole;
+    has_attachment?: boolean;
+    attachment_base64?: string | null;
+    attachment_file_type?: string | null;
+    receipt_type?: string | null;
+    user_description?: string | null;
+    no_receipt_amount?: string | null;
+  }) => {
+    const body = {
+      user_id: params.user_id,
+      text: params.text,
+      role: params.role,
+      has_attachment: params.has_attachment ?? false,
+      attachment_base64: params.attachment_base64 ?? null,
+      attachment_file_type: params.attachment_file_type ?? null,
+      receipt_type: params.receipt_type ?? null,
+      user_description: params.user_description ?? null,
+      no_receipt_amount: params.no_receipt_amount ?? null,
+    };
+    if (params.role === "employee") {
+      return portalRequest<DialogAPIResponse>("/dialog/message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    }
+    return request<DialogAPIResponse>("/dialog/message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+
+  /**
+   * 重置对话上下文
+   * employee → JWT 鉴权端点 /api/portal/dialog/reset
+   */
+  reset: (userId: string, role?: DialogRole) => {
+    if (role === "employee") {
+      return portalRequest<{ status: string; message: string }>(
+        "/dialog/reset",
+        { method: "POST" }
+      );
+    }
+    return request<{ status: string; message: string }>(
+      `/dialog/reset/${encodeURIComponent(userId)}`,
+      { method: "POST" }
+    );
+  },
+
+  /**
+   * 查询对话状态
+   * employee → JWT 鉴权端点 /api/portal/dialog/state
+   */
+  state: (userId: string, role?: DialogRole) => {
+    if (role === "employee") {
+      return portalRequest<DialogStateInfo>("/dialog/state");
+    }
+    return request<DialogStateInfo>(
+      `/dialog/state/${encodeURIComponent(userId)}`
+    );
+  },
+};
+
+// ===== 系统设置 API =====
+
+export const settingsApi = {
+  /** 获取当前 LLM 配置 */
+  getLlmSettings: () => request<LlmSettings>("/settings/llm"),
+
+  /** 保存 LLM 配置 */
+  updateLlmSettings: (data: Partial<LlmSettings>) =>
+    request<LlmSettings>("/settings/llm", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+
+  /** 测试 LLM 连通性 */
+  testLlmConnection: (data?: Partial<LlmSettings>) =>
+    request<LlmTestResult>("/settings/llm/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data ?? {}),
+    }),
+
+  /** 获取所有服务商信息 */
+  getProviders: () =>
+    request<Record<string, LlmProviderInfo>>("/settings/llm/providers"),
 };

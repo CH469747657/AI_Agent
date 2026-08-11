@@ -18,7 +18,10 @@ from app.models.employee import Employee
 from app.routers.portal_auth import get_current_employee_async
 from app.services import reimbursement_service as svc
 from app.services.invoice_service import InvoiceService
-from app.schemas import InvoiceResponse
+from app.schemas import InvoiceResponse, SubsidyToggleRequest
+from app.dialog.dialog_engine import get_dialog_engine
+from app.dialog.models import UserRole
+from app.routers.dialog import DialogRequest, DialogAPIResponse, DialogStateResponse
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +206,14 @@ async def list_my_reimbursements(
             "period": r.period,
             "reason": r.reason,
             "total_amount": r.total_amount,
+            "expense_total": r.expense_total,
+            "subsidy_total": r.subsidy_total,
             "status": r.status.value,
+            "cycle_start": r.cycle_start.isoformat() if r.cycle_start else None,
+            "cycle_end": r.cycle_end.isoformat() if r.cycle_end else None,
+            "cycle_key": r.cycle_key,
+            "auto_generated": r.auto_generated,
+            "is_cycle_locked": r.is_cycle_locked,
             "invoice_count": inv_count,
             "created_at": r.created_at.isoformat() if r.created_at else None,
         })
@@ -216,103 +226,11 @@ async def get_my_reimbursement(
     employee: Employee = Depends(get_current_employee_async),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取报销单详情"""
-    result = await db.execute(
-        select(Reimbursement).where(Reimbursement.id == reimbursement_id)
-    )
-    reimbursement = result.scalars().first()
-    if not reimbursement:
-        raise HTTPException(status_code=404, detail="报销单不存在")
+    """获取报销单详情（含明细行、日补贴、发票、附件）"""
+    reimbursement = await svc.get_reimbursement_or_404(db, reimbursement_id)
     if reimbursement.applicant_id != employee.employee_no:
         raise HTTPException(status_code=403, detail="无权查看该报销单")
-
-    # 附加关联发票
-    inv_result = await db.execute(
-        select(Invoice).where(Invoice.reimbursement_id == reimbursement_id)
-    )
-    invoices = list(inv_result.scalars().all())
-
-    # 附加附件列表
-    att_result = await db.execute(
-        select(ReimbursementAttachment)
-        .where(ReimbursementAttachment.reimbursement_id == reimbursement_id)
-        .order_by(ReimbursementAttachment.created_at.desc())
-    )
-    attachments = list(att_result.scalars().all())
-
-    return {
-        "id": reimbursement.id,
-        "applicant_id": reimbursement.applicant_id,
-        "applicant_name": reimbursement.applicant_name,
-        "department": reimbursement.department,
-        "period": reimbursement.period,
-        "reason": reimbursement.reason,
-        "total_amount": reimbursement.total_amount,
-        "status": reimbursement.status.value,
-        "excel_path": reimbursement.excel_path,
-        "pdf_path": reimbursement.pdf_path,
-        "zip_path": reimbursement.zip_path,
-        "created_at": reimbursement.created_at.isoformat() if reimbursement.created_at else None,
-        "invoices": [
-            {
-                "id": inv.id,
-                "seller_name": inv.seller_name,
-                "issue_date": inv.issue_date,
-                "total_with_tax": inv.total_with_tax,
-                "fee_category": inv.fee_category.value if inv.fee_category else None,
-                "fee_subcategory": inv.fee_subcategory,
-                "invoice_number": inv.invoice_number,
-                "verify_status": inv.verify_status.value if inv.verify_status else None,
-                "duplicate_status": inv.duplicate_status.value if inv.duplicate_status else None,
-            }
-            for inv in invoices
-        ],
-        "attachments": [
-            {
-                "id": a.id,
-                "filename": a.filename,
-                "file_size": a.file_size,
-                "file_type": a.file_type,
-                "created_at": a.created_at.isoformat() if a.created_at else None,
-            }
-            for a in attachments
-        ],
-    }
-
-
-@router.post("/reimbursements")
-async def create_my_reimbursement(
-    body: dict,
-    employee: Employee = Depends(get_current_employee_async),
-    db: AsyncSession = Depends(get_db),
-):
-    """创建报销单 — 自动填充申请人信息
-
-    - reason 报销事由为必填项
-    - period 报销期间可选
-    - invoice_ids 可关联已有发票
-    """
-    invoice_ids = body.get("invoice_ids", [])
-    reason = body.get("reason")
-    period = body.get("period")
-
-    reimbursement = await svc.create_reimbursement(
-        db,
-        applicant_id=employee.employee_no,
-        applicant_name=employee.name,
-        department=employee.department,
-        period=period,
-        reason=reason,
-        invoice_ids=invoice_ids,
-        allowed_user_filter=employee.employee_no,
-    )
-
-    return {
-        "id": reimbursement.id,
-        "status": reimbursement.status.value,
-        "total_amount": reimbursement.total_amount,
-        "message": "报销单创建成功",
-    }
+    return await svc.serialize_reimbursement_detail(db, reimbursement, include_invoices=True)
 
 
 @router.put("/reimbursements/{reimbursement_id}")
@@ -519,6 +437,26 @@ async def withdraw_my_reimbursement(
     return {"status": "ok", "message": "报销单已撤回"}
 
 
+@router.put("/reimbursements/{reimbursement_id}/subsidy/toggle")
+async def toggle_my_subsidy(
+    reimbursement_id: int,
+    request: SubsidyToggleRequest,
+    employee: Employee = Depends(get_current_employee_async),
+    db: AsyncSession = Depends(get_db),
+):
+    """手动切换某天的补贴计入/取消（仅草稿状态）"""
+    reimbursement = await svc.get_reimbursement_or_404(db, reimbursement_id)
+    if reimbursement.applicant_id != employee.employee_no:
+        raise HTTPException(status_code=403, detail="无权操作该报销单")
+    return await svc.toggle_day_subsidy(
+        db,
+        reimbursement_id,
+        request.subsidy_date,
+        included=request.included,
+        exclude_reason=request.exclude_reason,
+    )
+
+
 @router.delete("/reimbursements/{reimbursement_id}")
 async def delete_my_reimbursement(
     reimbursement_id: int,
@@ -600,3 +538,88 @@ async def get_my_dashboard(
             for r in reimbursements[:5]
         ],
     }
+
+
+# ===== 对话引擎（JWT 鉴权）=====
+
+@router.post("/dialog/message", response_model=DialogAPIResponse)
+async def portal_send_message(
+    req: DialogRequest,
+    employee: Employee = Depends(get_current_employee_async),
+):
+    """员工端对话入口（JWT 鉴权，user_id/role 从 token 强制推导）
+
+    与管理端 /api/dialog/message 的区别：
+    - user_id 强制为 employee.employee_no（客户端传入的被忽略）
+    - role 强制为 employee
+    - 须携带有效 JWT
+    """
+    engine = get_dialog_engine()
+
+    attachment_data = {"base64": req.attachment_base64} if req.attachment_base64 else None
+    if attachment_data and req.attachment_file_type:
+        attachment_data["file_type"] = req.attachment_file_type
+
+    response = await engine.process_message(
+        user_id=employee.employee_no,   # 强制覆盖，忽略客户端传入
+        text=req.text,
+        role=UserRole.EMPLOYEE,         # 强制覆盖
+        has_attachment=req.has_attachment,
+        attachment_data=attachment_data,
+        receipt_type=req.receipt_type,
+        user_description=req.user_description,
+        no_receipt_amount=req.no_receipt_amount,
+    )
+
+    action_data: dict | None = None
+    if isinstance(response.action_result, dict):
+        d = response.action_result.get("data")
+        if d:
+            action_data = d
+
+    return DialogAPIResponse(
+        text=response.text,
+        state=response.state.value,
+        intent=response.intent_name,
+        action_taken=response.action_taken,
+        need_user_input=response.need_user_input,
+        quick_replies=response.quick_replies,
+        error=response.error,
+        data=action_data,
+    )
+
+
+@router.post("/dialog/reset")
+async def portal_reset_context(
+    employee: Employee = Depends(get_current_employee_async),
+):
+    """重置当前员工的对话上下文（JWT 鉴权，user_id 从 token 推导）"""
+    engine = get_dialog_engine()
+    await engine.reset_user_async(employee.employee_no)
+    return {"status": "ok", "message": "对话上下文已重置"}
+
+
+@router.get("/dialog/state", response_model=DialogStateResponse)
+async def portal_get_state(
+    employee: Employee = Depends(get_current_employee_async),
+):
+    """查询当前员工的对话状态（JWT 鉴权）"""
+    engine = get_dialog_engine()
+    state = await engine.get_user_state(employee.employee_no)
+    if not state:
+        return DialogStateResponse(
+            user_id=employee.employee_no,
+            state="idle",
+            role="employee",
+            current_intent=None,
+            turn_count=0,
+            history=[],
+        )
+    return DialogStateResponse(
+        user_id=employee.employee_no,
+        state=state.get("state", "idle"),
+        role="employee",
+        current_intent=state.get("current_intent"),
+        turn_count=state.get("turn_count", 0),
+        history=state.get("history", []),
+    )

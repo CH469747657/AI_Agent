@@ -5,7 +5,6 @@
 - 数据隔离：token 中携带 employee_no，portal 接口自动注入查询条件
 """
 
-import os
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -13,12 +12,15 @@ from typing import Any
 import bcrypt
 import jwt
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
-# JWT 配置
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
-JWT_SECRET = os.getenv("JWT_SECRET", "")
+# JWT 配置 — 统一从 Settings 读取
+JWT_ALGORITHM = settings.jwt_algorithm
+JWT_EXPIRE_HOURS = settings.jwt_expire_hours
+JWT_SECRET = settings.jwt_secret
+
 if not JWT_SECRET:
     raise RuntimeError(
         "JWT_SECRET 未配置。请在 .env 中设置强随机字符串（推荐 openssl rand -hex 32 生成）。"

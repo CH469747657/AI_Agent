@@ -40,13 +40,13 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
-    """初始化数据库表
+    """初始化数据库表（兜底方案）
 
-    生产环境推荐用 Alembic: `alembic upgrade head`
-    此处保留 create_all 作为开发环境首次启动的兜底，
-    避免未配置 Alembic 时表不存在导致启动失败。
+    生产环境使用 Alembic: `alembic upgrade head`（在 lifespan 中自动执行）。
+    此处保留 create_all 作为 Alembic 不可用时的兜底，
+    确保开发环境首次启动不会因表不存在而失败。
     """
     async with get_engine().begin() as conn:
-        from app.models import invoice, project, reimbursement, employee  # noqa
+        from app.models import invoice, project, reimbursement, employee, settings  # noqa
         await conn.run_sync(Base.metadata.create_all)
 

@@ -9,10 +9,11 @@
 
 import os
 import uuid
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -20,9 +21,13 @@ from app.models.reimbursement import (
     Reimbursement,
     ReimbursementStatus,
     ReimbursementAttachment,
+    ReimbursementItem,
+    ReimbursementDaySubsidy,
 )
 from app.models.invoice import Invoice, InvoiceStatus, VerifyStatus, DuplicateStatus
 from app.models.employee import Employee
+from app.services.expense_date_engine import determine_expense_date
+from app.services.subsidy_engine import recompute_all, recompute_totals, load_holidays
 
 # 附件限制
 MAX_ATTACHMENT_SIZE = 20 * 1024 * 1024
@@ -105,16 +110,38 @@ def _assert_invoice_linkable(inv: Invoice) -> None:
 async def recalc_total_amount(
     db: AsyncSession, reimbursement_id: int
 ) -> float:
-    """重算并更新报销单总金额（基于当前关联发票）"""
-    result = await db.execute(
-        select(Invoice).where(Invoice.reimbursement_id == reimbursement_id)
-    )
-    total = sum(
-        _parse_amount(inv.total_with_tax) for inv in result.scalars().all()
-    )
+    """重算并更新报销单总金额（基于明细行 + 日补贴）"""
     reimb = await get_reimbursement_or_404(db, reimbursement_id)
-    reimb.total_amount = total
-    return total
+    cycle_year = (reimb.cycle_start or date.today()).year
+    holidays = await load_holidays(db, cycle_year)
+    return await recompute_all(db, reimb, holidays)
+
+
+def _create_item_for_invoice(invoice: Invoice, reimbursement_id: int) -> ReimbursementItem:
+    """为发票创建明细行（不 commit，调用方负责后续重算与 commit）"""
+    today = date.today()
+    edate, src = determine_expense_date(invoice, today)
+    invoice.expense_date = edate
+    invoice.expense_date_source = src
+
+    return ReimbursementItem(
+        reimbursement_id=reimbursement_id,
+        invoice_id=invoice.id,
+        item_date=edate,
+        item_date_source=src,
+        weekday=edate.weekday() if edate else None,
+        fee_category=invoice.fee_category.value if invoice.fee_category else None,
+        fee_subcategory=invoice.fee_subcategory,
+        amount=_parse_amount(invoice.total_with_tax),
+        description=invoice.user_description,
+    )
+
+
+async def _recompute_for_reimbursement(db: AsyncSession, reimb: Reimbursement) -> None:
+    """重算报销单的补贴与总额（加载节假日 → recompute_all）"""
+    cycle_year = (reimb.cycle_start or date.today()).year
+    holidays = await load_holidays(db, cycle_year)
+    await recompute_all(db, reimb, holidays)
 
 
 async def create_reimbursement(
@@ -187,7 +214,6 @@ async def link_invoices(
     )
 
     linked = 0
-    total = float(reimbursement.total_amount or 0)
     for inv in result.scalars().all():
         if allowed_user_filter and inv.user_id != allowed_user_filter:
             continue
@@ -200,12 +226,13 @@ async def link_invoices(
             continue
         _assert_invoice_linkable(inv)
         inv.reimbursement_id = reimbursement_id
+        db.add(_create_item_for_invoice(inv, reimbursement_id))
         linked += 1
-        total += _parse_amount(inv.total_with_tax)
 
-    reimbursement.total_amount = total
+    # 重算补贴与总额
+    await _recompute_for_reimbursement(db, reimbursement)
     await db.commit()
-    return linked, total
+    return linked, float(reimbursement.total_amount or 0)
 
 
 async def unlink_invoice(
@@ -228,16 +255,26 @@ async def unlink_invoice(
         raise HTTPException(status_code=404, detail="发票未关联到此报销单")
 
     invoice.reimbursement_id = None
-    total = await recalc_total_amount(db, reimbursement_id)
+    invoice.expense_date = None
+    invoice.expense_date_source = None
+
+    # 删除对应的明细行
+    item_result = await db.execute(
+        select(ReimbursementItem).where(ReimbursementItem.invoice_id == invoice_id)
+    )
+    for item in item_result.scalars().all():
+        await db.delete(item)
+
+    # 重算补贴与总额
+    await _recompute_for_reimbursement(db, reimbursement)
     await db.commit()
-    return total
+    return float(reimbursement.total_amount or 0)
 
 
 async def submit_reimbursement(
     db: AsyncSession, reimbursement_id: int
 ) -> Reimbursement:
     """提交报销单（DRAFT → SUBMITTED）"""
-    from datetime import datetime, timezone
     reimbursement = await get_reimbursement_or_404(db, reimbursement_id)
     await assert_draft(reimbursement)
     reimbursement.status = ReimbursementStatus.submitted
@@ -265,6 +302,246 @@ async def withdraw_reimbursement(
     await db.commit()
     await db.refresh(reimbursement)
     return reimbursement
+
+
+async def approve_reimbursement(
+    db: AsyncSession, reimbursement_id: int
+) -> Reimbursement:
+    """审核通过报销单（SUBMITTED → REVIEWED）
+
+    管理员审批操作：将已提交的报销单标记为已审核。
+    """
+    reimbursement = await get_reimbursement_or_404(db, reimbursement_id)
+    if reimbursement.status != ReimbursementStatus.submitted:
+        raise HTTPException(
+            status_code=409,
+            detail=f"报销单状态为「{reimbursement.status.value}」，仅已提交状态可审核。",
+        )
+    reimbursement.status = ReimbursementStatus.reviewed
+    reimbursement.confirmed_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(reimbursement)
+    return reimbursement
+
+
+async def reject_reimbursement(
+    db: AsyncSession, reimbursement_id: int, reason: str = ""
+) -> Reimbursement:
+    """驳回报销单（SUBMITTED → DRAFT）
+
+    管理员驳回操作：将已提交的报销单退回为草稿。
+    """
+    reimbursement = await get_reimbursement_or_404(db, reimbursement_id)
+    if reimbursement.status != ReimbursementStatus.submitted:
+        raise HTTPException(
+            status_code=409,
+            detail=f"报销单状态为「{reimbursement.status.value}」，仅已提交状态可驳回。",
+        )
+    reimbursement.status = ReimbursementStatus.draft
+    reimbursement.submitted_at = None
+    if reason:
+        existing = reimbursement.reason or ""
+        reimbursement.reason = f"{existing}[驳回：{reason}]".strip("[]")
+    await db.commit()
+    await db.refresh(reimbursement)
+    return reimbursement
+
+
+async def mark_reimbursed(
+    db: AsyncSession, reimbursement_id: int
+) -> Reimbursement:
+    """标记已报销（SUBMITTED/REVIEWED → REIMBURSED）
+
+    财务确认报销后，将已提交或已审核的报销单直接标记为已报销。
+    允许跳过 REVIEWED 中间态，从 SUBMITTED 直达 REIMBURSED。
+    """
+    reimbursement = await get_reimbursement_or_404(db, reimbursement_id)
+    if reimbursement.status not in (
+        ReimbursementStatus.submitted,
+        ReimbursementStatus.reviewed,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=f"报销单状态为「{reimbursement.status.value}」，仅已提交或已审核状态可标记报销。",
+        )
+    reimbursement.status = ReimbursementStatus.reimbursed
+    reimbursement.confirmed_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(reimbursement)
+    return reimbursement
+
+
+# ============================================================
+# 报销单详情序列化
+# ============================================================
+
+async def serialize_reimbursement_detail(
+    db: AsyncSession,
+    reimbursement: Reimbursement,
+    include_invoices: bool = True,
+) -> dict:
+    """构建报销单详情响应 dict（含明细行、日补贴、附件，可选发票）"""
+    # 明细行
+    items_result = await db.execute(
+        select(ReimbursementItem)
+        .where(ReimbursementItem.reimbursement_id == reimbursement.id)
+        .order_by(ReimbursementItem.sort_order, ReimbursementItem.item_date)
+    )
+    items = list(items_result.scalars().all())
+
+    # 日补贴
+    ds_result = await db.execute(
+        select(ReimbursementDaySubsidy)
+        .where(ReimbursementDaySubsidy.reimbursement_id == reimbursement.id)
+        .order_by(ReimbursementDaySubsidy.subsidy_date)
+    )
+    day_subsidies = list(ds_result.scalars().all())
+
+    # 附件
+    att_result = await db.execute(
+        select(ReimbursementAttachment)
+        .where(ReimbursementAttachment.reimbursement_id == reimbursement.id)
+        .order_by(ReimbursementAttachment.created_at.desc())
+    )
+    attachments = list(att_result.scalars().all())
+
+    resp = {
+        "id": reimbursement.id,
+        "applicant_id": reimbursement.applicant_id,
+        "applicant_name": reimbursement.applicant_name,
+        "department": reimbursement.department,
+        "period": reimbursement.period,
+        "reason": reimbursement.reason,
+        "total_amount": reimbursement.total_amount,
+        "expense_total": reimbursement.expense_total,
+        "subsidy_total": reimbursement.subsidy_total,
+        "status": reimbursement.status.value,
+        "cycle_start": reimbursement.cycle_start.isoformat() if reimbursement.cycle_start else None,
+        "cycle_end": reimbursement.cycle_end.isoformat() if reimbursement.cycle_end else None,
+        "cycle_key": reimbursement.cycle_key,
+        "auto_generated": reimbursement.auto_generated,
+        "is_cycle_locked": reimbursement.is_cycle_locked,
+        "locked_at": reimbursement.locked_at.isoformat() if reimbursement.locked_at else None,
+        "submitted_at": reimbursement.submitted_at.isoformat() if reimbursement.submitted_at else None,
+        "confirmed_at": reimbursement.confirmed_at.isoformat() if reimbursement.confirmed_at else None,
+        "excel_path": reimbursement.excel_path,
+        "pdf_path": reimbursement.pdf_path,
+        "zip_path": reimbursement.zip_path,
+        "created_at": reimbursement.created_at.isoformat() if reimbursement.created_at else None,
+        "items": [
+            {
+                "id": it.id,
+                "invoice_id": it.invoice_id,
+                "item_date": it.item_date.isoformat() if it.item_date else None,
+                "item_date_source": it.item_date_source,
+                "weekday": it.weekday,
+                "fee_category": it.fee_category,
+                "fee_subcategory": it.fee_subcategory,
+                "amount": it.amount,
+                "description": it.description,
+                "is_late_charge": it.is_late_charge,
+                "intended_cycle_key": it.intended_cycle_key,
+                "sort_order": it.sort_order,
+            }
+            for it in items
+        ],
+        "day_subsidies": [
+            {
+                "id": ds.id,
+                "subsidy_date": ds.subsidy_date.isoformat() if ds.subsidy_date else None,
+                "weekday": ds.weekday,
+                "day_type": ds.day_type,
+                "base_rate": ds.base_rate,
+                "subsidy_amount": ds.subsidy_amount,
+                "included": ds.included,
+                "exclude_reason": ds.exclude_reason,
+                "trigger_invoice_count": ds.trigger_invoice_count,
+            }
+            for ds in day_subsidies
+        ],
+        "attachments": [
+            {
+                "id": a.id,
+                "filename": a.filename,
+                "file_size": a.file_size,
+                "file_type": a.file_type,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+            }
+            for a in attachments
+        ],
+    }
+
+    if include_invoices:
+        inv_result = await db.execute(
+            select(Invoice).where(Invoice.reimbursement_id == reimbursement.id)
+        )
+        invoices = list(inv_result.scalars().all())
+        resp["invoices"] = [
+            {
+                "id": inv.id,
+                "seller_name": inv.seller_name,
+                "issue_date": inv.issue_date,
+                "total_with_tax": inv.total_with_tax,
+                "fee_category": inv.fee_category.value if inv.fee_category else None,
+                "fee_subcategory": inv.fee_subcategory,
+                "invoice_number": inv.invoice_number,
+                "verify_status": inv.verify_status.value if inv.verify_status else None,
+                "duplicate_status": inv.duplicate_status.value if inv.duplicate_status else None,
+            }
+            for inv in invoices
+        ]
+
+    return resp
+
+
+# ============================================================
+# 日补贴手动切换
+# ============================================================
+
+async def toggle_day_subsidy(
+    db: AsyncSession,
+    reimbursement_id: int,
+    subsidy_date: date,
+    *,
+    included: bool,
+    exclude_reason: Optional[str] = None,
+) -> dict:
+    """手动切换某天的补贴计入/取消
+
+    - 仅草稿状态可操作
+    - included=False 时 subsidy_amount 归零，included=True 时恢复 base_rate
+    - 自动重算 subsidy_total 和 total_amount
+
+    Returns: {subsidy_date, included, subsidy_amount, subsidy_total, total_amount}
+    """
+    reimbursement = await get_reimbursement_or_404(db, reimbursement_id)
+    await assert_draft(reimbursement)
+
+    result = await db.execute(
+        select(ReimbursementDaySubsidy).where(
+            ReimbursementDaySubsidy.reimbursement_id == reimbursement_id,
+            ReimbursementDaySubsidy.subsidy_date == subsidy_date,
+        )
+    )
+    ds = result.scalars().first()
+    if not ds:
+        raise HTTPException(status_code=404, detail=f"日期 {subsidy_date} 无补贴记录")
+
+    ds.included = included
+    ds.exclude_reason = exclude_reason if not included else None
+    ds.subsidy_amount = float(ds.base_rate or 0) if included else 0.0
+
+    # 重算总额
+    await recompute_totals(db, reimbursement)
+    await db.commit()
+
+    return {
+        "subsidy_date": subsidy_date.isoformat(),
+        "included": included,
+        "subsidy_amount": ds.subsidy_amount,
+        "subsidy_total": reimbursement.subsidy_total,
+        "total_amount": reimbursement.total_amount,
+    }
 
 
 async def save_attachment(
@@ -355,6 +632,8 @@ async def delete_reimbursement(
     )
     for inv in inv_result.scalars().all():
         inv.reimbursement_id = None
+        inv.expense_date = None
+        inv.expense_date_source = None
 
     # 删除附件
     att_result = await db.execute(

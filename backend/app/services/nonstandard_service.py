@@ -764,8 +764,8 @@ def _text_similarity(a: str, b: str) -> float:
 
 
 def _subcategory_to_category(subcategory: str) -> str:
-    """子类别到大类映射"""
-    personal_subs = {"差旅交通", "通讯费", "餐饮", "培训费", "补贴"}
+    """子类别到大类映射 — 与标准分类器 RULES 对齐"""
+    personal_subs = {"差旅-交通", "差旅-住宿", "差旅-餐饮", "通讯费", "培训费", "补贴"}
     if subcategory in personal_subs:
         return "personal"
     return "company"

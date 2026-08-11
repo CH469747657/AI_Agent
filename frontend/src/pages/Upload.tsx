@@ -1,29 +1,17 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { useState, useCallback, useRef } from "react";
-import {
-  UploadSimple,
-  FileImage,
-  CheckCircle,
-  Warning,
-  X,
-  ArrowRight,
-  Spinner,
-} from "@phosphor-icons/react";
+import { UploadSimple, Warning, Spinner } from "@phosphor-icons/react";
 import { invoiceApi } from "../api/client";
 import type { Invoice } from "../types";
-
-const receiptTypes = [
-  "增值税普通发票",
-  "增值税专用发票",
-  "火车票",
-  "机票",
-  "收据",
-  "支付截图",
-  "交易流水单",
-];
-
-const NONSTANDARD_TYPES = new Set(["收据", "支付截图", "交易流水单"]);
+import {
+  receiptTypes,
+  NONSTANDARD_TYPES,
+  FileDropZone,
+  FilePreviewCard,
+  ProcessingTimeline,
+  UploadResult,
+} from "../components/upload";
 
 export function Upload() {
   const navigate = useNavigate();
@@ -42,16 +30,6 @@ export function Upload() {
     setResult(null);
     setError(null);
   }, []);
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setDragOver(false);
-      const f = e.dataTransfer.files[0];
-      if (f) handleFile(f);
-    },
-    [handleFile]
-  );
 
   const handleUpload = async () => {
     if (!file || !userId) return;
@@ -96,45 +74,13 @@ export function Upload() {
       </div>
 
       {/* Upload zone */}
-      {!file && (
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-          onClick={() => inputRef.current?.click()}
-          className={`flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed py-16 transition-colors ${
-            dragOver
-              ? "border-brand-500 bg-brand-50"
-              : "border-slate-300 bg-white hover:border-brand-400 hover:bg-slate-50"
-          }`}
-        >
-          <input
-            ref={inputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/jpg,application/pdf,application/ofd"
-            className="hidden"
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) handleFile(f);
-            }}
-          />
-          <motion.div
-            animate={{ y: dragOver ? -4 : 0 }}
-            className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50"
-          >
-            <UploadSimple size={28} className="text-brand-600" />
-          </motion.div>
-          <p className="mt-4 font-display text-base font-semibold text-slate-700">
-            拖拽发票到此处，或点击选择文件
-          </p>
-          <p className="mt-1 text-sm text-slate-400">
-            支持 PNG / JPG / PDF / OFD 格式，单文件最大 20MB
-          </p>
-        </div>
+      {!file && !result && (
+        <FileDropZone
+          onFile={handleFile}
+          dragOver={dragOver}
+          setDragOver={setDragOver}
+          inputRef={inputRef}
+        />
       )}
 
       {/* File preview & form */}
@@ -144,27 +90,13 @@ export function Upload() {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
-          {/* File card */}
-          <div className="flex items-center gap-3 rounded-xl border border-slate-200/60 bg-white p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100">
-              <FileImage size={20} className="text-slate-500" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="truncate text-sm font-medium text-slate-800">
-                {file.name}
-              </p>
-              <p className="text-xs text-slate-400">
-                {(file.size / 1024).toFixed(1)} KB · {file.type}
-              </p>
-            </div>
-            <button
-              onClick={reset}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100"
-              aria-label="移除文件"
-            >
-              <X size={16} />
-            </button>
-          </div>
+          <FilePreviewCard
+            file={file}
+            onRemove={() => {
+              setFile(null);
+              setError(null);
+            }}
+          />
 
           {/* Form */}
           <div className="space-y-4 rounded-xl border border-slate-200/60 bg-white p-5">
@@ -239,7 +171,7 @@ export function Upload() {
             )}
           </button>
 
-          {/* Processing timeline (during upload) */}
+          {/* Processing timeline */}
           <AnimatePresence>
             {uploading && (
               <motion.div
@@ -260,266 +192,13 @@ export function Upload() {
       {/* Result */}
       <AnimatePresence>
         {result && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-5"
-          >
-            <div className="flex items-center gap-2">
-              <CheckCircle size={20} className="text-emerald-600" />
-              <h3 className="font-display text-base font-semibold text-emerald-800">
-                识别完成
-              </h3>
-            </div>
-
-            {/* Processing timeline (completed) */}
-            <div className="mt-4">
-              <ProcessingTimeline result={result} />
-            </div>
-
-            {/* Extracted fields */}
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <ResultField label="发票号码" value={result.invoice_number} />
-              <ResultField label="开票日期" value={result.issue_date} />
-              <ResultField
-                label="销方名称"
-                value={result.seller_name}
-                span
-              />
-              <ResultField
-                label="价税合计"
-                value={result.total_with_tax ? `¥${result.total_with_tax}` : null}
-              />
-              <ResultField
-                label="费用分类"
-                value={
-                  result.fee_category === "company"
-                    ? `公司 / ${result.fee_subcategory}`
-                    : result.fee_category === "personal"
-                      ? `个人 / ${result.fee_subcategory}`
-                      : null
-                }
-              />
-              <ResultField
-                label={result.is_nonstandard ? "VLM置信度" : "置信度"}
-                value={
-                  result.is_nonstandard && result.vlm_confidence !== null && result.vlm_confidence !== undefined
-                    ? `${(result.vlm_confidence * 100).toFixed(1)}%`
-                    : result.diff_confidence !== null && result.diff_confidence !== undefined
-                      ? `${(result.diff_confidence * 100).toFixed(1)}%`
-                      : null
-                }
-              />
-              {result.is_nonstandard && result.risk_level && (
-                <ResultField
-                  label="风险等级"
-                  value={
-                    result.risk_level === "high"
-                      ? "高风险"
-                      : result.risk_level === "medium"
-                        ? "中风险"
-                        : result.risk_level === "low"
-                          ? "低风险"
-                          : null
-                  }
-                />
-              )}
-              <ResultField
-                label="查重状态"
-                value={
-                  result.duplicate_status === "DUPLICATE"
-                    ? "重复"
-                    : result.duplicate_status === "UNIQUE"
-                      ? "唯一"
-                      : "待查重"
-                }
-              />
-              <ResultField
-                label="验真状态"
-                value={
-                  result.verify_status === "VALID"
-                    ? "验真通过"
-                    : result.verify_status === "INVALID"
-                      ? "验真失败"
-                      : result.verify_status === "UNABLE_TO_VERIFY"
-                        ? "无法验真"
-                        : result.verify_status === "PENDING"
-                          ? "待验真"
-                          : null
-                }
-              />
-            </div>
-
-            <div className="mt-4 flex gap-3">
-              <button
-                onClick={() => navigate(`/invoices?id=${result.id}`)}
-                className="flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-sm font-medium text-brand-600 ring-1 ring-brand-200 transition-colors hover:bg-brand-50"
-              >
-                查看详情
-                <ArrowRight size={14} />
-              </button>
-              <button
-                onClick={reset}
-                className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-600 ring-1 ring-slate-200 transition-colors hover:bg-slate-50"
-              >
-                继续上传
-              </button>
-            </div>
-          </motion.div>
+          <UploadResult
+            result={result}
+            onViewDetail={() => navigate(`/invoices?id=${result.id}`)}
+            onReset={reset}
+          />
         )}
       </AnimatePresence>
-    </div>
-  );
-}
-
-/* ---------- Processing timeline ---------- */
-
-function ProcessingTimeline({
-  uploading,
-  result,
-}: {
-  uploading?: boolean;
-  result?: Invoice | null;
-}) {
-  const steps: {
-    label: string;
-    detail: string;
-    done: boolean;
-    processing: boolean;
-    warning: boolean;
-  }[] = [
-    {
-      label: "文件上传",
-      detail: "已完成",
-      done: true,
-      processing: false,
-      warning: false,
-    },
-    {
-      label: "OCR 识别",
-      detail: result
-        ? "已提取发票字段"
-        : uploading
-          ? "正在识别..."
-          : "等待中",
-      done: !!result,
-      processing: !!uploading && !result,
-      warning: false,
-    },
-    {
-      label: "费用分类",
-      detail: result
-        ? `${result.fee_category === "company" ? "公司" : "个人"}${
-            result.fee_subcategory ? ` / ${result.fee_subcategory}` : ""
-          }`
-        : "等待中",
-      done: !!result,
-      processing: false,
-      warning: false,
-    },
-    {
-      label: "查重检测",
-      detail: result
-        ? result.duplicate_status === "DUPLICATE"
-          ? "检测到重复"
-          : result.duplicate_status === "UNIQUE"
-            ? "唯一"
-            : "待查重"
-        : "等待中",
-      done: !!result,
-      processing: false,
-      warning: result?.duplicate_status === "DUPLICATE",
-    },
-    {
-      label: "发票验真",
-      detail: result
-        ? result.verify_status === "VALID"
-          ? "验真通过"
-          : result.verify_status === "INVALID"
-            ? "验真失败"
-            : result.verify_status === "UNABLE_TO_VERIFY"
-              ? "无法验真"
-              : "待验真"
-        : "等待中",
-      done: !!result,
-      processing: false,
-      warning: result?.verify_status === "INVALID",
-    },
-  ];
-
-  return (
-    <div>
-      {steps.map((step, index) => (
-        <div key={step.label} className="flex gap-3">
-          {/* Left: icon + connector */}
-          <div className="flex flex-col items-center">
-            {step.done ? (
-              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500">
-                <CheckCircle
-                  size={14}
-                  className="text-white"
-                  weight="fill"
-                />
-              </div>
-            ) : step.processing ? (
-              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-100">
-                <Spinner size={14} className="animate-spin text-brand-600" />
-              </div>
-            ) : (
-              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-100">
-                <span className="h-2 w-2 rounded-full bg-slate-300" />
-              </div>
-            )}
-            {index < steps.length - 1 && (
-              <div
-                className={`my-0.5 h-6 w-0.5 ${
-                  step.done ? "bg-emerald-300" : "bg-slate-200"
-                }`}
-              />
-            )}
-          </div>
-          {/* Right: label + detail */}
-          <div className="pb-3">
-            <p
-              className={`text-sm font-medium ${
-                step.done ? "text-slate-700" : "text-slate-400"
-              }`}
-            >
-              {step.label}
-            </p>
-            <p
-              className={`text-xs ${
-                step.warning
-                  ? "text-rose-500"
-                  : step.done
-                    ? "text-slate-500"
-                    : "text-slate-400"
-              }`}
-            >
-              {step.detail}
-            </p>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ResultField({
-  label,
-  value,
-  span,
-}: {
-  label: string;
-  value: string | null;
-  span?: boolean;
-}) {
-  return (
-    <div className={span ? "col-span-2" : ""}>
-      <dt className="text-xs text-emerald-600/70">{label}</dt>
-      <dd className="mt-0.5 truncate text-sm font-medium text-slate-800">
-        {value || <span className="text-slate-300">未提取到</span>}
-      </dd>
     </div>
   );
 }

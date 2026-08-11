@@ -1,7 +1,8 @@
 """发票/票据数据模型"""
 
 import enum
-from sqlalchemy import String, Text, Integer, Float, Enum, JSON, ForeignKey, Boolean
+from datetime import date
+from sqlalchemy import String, Text, Integer, Float, Enum, JSON, ForeignKey, Boolean, Date
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 from app.models.base import TimestampMixin
@@ -82,6 +83,12 @@ class Invoice(Base, TimestampMixin):
     amount: Mapped[str | None] = mapped_column(String(20), nullable=True)
     tax_amount: Mapped[str | None] = mapped_column(String(20), nullable=True)
     tax_rate: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
+    # —— 报销单归集辅助字段 ——
+    expense_date: Mapped[date | None] = mapped_column(Date, nullable=True, comment="费用发生日期（三级判定后回填）")
+    expense_date_source: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, comment="日期来源 note/issue_date/receipt_date/upload_time"
+    )
 
     # 双源比对状态
     diff_confidence: Mapped[float | None] = mapped_column(Float, nullable=True, comment="双源匹配置信度")

@@ -5,13 +5,16 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # 数据库
-    database_url: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://reimburse:reimburse123@localhost:15432/reimbursement")
+    # 数据库 — 支持 DATABASE_URL 直接指定，或通过 DB_PASSWORD 组装
+    database_url: str = os.getenv(
+        "DATABASE_URL",
+        f"postgresql+asyncpg://reimburse:{os.getenv('DB_PASSWORD', 'reimburse123')}@localhost:15432/reimbursement"
+    )
 
     # Redis
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-    # LLM 配置
+    # LLM 配置（运行时可通过数据库热更新，需允许 mutable）
     llm_provider: str = os.getenv("LLM_PROVIDER", "qwen")
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
     llm_model: str = os.getenv("LLM_MODEL", "qwen3-vl-plus")
@@ -26,6 +29,9 @@ class Settings(BaseSettings):
     upload_dir: str = os.getenv("UPLOAD_DIR", "/app/uploads")
     report_dir: str = os.getenv("REPORT_DIR", "/app/reports")
 
+    # 报销单公司名称（用于 Excel/PDF 报表抬头）
+    company_name: str = os.getenv("COMPANY_NAME", "常州华一防静电活动地板有限公司")
+
     # 阿里云 OCR（保留兼容）
     aliyun_ocr_key: str = os.getenv("ALIYUN_OCR_KEY", "")
 
@@ -36,6 +42,11 @@ class Settings(BaseSettings):
     aliyun_verify_appcode: str = os.getenv("ALIYUN_VERIFY_APPCODE", "")    # 阿里云云市场 AppCode
     aliyun_verify_appsecret: str = os.getenv("ALIYUN_VERIFY_APPSECRET", "")  # 阿里云云市场 AppSecret
 
+    # JWT 配置
+    jwt_secret: str = os.getenv("JWT_SECRET", "")
+    jwt_algorithm: str = os.getenv("JWT_ALGORITHM", "HS256")
+    jwt_expire_hours: int = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
+
     # CORS 配置 — 多个域名用逗号分隔
     cors_allow_origins: str = os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:5173")
 
@@ -43,6 +54,11 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         """解析 CORS 允许的域名列表"""
         return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
+
+    @property
+    def is_jwt_configured(self) -> bool:
+        """JWT_SECRET 是否已正确配置（非空且非弱值）"""
+        return bool(self.jwt_secret) and self.jwt_secret not in ("change-me", "")
 
     @property
     def text_model(self) -> str:
@@ -62,6 +78,8 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        # 允许运行时通过数据库配置覆写 LLM 字段
+        validate_assignment = True
 
 
 settings = Settings()

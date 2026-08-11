@@ -35,6 +35,8 @@ export interface Invoice {
   invoice_code: string | null;
   check_code: string | null;
   issue_date: string | null;
+  expense_date?: string | null;
+  expense_date_source?: string | null;
   buyer_name: string | null;
   seller_name: string | null;
   seller_tax_id: string | null;
@@ -98,23 +100,6 @@ export interface Statistics {
   duplicates: number;
 }
 
-// ===== 项目相关类型 =====
-
-export interface Project {
-  id: number;
-  name: string;
-  code: string | null;
-  status: string;
-}
-
-export interface ProjectCreate {
-  name: string;
-  code?: string | null;
-  member_ids?: string[];
-  supplier_names?: string[];
-  description?: string | null;
-}
-
 // ===== 报销单类型 =====
 
 export type ReimbursementStatus = "DRAFT" | "SUBMITTED" | "REVIEWED" | "REIMBURSED";
@@ -127,12 +112,51 @@ export interface Reimbursement {
   period: string | null;
   reason: string | null;
   total_amount: number | null;
+  expense_total: number | null;
+  subsidy_total: number | null;
   status: ReimbursementStatus;
+  cycle_start: string | null;
+  cycle_end: string | null;
+  cycle_key: string | null;
+  auto_generated: boolean;
+  is_cycle_locked: boolean;
+  locked_at: string | null;
+  submitted_at: string | null;
+  confirmed_at: string | null;
   excel_path: string | null;
   pdf_path: string | null;
   zip_path: string | null;
   created_at: string | null;
   attachments?: ReimbursementAttachment[];
+  items?: ReimbursementItem[];
+  day_subsidies?: ReimbursementDaySubsidy[];
+}
+
+export interface ReimbursementItem {
+  id: number;
+  invoice_id: number | null;
+  item_date: string | null;
+  item_date_source: string | null;
+  weekday: number | null;
+  fee_category: string | null;
+  fee_subcategory: string | null;
+  amount: number;
+  description: string | null;
+  is_late_charge: boolean;
+  intended_cycle_key: string | null;
+  sort_order: number;
+}
+
+export interface ReimbursementDaySubsidy {
+  id: number;
+  subsidy_date: string;
+  weekday: number | null;
+  day_type: string | null;
+  base_rate: number | null;
+  subsidy_amount: number;
+  included: boolean;
+  exclude_reason: string | null;
+  trigger_invoice_count: number;
 }
 
 export interface ReimbursementCreate {
@@ -213,7 +237,48 @@ export interface EmployeeSyncResult {
   errors: string[];
 }
 
-// ===== 员工端 Portal 类型 =====
+// ===== 对话引擎类型 =====
+
+export type DialogRole = "employee" | "admin" | "boss";
+
+export interface DialogMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  text: string;
+  timestamp: number;
+  /** 附件缩略图（base64 data URL，仅用户消息） */
+  attachmentPreview?: string;
+  /** 快捷回复选项（仅 assistant 消息） */
+  quickReplies?: string[];
+  /** 是否正在执行操作 */
+  actionTaken?: boolean;
+  /** 错误信息 */
+  error?: string | null;
+  /** 上传成功消息附带的发票 ID（用于显示“撤销”按钮） */
+  invoiceId?: number;
+  /** 是否已撤销（隐藏撤销按钮） */
+  undone?: boolean;
+}
+
+export interface DialogAPIResponse {
+  text: string;
+  state: string;
+  intent: string | null;
+  action_taken: boolean;
+  need_user_input: boolean;
+  quick_replies: string[];
+  error: string | null;
+  data?: Record<string, any> | null;
+}
+
+export interface DialogStateInfo {
+  user_id: string;
+  state: string;
+  role: string;
+  current_intent: string | null;
+  turn_count: number;
+}
+
 
 export interface PortalLoginResponse {
   access_token: string;
@@ -269,7 +334,14 @@ export interface PortalReimbursement {
   period: string | null;
   reason: string | null;
   total_amount: number | null;
+  expense_total: number | null;
+  subsidy_total: number | null;
   status: string;
+  cycle_start: string | null;
+  cycle_end: string | null;
+  cycle_key: string | null;
+  auto_generated: boolean;
+  is_cycle_locked: boolean;
   invoice_count: number;
   created_at: string | null;
 }
@@ -283,9 +355,14 @@ export interface ReimbursementAttachment {
 }
 
 export interface PortalReimbursementDetail extends PortalReimbursement {
+  locked_at: string | null;
+  submitted_at: string | null;
+  confirmed_at: string | null;
   excel_path: string | null;
   pdf_path: string | null;
   zip_path: string | null;
+  items?: ReimbursementItem[];
+  day_subsidies?: ReimbursementDaySubsidy[];
   invoices: {
     id: number;
     seller_name: string | null;
@@ -298,4 +375,26 @@ export interface PortalReimbursementDetail extends PortalReimbursement {
     duplicate_status: string | null;
   }[];
   attachments: ReimbursementAttachment[];
+}
+
+// ===== LLM 设置类型 =====
+
+export interface LlmSettings {
+  llm_provider: string;
+  llm_api_key: string;
+  llm_model: string;
+  llm_text_model: string;
+  llm_base_url: string;
+}
+
+export interface LlmTestResult {
+  success: boolean;
+  message: string;
+  latency_ms: number | null;
+}
+
+export interface LlmProviderInfo {
+  base_url: string;
+  models: string[];
+  vision_prefixes: string[];
 }

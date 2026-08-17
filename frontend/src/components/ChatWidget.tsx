@@ -13,11 +13,13 @@ import {
   WarningCircle,
   ArrowCounterClockwise,
   Wallet,
+  Calendar,
 } from "@phosphor-icons/react";
 import { dialogApi, portalApi, bossApi } from "../api/client";
-import type { DialogMessage, DialogRole, BatchInvoiceSummary } from "../types";
+import type { DialogMessage, DialogRole, BatchInvoiceSummary, TravelDay } from "../types";
 import { ACCEPTED_TYPES, MAX_FILE_SIZE } from "../components/upload/index";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { TravelDayPicker } from "./TravelDayPicker";
 
 /** 生成消息 ID */
 function genId(): string {
@@ -534,6 +536,12 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
   const [noReceiptAmount, setNoReceiptAmount] = useState("");
   const [noReceiptReason, setNoReceiptReason] = useState("");
 
+  // 出差日标记 picker 状态（仅 employee role）
+  const [travelPickerOpen, setTravelPickerOpen] = useState(false);
+  const [travelDays, setTravelDays] = useState<TravelDay[]>([]);
+  const [currentCycleStart, setCurrentCycleStart] = useState<string | null>(null);
+  const [currentCycleEnd, setCurrentCycleEnd] = useState<string | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -589,6 +597,67 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
     ta.style.height = "auto";
     ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`;
   }, [inputText]);
+
+  // 员工端：加载当前周期 + 已标出差日（用于日历按钮）
+  useEffect(() => {
+    if (role !== "employee") return;
+    portalApi
+      .dashboard()
+      .then((d) => {
+        setCurrentCycleStart(d.cycle_start);
+        setCurrentCycleEnd(d.cycle_end);
+      })
+      .catch(() => {});
+    portalApi
+      .listTravelDays()
+      .then(setTravelDays)
+      .catch(() => {});
+  }, [role]);
+
+  /** 员工标记出差日提交：批量增删 */
+  const handleTravelDaysSubmit = async (
+    selected: { date: string; note: string | null }[],
+    removed: string[]
+  ) => {
+    const added: string[] = [];
+    for (const item of selected) {
+      try {
+        await portalApi.createTravelDay(item.date, item.note || undefined);
+        added.push(item.date);
+      } catch (err) {
+        console.error(`标记 ${item.date} 失败`, err);
+      }
+    }
+    for (const date of removed) {
+      try {
+        await portalApi.deleteTravelDayByDate(date);
+      } catch (err) {
+        console.error(`删除 ${date} 失败`, err);
+      }
+    }
+    try {
+      const fresh = await portalApi.listTravelDays();
+      setTravelDays(fresh);
+    } catch {}
+    const msgs: string[] = [];
+    if (added.length > 0) {
+      msgs.push(`已标记 ${added.length} 天为出差日：${added.join("、")}`);
+    }
+    if (removed.length > 0) {
+      msgs.push(`已取消 ${removed.length} 天出差日：${removed.join("、")}`);
+    }
+    if (msgs.length > 0) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `travel-${Date.now()}`,
+          role: "assistant",
+          text: msgs.join("。") + "。",
+          timestamp: Date.now(),
+        } as DialogMessage,
+      ]);
+    }
+  };
 
   /** 发送消息 */
   const handleSend = useCallback(
@@ -1140,6 +1209,28 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
                 >
                   <Wallet size={20} className="pointer-events-none" />
                 </button>
+
+                {/* 标记出差日（仅员工端） */}
+                {role === "employee" && (
+                  <>
+                    <button
+                      onClick={() => setTravelPickerOpen(true)}
+                      disabled={isTyping}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-primary-50 hover:text-primary-700 disabled:opacity-40"
+                      title="标记出差日"
+                    >
+                      <Calendar size={20} className="pointer-events-none" />
+                    </button>
+                    <TravelDayPicker
+                      open={travelPickerOpen}
+                      onClose={() => setTravelPickerOpen(false)}
+                      cycleStart={currentCycleStart}
+                      cycleEnd={currentCycleEnd}
+                      existingTravelDays={travelDays}
+                      onSubmit={handleTravelDaysSubmit}
+                    />
+                  </>
+                )}
 
                 {/* 文本输入 */}
                 <textarea

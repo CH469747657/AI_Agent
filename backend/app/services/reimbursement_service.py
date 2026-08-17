@@ -17,6 +17,8 @@ from fastapi import HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+logger = logging.getLogger(__name__)
+
 from app.config import settings
 from app.models.reimbursement import (
     Reimbursement,
@@ -212,6 +214,57 @@ async def create_reimbursement(
             total += _parse_amount(inv.total_with_tax)
         reimbursement.total_amount = total
 
+    # 归集该员工该周期下未关联的游离发票（reimbursement_id IS NULL）
+    # 业务规则：admin 手动生成报销单时自动归集已上传但未关联的发票，
+    # 重复/验真失败/查重未通过的发票会被 _assert_invoice_linkable 拦截跳过
+    from app.models.invoice import InvoiceStatus, VerifyStatus, DuplicateStatus
+    from app.services.expense_date_engine import determine_expense_date
+    pending_invs = (
+        await db.execute(
+            select(Invoice).where(
+                Invoice.user_id == applicant_id,
+                Invoice.reimbursement_id.is_(None),
+                Invoice.status.not_in([InvoiceStatus.processing]),
+            )
+        )
+    ).scalars().all()
+    attached_count = 0
+    skipped_count = 0
+    sort_idx = 0
+    for inv in pending_invs:
+        try:
+            _assert_invoice_linkable(inv)
+        except HTTPException:
+            # 不满足关联条件（已关联/验真失败/查重重复/非标未审核）→ 跳过
+            skipped_count += 1
+            continue
+        inv.reimbursement_id = reimbursement.id
+        attached_count += 1
+        # 创建 ReimbursementItem 明细行
+        expense_date, expense_date_source = determine_expense_date(inv)
+        inv.expense_date = expense_date
+        inv.expense_date_source = expense_date_source
+        from app.models.reimbursement import ReimbursementItem
+        item = ReimbursementItem(
+            reimbursement_id=reimbursement.id,
+            invoice_id=inv.id,
+            item_date=expense_date,
+            item_date_source=inv.expense_date_source,
+            weekday=expense_date.weekday() if expense_date else None,
+            fee_category=inv.fee_category.value if inv.fee_category else None,
+            fee_subcategory=inv.fee_subcategory,
+            amount=_parse_amount(inv.total_with_tax),
+            sort_order=sort_idx,
+        )
+        db.add(item)
+        sort_idx += 1
+    if attached_count:
+        await db.flush()
+        logger.info(
+            f"Attached {attached_count} pending invoices to reimb #{reimbursement.id}, "
+            f"skipped {skipped_count} (failed linkable check)"
+        )
+
     # 挂载该员工该周期下未挂载的 travel_days（员工可能在报销单生成前已标记）
     from app.models.reimbursement import ReimbursementTravelDay
     from app.services.subsidy_engine import recompute_all, load_holidays
@@ -228,6 +281,10 @@ async def create_reimbursement(
         for td in pending_tds:
             td.reimbursement_id = reimbursement.id
         await db.flush()
+        holidays = await load_holidays(db, cycle_start.year)
+        await recompute_all(db, reimbursement, holidays)
+    elif attached_count:
+        # 无 travel_days 但有发票归集 → 仍需重算 expense_total
         holidays = await load_holidays(db, cycle_start.year)
         await recompute_all(db, reimbursement, holidays)
 

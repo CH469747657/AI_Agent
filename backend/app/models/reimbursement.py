@@ -112,3 +112,29 @@ class ReimbursementDaySubsidy(Base, TimestampMixin):
     included: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否计入合计")
     exclude_reason: Mapped[str | None] = mapped_column(Text, nullable=True, comment="取消原因")
     trigger_invoice_count: Mapped[int] = mapped_column(Integer, default=0, comment="触发该天补贴的凭证数")
+
+
+class ReimbursementTravelDay(Base, TimestampMixin):
+    """报销单出差日 — 员工在对话框标记的出差日，触发补贴核算
+
+    与 ReimbursementDaySubsidy 的关系：
+    - travel_days 是触发源（员工主动标记）
+    - day_subsidies 是补贴计算结果（由 subsidy_engine.recompute_subsidies 生成）
+    - 一个 travel_day 对应一行 day_subsidy
+    """
+
+    __tablename__ = "reimbursement_travel_days"
+    __table_args__ = (
+        UniqueConstraint("reimbursement_id", "travel_date", name="uq_travel_day_reimb_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    reimbursement_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("reimbursements.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    travel_date: Mapped[date] = mapped_column(Date, nullable=False, comment="出差日期")
+    note: Mapped[str | None] = mapped_column(Text, nullable=True, comment="备注，如北京出差/返程")
+    weekday: Mapped[int | None] = mapped_column(SmallInteger, nullable=True, comment="0=周一…6=周日")
+    day_type: Mapped[str | None] = mapped_column(String(16), nullable=True, comment="workday/weekend/holiday")
+    base_rate: Mapped[float | None] = mapped_column(Float, nullable=True, comment="当日标准60或80")
+    applicant_id: Mapped[str] = mapped_column(String(64), nullable=False, comment="标记人 employee_no")

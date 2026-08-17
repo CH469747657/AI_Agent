@@ -190,6 +190,42 @@ export function TravelDayPicker({
           </button>
         </div>
 
+        {/* 已选 / 取消列表（提示当前批次） */}
+        {selectedList.length > 0 && (
+          <div className="mb-1 text-xs text-muted-foreground">
+            已选 {selectedList.length} 天：{selectedList.join("、")}
+          </div>
+        )}
+        {removedList.length > 0 && (
+          <div className="mb-1 text-xs text-error-600">
+            取消 {removedList.length} 天：{removedList.join("、")}
+          </div>
+        )}
+        {error && (
+          <div className="mb-1 text-xs text-error-600">提交失败：{error}</div>
+        )}
+
+        {/* 操作按钮（在日历上方，避免被导航栏挡住） */}
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <button
+            onClick={clearSelection}
+            disabled={selected.size === 0 && removed.size === 0}
+            className="rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+          >
+            清空选择
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={
+              submitting || (selected.size === 0 && removed.size === 0)
+            }
+            className="flex items-center gap-1 rounded-md bg-primary-700 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-800 disabled:opacity-40"
+          >
+            <Check size={14} />
+            {submitting ? "提交中…" : "完成"}
+          </button>
+        </div>
+
         <div className="mb-1 grid grid-cols-7 gap-1 text-center text-[11px] text-muted-foreground">
           {WEEKDAYS.map((w) => (
             <div key={w}>{w}</div>
@@ -233,40 +269,6 @@ export function TravelDayPicker({
           placeholder="备注（可选，如北京出差）"
           className="mt-3 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
         />
-
-        {selectedList.length > 0 && (
-          <div className="mt-2 text-xs text-muted-foreground">
-            已选 {selectedList.length} 天：{selectedList.join("、")}
-          </div>
-        )}
-        {removedList.length > 0 && (
-          <div className="mt-1 text-xs text-error-600">
-            取消 {removedList.length} 天：{removedList.join("、")}
-          </div>
-        )}
-        {error && (
-          <div className="mt-2 text-xs text-error-600">提交失败：{error}</div>
-        )}
-
-        <div className="mt-4 flex items-center justify-between gap-2">
-          <button
-            onClick={clearSelection}
-            disabled={selected.size === 0 && removed.size === 0}
-            className="rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
-          >
-            清空选择
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={
-              submitting || (selected.size === 0 && removed.size === 0)
-            }
-            className="flex items-center gap-1 rounded-md bg-primary-700 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-800 disabled:opacity-40"
-          >
-            <Check size={14} />
-            {submitting ? "提交中…" : "完成"}
-          </button>
-        </div>
       </div>
     </div>
   );

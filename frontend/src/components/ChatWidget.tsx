@@ -12,7 +12,6 @@ import {
   Warning,
   WarningCircle,
   ArrowCounterClockwise,
-  Wallet,
   Calendar,
 } from "@phosphor-icons/react";
 import { dialogApi, portalApi, bossApi } from "../api/client";
@@ -531,11 +530,6 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
   // 批量待发送文件：用户选多文件后暂存，等输入说明并点发送时一起上传
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
 
-  // 无凭证报销弹窗状态
-  const [noReceiptModal, setNoReceiptModal] = useState(false);
-  const [noReceiptAmount, setNoReceiptAmount] = useState("");
-  const [noReceiptReason, setNoReceiptReason] = useState("");
-
   // 出差日标记 picker 状态（仅 employee role）
   const [travelPickerOpen, setTravelPickerOpen] = useState(false);
   const [travelDays, setTravelDays] = useState<TravelDay[]>([]);
@@ -942,62 +936,6 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
     uploadPendingFilesRef.current = uploadPendingFiles;
   }, [uploadPendingFiles]);
 
-  /** 无凭证报销确认 */
-  const handleNoReceiptConfirm = useCallback(() => {
-    const amount = noReceiptAmount.trim();
-    const reason = noReceiptReason.trim();
-    if (!amount || !reason) return;
-
-    // 构造用户消息（显示在对话中）
-    const userMsg: DialogMessage = {
-      id: genId(),
-      role: "user",
-      text: `无凭证报销 · 金额：¥${amount} · 原因：${reason}`,
-      timestamp: Date.now(),
-    };
-    setMessages((prev) => [...prev, userMsg]);
-    setIsTyping(true);
-
-    // 直接调用对话 API，走 emp_no_receipt 快捷通道
-    dialogApi
-      .sendMessage({
-        user_id: userId,
-        text: "无凭证报销",
-        role,
-        no_receipt_amount: amount,
-        user_description: reason,
-      })
-      .then((res) => {
-        const assistantMsg: DialogMessage = {
-          id: genId(),
-          role: "assistant",
-          text: res.text || "(无响应)",
-          timestamp: Date.now(),
-          quickReplies: res.quick_replies || [],
-          actionTaken: res.action_taken,
-          error: res.error,
-          invoiceId: res.data?.invoice_id as number | undefined,
-        };
-        setMessages((prev) => [...prev, assistantMsg]);
-      })
-      .catch((err) => {
-        const errorMsg: DialogMessage = {
-          id: genId(),
-          role: "system",
-          text: err instanceof Error ? err.message : "请求失败，请稍后重试",
-          timestamp: Date.now(),
-          error: "request_failed",
-        };
-        setMessages((prev) => [...prev, errorMsg]);
-      })
-      .finally(() => {
-        setIsTyping(false);
-        setNoReceiptModal(false);
-        setNoReceiptAmount("");
-        setNoReceiptReason("");
-      });
-  }, [noReceiptAmount, noReceiptReason, userId, role]);
-
   /** 重置对话 */
   const handleReset = useCallback(async () => {
     try {
@@ -1207,16 +1145,6 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
                   <Paperclip size={20} className="pointer-events-none" />
                 </button>
 
-                {/* 无凭证报销 */}
-                <button
-                  onClick={() => setNoReceiptModal(true)}
-                  disabled={isTyping}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-amber-50 hover:text-amber-600 disabled:opacity-40"
-                  title="无凭证报销"
-                >
-                  <Wallet size={20} className="pointer-events-none" />
-                </button>
-
                 {/* 标记出差日（仅员工端） */}
                 {role === "employee" && (
                   <>
@@ -1318,89 +1246,6 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
         );
       })()}
 
-      {/* ===== 无凭证报销弹窗 ===== */}
-      <AnimatePresence>
-        {noReceiptModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) setNoReceiptModal(false);
-            }}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              transition={{ type: "spring", stiffness: 300, damping: 28 }}
-              className="w-[360px] rounded-2xl bg-background p-5 shadow-2xl ring-1 ring-border"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* 标题 */}
-              <div className="mb-4 flex items-center gap-2">
-                <Wallet size={18} className="text-amber-500" />
-                <h3 className="text-base font-bold text-foreground">无凭证报销</h3>
-              </div>
-
-              {/* 提示 */}
-              <div className="mb-4 flex items-start gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                <WarningCircle size={14} className="mt-0.5 shrink-0" weight="fill" />
-                <span>无凭证报销需填写金额和费用原因，提交后由人工审核</span>
-              </div>
-
-              {/* 金额输入 */}
-              <div className="mb-4">
-                <label className="mb-2 block text-sm font-medium text-foreground">
-                  金额 <span className="font-normal text-red-400">*必填</span>
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">¥</span>
-                  <input
-                    type="text"
-                    value={noReceiptAmount}
-                    onChange={(e) => setNoReceiptAmount(e.target.value)}
-                    placeholder="例如：120"
-                    className="w-full rounded-lg border border-border bg-muted py-2 pl-7 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-amber-400 focus:bg-background focus:outline-none focus:ring-2 focus:ring-amber-100"
-                  />
-                </div>
-              </div>
-
-              {/* 费用原因 */}
-              <div className="mb-5">
-                <label className="mb-2 block text-sm font-medium text-foreground">
-                  费用原因 <span className="font-normal text-red-400">*必填</span>
-                </label>
-                <textarea
-                  value={noReceiptReason}
-                  onChange={(e) => setNoReceiptReason(e.target.value)}
-                  rows={3}
-                  placeholder="请详细描述产生费用的原因，例如：客户拜访打车费"
-                  className="w-full resize-none rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-amber-400 focus:bg-background focus:outline-none focus:ring-2 focus:ring-amber-100"
-                />
-              </div>
-
-              {/* 操作按钮 */}
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setNoReceiptModal(false)}
-                  className="flex-1 rounded-lg border border-border bg-background px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.98]"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={handleNoReceiptConfirm}
-                  disabled={!noReceiptAmount.trim() || !noReceiptReason.trim()}
-                  className="flex-1 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-white transition-all hover:bg-amber-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  确认提交
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </>
   );
 }

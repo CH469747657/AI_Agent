@@ -2,7 +2,7 @@
 
 使用 APScheduler AsyncIOScheduler 在 FastAPI lifespan 中启动/停止。
 当前注册的任务：
-- cycle_lock_job: 每月 21 日 00:05 归集游离发票 + 封账上一周期 + 自动生成报表
+- cycle_lock_job: 每月 21 日 00:00 归集游离发票 + 封账上一周期 + 自动生成报表
 - timeout_reminder_job: 每 2 分钟检查超时用户并主动推送提醒
 """
 
@@ -24,7 +24,7 @@ PURPOSE_TIMEOUT_SECONDS = 300  # 5 分钟
 async def _cycle_lock_job() -> None:
     """定时归集 + 封账 + 自动生成报表任务
 
-    每月 21 日 00:05 执行：
+    每月 21 日 00:00 执行：
     1. 归集所有游离发票到对应周期报销单
     2. 封账刚结束的周期（自动提交 DRAFT）
     3. 对已封账的报销单自动生成报表三件套（Excel + PDF + ZIP）
@@ -77,6 +77,7 @@ async def _generate_reports_for_locked_cycles(db, lock_result: dict) -> None:
             Reimbursement.cycle_key.in_(cycle_keys),
             Reimbursement.is_cycle_locked == True,  # noqa: E712
             Reimbursement.status.in_([
+                ReimbursementStatus.submitted,
                 ReimbursementStatus.reviewed,
                 ReimbursementStatus.reimbursed,
             ]),
@@ -181,10 +182,10 @@ def start_scheduler() -> AsyncIOScheduler:
 
     _scheduler = AsyncIOScheduler()
 
-    # 每月 21 日 00:05 归集游离发票 + 封账上一周期 + 自动生成报表
+    # 每月 21 日 00:00 归集游离发票 + 封账上一周期 + 自动生成报表
     _scheduler.add_job(
         _cycle_lock_job,
-        trigger=CronTrigger(day=21, hour=0, minute=5),
+        trigger=CronTrigger(day=21, hour=0, minute=0),
         id="cycle_lock_job",
         name="归集+封账+报表",
         replace_existing=True,

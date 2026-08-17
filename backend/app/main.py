@@ -181,6 +181,12 @@ app.include_router(boss_auth_router, prefix="/api/boss/auth", tags=["老板端-�
 app.include_router(portal_auth.router, prefix="/api/portal/auth", tags=["员工端-认证"])
 app.include_router(portal.router, prefix="/api/portal", tags=["员工端-业务"])
 
+# 出差日路由（员工端 + 管理端）
+from app.routers.travel_days import portal_router as travel_portal_router
+from app.routers.travel_days import admin_router as travel_admin_router
+app.include_router(travel_portal_router, prefix="/api/portal/travel-days", tags=["员工端-出差日"])
+app.include_router(travel_admin_router, prefix="/api/admin/travel-days", tags=["管理端-出差日"])
+
 # 对话引擎路由（Phase 1 骨架）
 app.include_router(dialog.router, prefix="/api/dialog", tags=["对话引擎"])
 

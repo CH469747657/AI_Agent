@@ -65,7 +65,13 @@ class BatchModifyTool(_BridgeTool):
 
 class NoReceiptTool(_BridgeTool):
     name = "emp_no_receipt"
-    description = "无票报销，输入金额和原因"
+    description = (
+        "员工无票报销。仅当用户文本明确提到「无票/无凭证/没有发票/无票报销」"
+        "且提供有效金额（正数 0<金额≤100000 元）+ 有效用途描述（≥2 个汉字，"
+        "明确说明费用类型/场景，如「打车费」「客户招待餐费」「办公文具采购」）"
+        "时才调用此工具。若任一条件不满足，不要调用此工具，直接用自然语言"
+        "引导用户补充金额或用途。"
+    )
     Parameters = NoReceiptParams
     required_roles = [UserRole.EMPLOYEE, UserRole.ADMIN]
     handler_method = "_handle_no_receipt"

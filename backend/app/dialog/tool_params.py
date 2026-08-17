@@ -57,10 +57,23 @@ class BatchModifyParams(BaseModel):
 
 
 class NoReceiptParams(BaseModel):
-    """无票报销参数"""
+    """无票报销参数
+
+    LLM 通过 function calling 输出参数时由 Pydantic 自动校验：
+    - amount 必须为正数（> 0），负数 / 零 / 非数字 / 过大金额（>100000）会被拒绝
+    - description 不能为空或仅含符号/单字符
+    """
     model_config = {"extra": "allow"}
-    amount: str = Field(description="报销金额，如：120")
-    description: str = Field(description="费用用途说明")
+    amount: float = Field(
+        gt=0,
+        le=100000,
+        description="报销金额（正数，单位：元，最大 100000）。如：120 / 88.5",
+    )
+    description: str = Field(
+        min_length=2,
+        max_length=200,
+        description="费用用途说明（2-200 字，需为有意义的中文描述，不能仅为符号或单字符）",
+    )
 
 
 class MarkTravelDayParams(BaseModel):

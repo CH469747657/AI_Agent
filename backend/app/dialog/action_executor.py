@@ -655,11 +655,30 @@ class ActionExecutor:
     async def _handle_no_receipt(
         self, ctx: DialogContext, db: AsyncSession, _: Optional[dict]
     ) -> dict:
-        """无票报销"""
+        """无票报销
+
+        LLM 通过 function calling 输出 amount (float>0) + description (2-200 字)。
+        NoReceiptParams 已强制校验，handler 仅做兜底检查。
+        """
         amount_slot = ctx.slots.get("amount")
         desc_slot = ctx.slots.get("description")
-        amount = amount_slot.value if amount_slot and amount_slot.filled else ""
+        # amount 期望为 float（来自 NoReceiptParams）；兼容 LLM 偶尔返回字符串
+        amount_val = amount_slot.value if amount_slot and amount_slot.filled else None
+        if isinstance(amount_val, (int, float)):
+            amount = f"{amount_val:.2f}".rstrip("0").rstrip(".") or "0"
+        elif isinstance(amount_val, str) and amount_val:
+            amount = amount_val
+        else:
+            return {
+                "text": "请提供无凭证报销的金额（正数）和具体用途说明，例如：120 元打车费。",
+                "data": {},
+            }
         description = desc_slot.value if desc_slot and desc_slot.filled else ""
+        if not description or len(description.strip()) < 2:
+            return {
+                "text": "请描述这笔无凭证报销的具体用途，例如：120 元打车费-机场往返。",
+                "data": {},
+            }
 
         service = InvoiceService(db)
         invoice = await service.process_no_receipt(

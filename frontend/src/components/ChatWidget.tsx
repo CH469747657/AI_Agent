@@ -14,7 +14,7 @@ import {
   ArrowCounterClockwise,
   Wallet,
 } from "@phosphor-icons/react";
-import { dialogApi, portalApi } from "../api/client";
+import { dialogApi, portalApi, bossApi } from "../api/client";
 import type { DialogMessage, DialogRole, BatchInvoiceSummary } from "../types";
 import { ACCEPTED_TYPES, MAX_FILE_SIZE } from "../components/upload/index";
 import { MarkdownRenderer } from "./MarkdownRenderer";
@@ -72,7 +72,8 @@ function deriveFileType(file: File): string {
 function useRoleAndUserId(): { role: DialogRole; userId: string; displayName: string } {
   const location = useLocation();
   const isPortal = location.pathname.startsWith("/portal");
-  const isLogin = location.pathname === "/portal/login";
+  const isBoss = location.pathname.startsWith("/boss");
+  const isLogin = location.pathname === "/portal/login" || location.pathname === "/boss/login";
 
   return useMemo(() => {
     if (isPortal && !isLogin) {
@@ -83,13 +84,21 @@ function useRoleAndUserId(): { role: DialogRole; userId: string; displayName: st
         displayName: emp?.name || "员工",
       };
     }
+    if (isBoss && !isLogin) {
+      const profile = bossApi.getProfile();
+      return {
+        role: "boss" as DialogRole,
+        userId: profile?.username || "boss",
+        displayName: profile?.name || "老板",
+      };
+    }
     // 管理后台默认 admin
     return {
       role: "admin" as DialogRole,
       userId: "admin",
       displayName: "管理员",
     };
-  }, [isPortal, isLogin]);
+  }, [isPortal, isBoss, isLogin]);
 }
 
 // ============================================================

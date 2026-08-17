@@ -24,6 +24,7 @@ import type {
   ReimbursementCreate,
   ReimbursementAttachment,
   Statistics,
+  TravelDay,
   UploadParams,
   VerifyStatus,
 } from "../types";
@@ -762,6 +763,28 @@ export const portalApi = {
     a.remove();
     // 延迟释放，确保浏览器完成读取
     setTimeout(() => URL.revokeObjectURL(url), 10000);
+  },
+
+  // 出差日（员工标记）
+  listTravelDays: (): Promise<TravelDay[]> =>
+    portalRequest<TravelDay[]>("/travel-days"),
+
+  createTravelDay: async (
+    travel_date: string,
+    note?: string
+  ): Promise<TravelDay> => {
+    return portalRequest<TravelDay>("/travel-days", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ travel_date, note: note || null }),
+    });
+  },
+
+  deleteTravelDayByDate: async (travel_date: string): Promise<void> => {
+    await portalRequest<{ deleted: boolean }>(
+      `/travel-days/by-date/${encodeURIComponent(travel_date)}`,
+      { method: "DELETE" }
+    );
   },
 };
 

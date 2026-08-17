@@ -130,6 +130,7 @@ export interface Reimbursement {
   attachments?: ReimbursementAttachment[];
   items?: ReimbursementItem[];
   day_subsidies?: ReimbursementDaySubsidy[];
+  travel_days?: TravelDay[];
 }
 
 export interface ReimbursementItem {
@@ -157,6 +158,17 @@ export interface ReimbursementDaySubsidy {
   included: boolean;
   exclude_reason: string | null;
   trigger_invoice_count: number;
+}
+
+export interface TravelDay {
+  id: number;
+  reimbursement_id: number;
+  travel_date: string;  // ISO date YYYY-MM-DD
+  note: string | null;
+  weekday: number | null;  // 0=周一…6=周日
+  day_type: string | null;  // workday/weekend/holiday
+  base_rate: number | null;
+  applicant_id: string;
 }
 
 export interface ReimbursementCreate {
@@ -370,6 +382,7 @@ export interface PortalReimbursementDetail extends PortalReimbursement {
   zip_path: string | null;
   items?: ReimbursementItem[];
   day_subsidies?: ReimbursementDaySubsidy[];
+  travel_days?: TravelDay[];
   invoices: {
     id: number;
     seller_name: string | null;

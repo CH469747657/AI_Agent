@@ -111,6 +111,23 @@ def main():
     emp_token = body["access_token"]
     print("[OK] 1. 员工登录成功")
 
+    # 1.5 admin 手动创建该员工当前周期报销单（员工端无生成权限）
+    code, body = req(
+        "POST", "/api/admin/auth/login",
+        {"username": "admin", "password": "123456"},
+    )
+    admin_token = body["access_token"]
+    code, body = req(
+        "POST", "/api/reimbursements",
+        {"applicant_id": "EMP001", "reason": "E2E 测试报销单"},
+        token=admin_token,
+    )
+    if code not in (200, 400, 409):
+        # 200=新建成功，400=已存在（不可重），失败则忽略
+        print(f"  [warn] admin 创建报销单返回 {code}：{body}")
+    else:
+        print("[OK] 1.5 admin 手动创建报销单（业务规则：员工端无生成权限）")
+
     # 2. 拿当前周期内一个日期
     today = date.today()
     test_date = today

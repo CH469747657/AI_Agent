@@ -8,7 +8,7 @@
 - GET    /api/admin/travel-days?reimbursement_id=N
 
 权限矩阵：
-- employee：本人可读 + 本人可写
+- employee：本人可读 + 本人可写（但无报销单生成权限，标记时若报销单不存在则暂存）
 - admin：可读任意员工的 travel_days（穿透查看）
 - boss：可读（穿透查看），不可写
 - 无 token：401
@@ -22,6 +22,9 @@ from app.main import app
 from app.config import settings
 from app.services.auth_service import hash_password
 from app import database as db_module
+
+
+EMP_NO = "EMP001"
 
 
 @pytest.fixture
@@ -70,6 +73,29 @@ def client():
         yield c
 
 
+def _ensure_reimbursement(client, employee_no: str = EMP_NO) -> int:
+    """测试 helper：admin API 手动创建该员工当前周期报销单
+
+    业务规则：员工端无报销单生成权限。报销单由两种方式生成：
+    1. 封账日系统自动生成
+    2. 管理员手动提前生成
+    测试模拟方式 2，走 admin POST /api/reimbursements。
+
+    返回 reimbursement_id
+    """
+    admin_token = _admin_token(client)
+    create_resp = client.post(
+        "/api/reimbursements",
+        json={
+            "applicant_id": employee_no,
+            "reason": "测试用报销单",
+        },
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert create_resp.status_code == 200, create_resp.text
+    return create_resp.json()["id"]
+
+
 @pytest.fixture(autouse=True)
 def _reset_engine_after():
     yield
@@ -84,9 +110,6 @@ def setup_creds(monkeypatch):
     monkeypatch.setattr(settings, "admin_password_hash", hash_password("123456"))
     monkeypatch.setattr(settings, "boss_username", "zhang")
     monkeypatch.setattr(settings, "boss_password_hash", hash_password("zhang"))
-
-
-EMP_NO = "EMP001"
 
 
 def _emp_token(client) -> str:
@@ -208,6 +231,7 @@ def test_delete_travel_day_by_date(client):
 
 def test_admin_can_list_any_travel_days(client):
     """admin 端 GET /api/admin/travel-days?reimbursement_id=N"""
+    _ensure_reimbursement(client)
     emp_token = _emp_token(client)
     d = _today_in_cycle()
     client.post(
@@ -235,6 +259,7 @@ def test_admin_can_list_any_travel_days(client):
 
 def test_boss_can_list_but_not_write(client):
     """boss GET → 200, POST → 401/403"""
+    _ensure_reimbursement(client)
     emp_token = _emp_token(client)
     d = _today_in_cycle()
     client.post(
@@ -273,6 +298,9 @@ def test_mark_after_cycle_lock_rejected(client):
     from datetime import date
     from app.services.cycle_engine import current_cycle_key
 
+    # 先创建报销单（员工端无生成权限，测试通过 admin API 创建）
+    _ensure_reimbursement(client)
+
     token = _emp_token(client)
     d = _today_in_cycle()
     # 先标一个
@@ -292,11 +320,15 @@ def test_mark_after_cycle_lock_rejected(client):
     )
     assert lock_resp.status_code == 200, lock_resp.text
 
-    # 再标一个（同周期内今天）→ 409
-    other_d = date.today().isoformat()
+    # 再标一个（同周期内今天，但不同于 d）→ 409
+    today_d = date.today().isoformat()
+    if today_d == d:
+        # 同一天会触发重复 409，换个日期
+        from datetime import timedelta
+        today_d = (date.today() + timedelta(days=1)).isoformat()
     resp2 = client.post(
         "/api/portal/travel-days",
-        json={"travel_date": other_d, "note": None},
+        json={"travel_date": today_d, "note": None},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp2.status_code == 409, resp2.text

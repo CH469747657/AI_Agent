@@ -18,7 +18,12 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.reimbursement import Reimbursement, ReimbursementStatus, ReimbursementItem
+from app.models.reimbursement import (
+    Reimbursement,
+    ReimbursementStatus,
+    ReimbursementItem,
+    ReimbursementTravelDay,
+)
 from app.models.invoice import Invoice
 from app.models.employee import Employee
 from app.models.holiday import Holiday
@@ -61,6 +66,9 @@ async def get_or_create_reimbursement(
     """按 applicant_id + cycle_key 获取或创建报销单草稿
 
     幂等：UNIQUE(applicant_id, cycle_key) 保证一员工一周期单份
+
+    创建后副作用：把该员工该周期下 reimbursement_id=NULL 的 travel_days
+    批量挂载到新报销单，并触发补贴重算。
     """
     result = await db.execute(
         select(Reimbursement).where(
@@ -91,6 +99,27 @@ async def get_or_create_reimbursement(
     db.add(reimb)
     await db.flush()
     logger.info(f"Created reimbursement #{reimb.id} for {applicant_id} cycle={cycle_key}")
+
+    # 挂载该员工该周期下未挂载的 travel_days（reimbursement_id=NULL）
+    pending_result = await db.execute(
+        select(ReimbursementTravelDay).where(
+            ReimbursementTravelDay.applicant_id == applicant_id,
+            ReimbursementTravelDay.cycle_key == cycle_key,
+            ReimbursementTravelDay.reimbursement_id.is_(None),
+        )
+    )
+    pending_tds = list(pending_result.scalars().all())
+    mounted = 0
+    for td in pending_tds:
+        td.reimbursement_id = reimb.id
+        mounted += 1
+    if mounted:
+        await db.flush()
+        logger.info(f"Mounted {mounted} pending travel_days to reimb #{reimb.id}")
+        # 重算补贴（travel_days 现在挂载到该报销单了）
+        holidays = await load_holidays(db, cycle_start.year)
+        await recompute_all(db, reimb, holidays)
+
     return reimb
 
 

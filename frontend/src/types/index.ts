@@ -162,7 +162,8 @@ export interface ReimbursementDaySubsidy {
 
 export interface TravelDay {
   id: number;
-  reimbursement_id: number;
+  reimbursement_id: number | null;  // 未挂载到报销单时为 null
+  cycle_key: string | null;  // 周期键 YYYY-MM，未挂载时也填充
   travel_date: string;  // ISO date YYYY-MM-DD
   note: string | null;
   weekday: number | null;  // 0=周一…6=周日

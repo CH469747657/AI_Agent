@@ -115,7 +115,13 @@ class ReimbursementDaySubsidy(Base, TimestampMixin):
 
 
 class ReimbursementTravelDay(Base, TimestampMixin):
-    """报销单出差日 — 员工在对话框标记的出差日，触发补贴核算
+    """员工标记的出差日 — 触发报销补贴核算
+
+    与 Reimbursement 的关系：
+    - reimbursement_id 可空：员工标记时报销单可能尚未生成（系统在封账日自动生成
+      或管理员手动提前生成）。此时 cycle_key 填充，待报销单生成时由
+      aggregation_service.get_or_create_reimbursement 批量挂载。
+    - reimbursement_id 非空时：已挂载到具体报销单，参与补贴核算。
 
     与 ReimbursementDaySubsidy 的关系：
     - travel_days 是触发源（员工主动标记）
@@ -129,8 +135,12 @@ class ReimbursementTravelDay(Base, TimestampMixin):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    reimbursement_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("reimbursements.id", ondelete="CASCADE"), index=True, nullable=False
+    reimbursement_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("reimbursements.id", ondelete="CASCADE"), index=True, nullable=True,
+        comment="所属报销单 ID，未挂载时为 NULL",
+    )
+    cycle_key: Mapped[str | None] = mapped_column(
+        String(10), nullable=True, index=True, comment="周期键 YYYY-MM，未挂载时用于按员工+周期检索"
     )
     travel_date: Mapped[date] = mapped_column(Date, nullable=False, comment="出差日期")
     note: Mapped[str | None] = mapped_column(Text, nullable=True, comment="备注，如北京出差/返程")

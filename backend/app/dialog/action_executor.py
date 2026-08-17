@@ -47,7 +47,6 @@ from app.services.reimbursement_service import (
     submit_reimbursement,
     get_reimbursement_or_404,
 )
-from app.services.aggregation_service import get_or_create_reimbursement
 from app.services.cycle_engine import cycle_display, current_cycle_key, cycle_key_of, billing_cycle
 from app.services.subsidy_engine import recompute_all, load_holidays, day_type, subsidy_rate
 from app.dialog.models import DialogContext, UserRole
@@ -695,11 +694,11 @@ class ActionExecutor:
 
         LLM 从用户文本提取 travel_dates（YYYY-MM-DD 数组）+ note（可选）。
         每个 travel_date：
-        - 按其所属周期 cycle_key 找/创建报销单
-        - 校验周期未封账
         - 校验日期落在当前周期内（与 picker 一致规则）
-        - 标记 travel_day（重复则跳过）
-        - recompute_all
+        - 查当前周期报销单（仅查询，不创建——员工端无报销单生成权限）
+        - 报销单已存在 → 挂载 + 校验未封账 + recompute_all
+        - 报销单不存在 → 暂存 reimbursement_id=NULL + cycle_key，等报销单生成时挂载
+        - 重复（同员工同 travel_date）→ 跳过
         """
         td_slot = ctx.slots.get("travel_dates")
         note_slot = ctx.slots.get("note")
@@ -726,6 +725,7 @@ class ActionExecutor:
         rejected_out_of_cycle: list[str] = []
         rejected_locked: list[str] = []
         errors: list[str] = []
+        pending_count = 0  # 暂存未挂载的天数
 
         for d_str in raw_dates:
             try:
@@ -740,16 +740,24 @@ class ActionExecutor:
                 rejected_out_of_cycle.append(d_str)
                 continue
 
-            reimb = await get_or_create_reimbursement(db, ctx.user_id, expected_ck)
-            if reimb.is_cycle_locked:
+            # 仅查询报销单，不创建（员工端无报销单生成权限）
+            reimb = (
+                await db.execute(
+                    select(Reimbursement).where(
+                        Reimbursement.applicant_id == ctx.user_id,
+                        Reimbursement.cycle_key == expected_ck,
+                    )
+                )
+            ).scalars().first()
+            if reimb and reimb.is_cycle_locked:
                 rejected_locked.append(d_str)
                 continue
 
-            # 检查重复
+            # 应用层去重：同员工同 travel_date 已存在（含未挂载）→ 跳过
             existing = (
                 await db.execute(
                     select(ReimbursementTravelDay).where(
-                        ReimbursementTravelDay.reimbursement_id == reimb.id,
+                        ReimbursementTravelDay.applicant_id == ctx.user_id,
                         ReimbursementTravelDay.travel_date == parsed,
                     )
                 )
@@ -758,9 +766,11 @@ class ActionExecutor:
                 skipped_dup.append(d_str)
                 continue
 
-            holidays = await load_holidays(db, (reimb.cycle_start or today).year)
+            cycle_year = (reimb.cycle_start or today).year if reimb else today.year
+            holidays = await load_holidays(db, cycle_year)
             td = ReimbursementTravelDay(
-                reimbursement_id=reimb.id,
+                reimbursement_id=reimb.id if reimb else None,
+                cycle_key=expected_ck,
                 travel_date=parsed,
                 note=note,
                 weekday=parsed.weekday(),
@@ -776,7 +786,11 @@ class ActionExecutor:
                 errors.append(f"{d_str}（标记失败）")
                 continue
 
-            await recompute_all(db, reimb, holidays)
+            # 报销单存在时才重算补贴；否则等报销单生成时挂载后重算
+            if reimb:
+                await recompute_all(db, reimb, holidays)
+            else:
+                pending_count += 1
             added.append(d_str)
 
         await db.commit()
@@ -785,6 +799,11 @@ class ActionExecutor:
         parts: list[str] = []
         if added:
             parts.append(f"✅ 已标记 {len(added)} 天为出差日：{'、'.join(added)}")
+        if pending_count > 0:
+            parts.append(
+                f"⏳ 其中 {pending_count} 天待挂载：报销单生成后（封账日系统自动 / 管理员手动）"
+                f"将自动关联并核算补贴"
+            )
         if skipped_dup:
             parts.append(f"ℹ️ 已跳过（之前已标记）：{'、'.join(skipped_dup)}")
         if rejected_out_of_cycle:
@@ -799,8 +818,6 @@ class ActionExecutor:
             parts.append(f"📝 备注：{note}")
 
         text = "\n".join(parts) if parts else "未标记任何出差日。"
-        if added:
-            text += "\n\n💡 已自动核算补贴（工作日 60 / 节假日 80）。可在「报销单」详情查看。"
         return {
             "text": text,
             "data": {

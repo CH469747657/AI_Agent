@@ -180,7 +180,8 @@ class TravelDayCreateRequest(BaseModel):
 class TravelDayResponse(BaseModel):
     """出差日记录"""
     id: int
-    reimbursement_id: int
+    reimbursement_id: int | None
+    cycle_key: str | None
     travel_date: date
     note: str | None = None
     weekday: int | None = None

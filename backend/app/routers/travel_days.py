@@ -25,7 +25,6 @@ from app.models.reimbursement import Reimbursement, ReimbursementTravelDay
 from app.routers.portal_auth import get_current_employee_async
 from app.routers.admin_auth import get_current_admin_or_boss
 from app.schemas import TravelDayCreateRequest, TravelDayResponse
-from app.services.aggregation_service import get_or_create_reimbursement
 from app.services.cycle_engine import cycle_key_of, current_cycle_key
 from app.services.subsidy_engine import recompute_all, day_type, subsidy_rate, load_holidays
 
@@ -36,12 +35,21 @@ portal_router = APIRouter()
 admin_router = APIRouter()
 
 
-async def _get_or_create_my_reimbursement(
+async def _find_or_pending_reimbursement(
     db: AsyncSession, employee: Employee, travel_date: date
-) -> Reimbursement:
-    """按 travel_date 找该员工该周期的报销单，不存在则创建草稿
+) -> tuple[Reimbursement | None, str]:
+    """按 travel_date 找该员工当前周期的报销单
 
-    要求 travel_date 落在当前周期内（前端日历组件只让选当前周期）。
+    业务规则：员工端不允许执行报销单生成操作。报销单仅由两种方式生成：
+    1. 封账日（每月21日）系统自动生成
+    2. 管理员手动提前生成
+
+    员工标记出差日时：
+    - 若报销单已存在（上述两种方式之一）→ 返回该报销单，travel_day 挂载上去
+    - 若不存在 → 返回 (None, cycle_key)，travel_day 以 reimbursement_id=NULL + cycle_key 暂存
+
+    Returns:
+        (reimb_or_none, cycle_key)
     """
     today = date.today()
     expected_cycle_key = current_cycle_key(today)
@@ -54,12 +62,20 @@ async def _get_or_create_my_reimbursement(
                 f"请选择当前周期内的日期"
             ),
         )
-    return await get_or_create_reimbursement(db, employee.employee_no, expected_cycle_key)
+    # 仅查询，不创建（员工端无报销单生成权限）
+    result = await db.execute(
+        select(Reimbursement).where(
+            Reimbursement.applicant_id == employee.employee_no,
+            Reimbursement.cycle_key == expected_cycle_key,
+        )
+    )
+    reimb = result.scalars().first()
+    return reimb, expected_cycle_key
 
 
-def _assert_not_locked(reimb: Reimbursement) -> None:
+def _assert_not_locked(reimb: Reimbursement | None) -> None:
     """周期已封账则禁止改 travel_days（21 日定时任务后只读）"""
-    if reimb.is_cycle_locked:
+    if reimb and reimb.is_cycle_locked:
         raise HTTPException(
             status_code=409,
             detail=(
@@ -75,7 +91,7 @@ async def list_my_travel_days(
     employee: Employee = Depends(get_current_employee_async),
     db: AsyncSession = Depends(get_db),
 ):
-    """列出当前员工所有报销单的出差日（按日期升序）"""
+    """列出当前员工所有报销单的出差日（按日期升序，含未挂载的）"""
     result = await db.execute(
         select(ReimbursementTravelDay)
         .where(ReimbursementTravelDay.applicant_id == employee.employee_no)
@@ -90,17 +106,35 @@ async def mark_travel_day(
     employee: Employee = Depends(get_current_employee_async),
     db: AsyncSession = Depends(get_db),
 ):
-    """标记一个出差日"""
-    reimb = await _get_or_create_my_reimbursement(db, employee, req.travel_date)
+    """标记一个出差日
+
+    - 报销单已存在 → 挂载到报销单 + recompute
+    - 报销单不存在 → 暂存 reimbursement_id=NULL + cycle_key，等报销单生成时挂载
+    """
+    reimb, cycle_key = await _find_or_pending_reimbursement(db, employee, req.travel_date)
     _assert_not_locked(reimb)
 
-    cycle_year = (reimb.cycle_start or date.today()).year
+    cycle_year = (reimb.cycle_start or date.today()).year if reimb else date.today().year
     holidays = await load_holidays(db, cycle_year)
     dt = day_type(req.travel_date, holidays)
     rate = subsidy_rate(req.travel_date, holidays)
 
+    # 应用层去重：同员工同 travel_date 已存在（含未挂载）→ 409
+    # PG 在 reimbursement_id=NULL 时 UniqueConstraint(reimbursement_id, travel_date) 不生效
+    existing = (
+        await db.execute(
+            select(ReimbursementTravelDay).where(
+                ReimbursementTravelDay.applicant_id == employee.employee_no,
+                ReimbursementTravelDay.travel_date == req.travel_date,
+            )
+        )
+    ).scalars().first()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"出差日 {req.travel_date} 已标记")
+
     td = ReimbursementTravelDay(
-        reimbursement_id=reimb.id,
+        reimbursement_id=reimb.id if reimb else None,
+        cycle_key=cycle_key,
         travel_date=req.travel_date,
         note=req.note,
         weekday=req.travel_date.weekday(),
@@ -115,7 +149,9 @@ async def mark_travel_day(
         await db.rollback()
         raise HTTPException(status_code=409, detail=f"出差日 {req.travel_date} 已标记")
 
-    await recompute_all(db, reimb, holidays)
+    # 报销单存在时才重算补贴；否则等报销单生成时由 aggregation_service 挂载后重算
+    if reimb:
+        await recompute_all(db, reimb, holidays)
     await db.commit()
     await db.refresh(td)
     return td

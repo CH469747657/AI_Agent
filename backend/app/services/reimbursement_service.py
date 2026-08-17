@@ -166,11 +166,33 @@ async def create_reimbursement(
     if not reason or not str(reason).strip():
         raise HTTPException(status_code=400, detail="报销事由为必填项")
 
+    # period 兼容字段 = cycle_key；未传入时按当前周期推导
+    from app.services.cycle_engine import cycle_key_of, billing_cycle
+    from datetime import date as _date
+    cycle_key = period or cycle_key_of(_date.today())
+    cycle_start, cycle_end = billing_cycle(cycle_key)
+
+    # 幂等：UNIQUE(applicant_id, cycle_key) 保证一员工一周期单份
+    # 已存在则直接返回，不重复创建（避免 IntegrityError）
+    existing = (
+        await db.execute(
+            select(Reimbursement).where(
+                Reimbursement.applicant_id == applicant_id,
+                Reimbursement.cycle_key == cycle_key,
+            )
+        )
+    ).scalars().first()
+    if existing:
+        return existing
+
     reimbursement = Reimbursement(
         applicant_id=applicant_id,
         applicant_name=applicant_name,
         department=department,
-        period=period,
+        period=cycle_key,
+        cycle_key=cycle_key,
+        cycle_start=cycle_start,
+        cycle_end=cycle_end,
         reason=reason,
         status=ReimbursementStatus.draft,
     )
@@ -189,6 +211,25 @@ async def create_reimbursement(
             inv.reimbursement_id = reimbursement.id
             total += _parse_amount(inv.total_with_tax)
         reimbursement.total_amount = total
+
+    # 挂载该员工该周期下未挂载的 travel_days（员工可能在报销单生成前已标记）
+    from app.models.reimbursement import ReimbursementTravelDay
+    from app.services.subsidy_engine import recompute_all, load_holidays
+    pending_tds = (
+        await db.execute(
+            select(ReimbursementTravelDay).where(
+                ReimbursementTravelDay.applicant_id == applicant_id,
+                ReimbursementTravelDay.cycle_key == cycle_key,
+                ReimbursementTravelDay.reimbursement_id.is_(None),
+            )
+        )
+    ).scalars().all()
+    if pending_tds:
+        for td in pending_tds:
+            td.reimbursement_id = reimbursement.id
+        await db.flush()
+        holidays = await load_holidays(db, cycle_start.year)
+        await recompute_all(db, reimbursement, holidays)
 
     await db.commit()
     await db.refresh(reimbursement)
@@ -485,6 +526,7 @@ async def serialize_reimbursement_detail(
             {
                 "id": td.id,
                 "reimbursement_id": td.reimbursement_id,
+                "cycle_key": td.cycle_key,
                 "travel_date": td.travel_date.isoformat() if td.travel_date else None,
                 "note": td.note,
                 "weekday": td.weekday,

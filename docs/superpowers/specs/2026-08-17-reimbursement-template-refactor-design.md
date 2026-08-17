@@ -47,7 +47,7 @@ purpose: Mapped[str | None] = mapped_column(Text, nullable=True, comment="用途
 - `expense_date`（系统三级推断日期）— 保留作兜底；但**报表上半段以 `business_date` 为准**
 - `expense_date_source` — 保留
 
-`ReimbursementItem.item_date` 改为存 `invoice.business_date`（关联时取自发票，缺失则用 `expense_date` 兜底）；`weekday` 由 `business_date` 推算。其他模型无变更。
+`ReimbursementItem.item_date` 改为存 `invoice.business_date`（关联时取自发票，**缺失时置 `None`，不兜底 `expense_date`**）；`weekday` 由 `business_date` 推算。其他模型无变更。
 
 迁移：`backend/migrations/versions/20260817_add_invoice_business_date_purpose.py`，Alembic 加 2 列。
 
@@ -179,16 +179,17 @@ async def attach_invoice_to_cycle(db, invoice, today=None):
     curr_ck = current_cycle_key(today)
 
     # 后续逻辑同现有：检查目标周期是否封账 → 归入对应报销单 → 创建明细行 → recompute_all
-    # ReimbursementItem.item_date 改为 business_date（如果有），否则用 expense_date 兜底
-    item_date = invoice.business_date or edate
+    # ReimbursementItem.item_date：business_date 缺失时置 None（不兜底 expense_date），
+    # 这样报表上半段会自动跳过未填出差时间的明细行（见 §3.1 "上半段行生成规则"）
+    item_date = invoice.business_date  # 不兜底；缺失则 None
     weekday = item_date.weekday() if item_date else None
     ...
 ```
 
 未填 `business_date` 的发票（定时归集可能产生）：
 - 定时归集仍把它们归入当前未封账周期，标 `is_late_charge=True`
-- 报表生成时跳过这些行（不进入上下半段，金额不计入小计）
-- 归集后补填 `business_date` 后 recompute 报表即可显示
+- 明细行 `item_date = None`；报表生成时跳过这些行（不进入上下半段，金额不计入小计）
+- 归集后补填 `business_date` 后 recompute 报表即可显示（届时 `ReimbursementItem.item_date` 也会被刷新）
 
 ### 定时任务时间校准
 

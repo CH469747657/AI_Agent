@@ -24,6 +24,7 @@ from app.models.reimbursement import (
     ReimbursementAttachment,
     ReimbursementItem,
     ReimbursementDaySubsidy,
+    ReimbursementTravelDay,
 )
 from app.models.invoice import Invoice, InvoiceStatus, VerifyStatus, DuplicateStatus
 from app.models.employee import Employee
@@ -410,6 +411,14 @@ async def serialize_reimbursement_detail(
     )
     day_subsidies = list(ds_result.scalars().all())
 
+    # 出差日（员工标记的 travel_days）
+    td_result = await db.execute(
+        select(ReimbursementTravelDay)
+        .where(ReimbursementTravelDay.reimbursement_id == reimbursement.id)
+        .order_by(ReimbursementTravelDay.travel_date)
+    )
+    travel_days = list(td_result.scalars().all())
+
     # 附件
     att_result = await db.execute(
         select(ReimbursementAttachment)
@@ -471,6 +480,19 @@ async def serialize_reimbursement_detail(
                 "trigger_invoice_count": ds.trigger_invoice_count,
             }
             for ds in day_subsidies
+        ],
+        "travel_days": [
+            {
+                "id": td.id,
+                "reimbursement_id": td.reimbursement_id,
+                "travel_date": td.travel_date.isoformat() if td.travel_date else None,
+                "note": td.note,
+                "weekday": td.weekday,
+                "day_type": td.day_type,
+                "base_rate": td.base_rate,
+                "applicant_id": td.applicant_id,
+            }
+            for td in travel_days
         ],
         "attachments": [
             {

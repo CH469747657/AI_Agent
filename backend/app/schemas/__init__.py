@@ -171,6 +171,27 @@ class ReimbursementDaySubsidyResponse(BaseModel):
         from_attributes = True
 
 
+class TravelDayCreateRequest(BaseModel):
+    """员工标记出差日请求"""
+    travel_date: date
+    note: str | None = None
+
+
+class TravelDayResponse(BaseModel):
+    """出差日记录"""
+    id: int
+    reimbursement_id: int
+    travel_date: date
+    note: str | None = None
+    weekday: int | None = None
+    day_type: str | None = None
+    base_rate: float | None = None
+    applicant_id: str
+
+    class Config:
+        from_attributes = True
+
+
 class ReimbursementLinkRequest(BaseModel):
     invoice_ids: list[int]
 

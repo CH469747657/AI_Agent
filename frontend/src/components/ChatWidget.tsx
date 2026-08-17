@@ -785,6 +785,13 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
               // 执行了实际操作（上传/删除/修改发票）→ 通知其他组件刷新统计数据
               if (res.action_taken) {
                 window.dispatchEvent(new CustomEvent("chat-invoices-changed"));
+                // 员工端：可能标了出差日 → 刷新 travelDays 让日历组件同步显示
+                if (role === "employee") {
+                  portalApi
+                    .listTravelDays()
+                    .then(setTravelDays)
+                    .catch(() => {});
+                }
               }
             },
             onError: (message) => {

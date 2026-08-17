@@ -250,9 +250,9 @@ export function TravelDayPicker({
                     : rm
                       ? "bg-error-50 text-error-600 line-through"
                       : sel
-                        ? "bg-primary-700 text-white"
+                        ? "bg-primary-700 text-white ring-2 ring-primary-700"
                         : existing
-                          ? "bg-primary-50 text-primary-700"
+                          ? "bg-primary-700 text-white"
                           : "text-foreground hover:bg-muted"
                 }`}
               >

@@ -63,6 +63,22 @@ class NoReceiptParams(BaseModel):
     description: str = Field(description="费用用途说明")
 
 
+class MarkTravelDayParams(BaseModel):
+    """标记出差日参数"""
+    model_config = {"extra": "allow"}
+    travel_dates: list[str] = Field(
+        description=(
+            "出差日期列表，YYYY-MM-DD 格式字符串数组。"
+            "支持单日['2026-08-15']、多日['2026-08-15','2026-08-16','2026-08-17']、"
+            "区间必须展开为完整列表。"
+        )
+    )
+    note: Optional[str] = Field(
+        default=None,
+        description="出差备注，如：北京出差、返程、上海谈客户。无明确备注则留空",
+    )
+
+
 class SubmitReimbursementParams(BaseModel):
     """提交报销单参数"""
     model_config = {"extra": "allow"}

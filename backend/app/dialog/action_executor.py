@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_async_sessionmaker
 from app.config import settings
 from app.models.invoice import Invoice, InvoiceStatus, ReceiptType
-from app.models.reimbursement import Reimbursement, ReimbursementStatus
+from app.models.reimbursement import Reimbursement, ReimbursementStatus, ReimbursementTravelDay
 from app.models.employee import Employee
 from app.services.invoice_service import InvoiceService
 from app.services.reimbursement_service import (
@@ -47,7 +47,9 @@ from app.services.reimbursement_service import (
     submit_reimbursement,
     get_reimbursement_or_404,
 )
-from app.services.cycle_engine import cycle_display, current_cycle_key
+from app.services.aggregation_service import get_or_create_reimbursement
+from app.services.cycle_engine import cycle_display, current_cycle_key, cycle_key_of, billing_cycle
+from app.services.subsidy_engine import recompute_all, load_holidays, day_type, subsidy_rate
 from app.dialog.models import DialogContext, UserRole
 from app.dialog.insight_engine import get_insight_engine
 
@@ -129,6 +131,7 @@ class ActionExecutor:
             "emp_confirm_category": self._handle_confirm_category,
             "emp_confirm_project": self._handle_confirm_project,
             "emp_delete_invoice": self._handle_delete_invoice,
+            "emp_mark_travel_day": self._handle_mark_travel_day,
             # 查询类
             "emp_query_invoices": self._handle_query_invoices,
             "emp_query_status": self._handle_query_status,
@@ -684,6 +687,130 @@ class ActionExecutor:
         else:
             text += "输入「完成」提交报销。"
         return {"text": text, "data": {"invoice_id": invoice.id}}
+
+    async def _handle_mark_travel_day(
+        self, ctx: DialogContext, db: AsyncSession, _: Optional[dict]
+    ) -> dict:
+        """员工在对话中描述出差日期 → 标记 travel_days + 触发补贴重算
+
+        LLM 从用户文本提取 travel_dates（YYYY-MM-DD 数组）+ note（可选）。
+        每个 travel_date：
+        - 按其所属周期 cycle_key 找/创建报销单
+        - 校验周期未封账
+        - 校验日期落在当前周期内（与 picker 一致规则）
+        - 标记 travel_day（重复则跳过）
+        - recompute_all
+        """
+        td_slot = ctx.slots.get("travel_dates")
+        note_slot = ctx.slots.get("note")
+        raw_dates: list[str] = []
+        if td_slot and td_slot.filled and isinstance(td_slot.value, list):
+            raw_dates = [str(d) for d in td_slot.value]
+        elif td_slot and td_slot.filled and isinstance(td_slot.value, str):
+            # LLM 偶尔返回单字符串而非数组，做兼容
+            raw_dates = [str(td_slot.value)]
+        note = note_slot.value if note_slot and note_slot.filled else None
+
+        if not raw_dates:
+            return {
+                "text": "请告诉我要标记哪天为出差日，例如「8月15日出差」「8月15-17日去北京」。",
+                "data": {},
+            }
+
+        # 当前周期 key（21-20 制）— 仅允许标当前周期内的日期
+        today = date.today()
+        expected_ck = current_cycle_key(today)
+
+        added: list[str] = []
+        skipped_dup: list[str] = []
+        rejected_out_of_cycle: list[str] = []
+        rejected_locked: list[str] = []
+        errors: list[str] = []
+
+        for d_str in raw_dates:
+            try:
+                parsed = date.fromisoformat(d_str)
+            except ValueError:
+                errors.append(f"{d_str}（日期格式错误）")
+                continue
+
+            # 校验日期落在当前周期内
+            travel_ck = cycle_key_of(parsed)
+            if travel_ck != expected_ck:
+                rejected_out_of_cycle.append(d_str)
+                continue
+
+            reimb = await get_or_create_reimbursement(db, ctx.user_id, expected_ck)
+            if reimb.is_cycle_locked:
+                rejected_locked.append(d_str)
+                continue
+
+            # 检查重复
+            existing = (
+                await db.execute(
+                    select(ReimbursementTravelDay).where(
+                        ReimbursementTravelDay.reimbursement_id == reimb.id,
+                        ReimbursementTravelDay.travel_date == parsed,
+                    )
+                )
+            ).scalars().first()
+            if existing:
+                skipped_dup.append(d_str)
+                continue
+
+            holidays = await load_holidays(db, (reimb.cycle_start or today).year)
+            td = ReimbursementTravelDay(
+                reimbursement_id=reimb.id,
+                travel_date=parsed,
+                note=note,
+                weekday=parsed.weekday(),
+                day_type=day_type(parsed, holidays),
+                base_rate=float(subsidy_rate(parsed, holidays)),
+                applicant_id=ctx.user_id,
+            )
+            db.add(td)
+            try:
+                await db.flush()
+            except Exception:
+                await db.rollback()
+                errors.append(f"{d_str}（标记失败）")
+                continue
+
+            await recompute_all(db, reimb, holidays)
+            added.append(d_str)
+
+        await db.commit()
+
+        # 构造回复
+        parts: list[str] = []
+        if added:
+            parts.append(f"✅ 已标记 {len(added)} 天为出差日：{'、'.join(added)}")
+        if skipped_dup:
+            parts.append(f"ℹ️ 已跳过（之前已标记）：{'、'.join(skipped_dup)}")
+        if rejected_out_of_cycle:
+            parts.append(
+                f"⚠️ 不在当前周期（{expected_ck}）：{'、'.join(rejected_out_of_cycle)}"
+            )
+        if rejected_locked:
+            parts.append(f"🔒 周期已封账：{'、'.join(rejected_locked)}")
+        if errors:
+            parts.append(f"❌ 失败：{'、'.join(errors)}")
+        if note and added:
+            parts.append(f"📝 备注：{note}")
+
+        text = "\n".join(parts) if parts else "未标记任何出差日。"
+        if added:
+            text += "\n\n💡 已自动核算补贴（工作日 60 / 节假日 80）。可在「报销单」详情查看。"
+        return {
+            "text": text,
+            "data": {
+                "added": added,
+                "skipped_dup": skipped_dup,
+                "rejected_out_of_cycle": rejected_out_of_cycle,
+                "rejected_locked": rejected_locked,
+                "errors": errors,
+            },
+        }
 
     async def _handle_submit_reimbursement(
         self, ctx: DialogContext, db: AsyncSession, _: Optional[dict]

@@ -17,6 +17,7 @@ from .tool_params import (
     AdminQueryPendingParams, AdminQueryDetailParams, AdminQueryCycleSummaryParams,
     AdminMarkReimbursedParams, AdminAggregateInvoicesParams,
     LegacyFallbackParams,
+    MarkTravelDayParams,
     InsightTotalParams, InsightByCategoryParams, InsightCategoryAmountParams,
     InsightTrendParams, InsightCompareParams, InsightPendingParams,
     InsightInvoiceTotalParams, InsightInvoiceFilterParams,
@@ -108,6 +109,20 @@ class DeleteInvoiceTool(_BridgeTool):
     Parameters = DeleteInvoiceParams
     required_roles = [UserRole.EMPLOYEE, UserRole.ADMIN]
     handler_method = "_handle_delete_invoice"
+
+
+class MarkTravelDayTool(_BridgeTool):
+    name = "emp_mark_travel_day"
+    description = (
+        "员工在对话中描述出差日期/行程，标记为报销补贴用的出差日。"
+        "如：8月15日去北京出差、8月15-17日出差、2026-08-15 出差、下周二出差。"
+        "标记后自动核算补贴（工作日60/节假日80元）。"
+        "注意：travel_dates 必须展开为完整日期数组（区间如 8月15-17日 → 3 个日期），"
+        "不要返回 ['8月15-17日'] 这种字符串"
+    )
+    Parameters = MarkTravelDayParams
+    required_roles = [UserRole.EMPLOYEE, UserRole.ADMIN]
+    handler_method = "_handle_mark_travel_day"
 
 
 # ============================================================
@@ -436,6 +451,7 @@ ALL_TOOLS: list[type] = [
     ConfirmCategoryTool,
     ConfirmProjectTool,
     DeleteInvoiceTool,
+    MarkTravelDayTool,
     # 员工查询
     QueryInvoicesTool,
     QueryStatusTool,

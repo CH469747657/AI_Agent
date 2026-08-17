@@ -278,6 +278,20 @@ EMPLOYEE_QUERY_INTENTS: list[Intent] = [
             "陈辉的重复发票", "陈辉的收据", "陈辉验真失败的发票",
         ],
     ),
+    Intent(
+        code="E-26", name="emp_mark_travel_day",
+        description="员工在对话中描述出差日期/行程，标记为报销补贴用的出差日",
+        role_scope=[UserRole.EMPLOYEE, UserRole.ADMIN],
+        required_slots=["travel_dates"],
+        optional_slots=["note"],
+        nlu_level=NluLevel.L3_LLM,
+        prompt_template="请问您是哪天出差？如：8月15日 / 2026-08-15 / 8月15到17日",
+        typical_utterances=[
+            "8月15日去北京出差", "8月15-17日出差", "2026-08-15 出差",
+            "我下周二到北京", "8月15号出差返程17号", "标记8月15为出差日",
+            "8月出差了3天 15 16 17", "8/15 出差",
+        ],
+    ),
 ]
 
 # ============================================================

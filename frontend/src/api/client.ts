@@ -1078,3 +1078,165 @@ export const adminApi = {
     return res.json();
   },
 };
+
+// ===== 老板端 API（BOSS） — token 与 admin_token / portal_token 物理隔离 =====
+
+/** 获取老板端 token */
+function getBossToken(): string | null {
+  return localStorage.getItem("boss_token");
+}
+
+/** 保存老板端 token */
+function setBossToken(token: string) {
+  localStorage.setItem("boss_token", token);
+}
+
+/** 清除老板端 token */
+function clearBossToken() {
+  localStorage.removeItem("boss_token");
+  localStorage.removeItem("boss_profile");
+}
+
+/** 老板端专用请求函数 — 自动注入 boss_token，401 清 token + 跳 /boss/login */
+async function bossRequest<T>(
+  url: string,
+  options?: RequestInit
+): Promise<T> {
+  const token = getBossToken();
+  const headers: Record<string, string> = {
+    ...(options?.headers as Record<string, string>),
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${BASE}${url}`, {
+    ...options,
+    headers,
+  });
+  if (!res.ok) {
+    if (res.status === 401) {
+      clearBossToken();
+      if (!window.location.pathname.startsWith("/boss/login")) {
+        window.location.href = "/boss/login";
+      }
+      throw new Error("登录已过期，请重新登录");
+    }
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(error.detail || `请求失败 (${res.status})`);
+  }
+  return res.json();
+}
+
+export interface BossLoginResponse {
+  access_token: string;
+  token_type: string;
+  profile: {
+    username: string;
+    name: string;
+    role: "boss";
+  };
+}
+
+export interface BossDialogResponse {
+  text: string;
+  state: string;
+  intent: string | null;
+  action_taken: boolean;
+  need_user_input: boolean;
+  quick_replies: string[];
+  error: string | null;
+  data: unknown;
+}
+
+export const bossApi = {
+  login: async (
+    username: string,
+    password: string
+  ): Promise<BossLoginResponse> => {
+    const res = await fetch(`/api/boss/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(error.detail || "登录失败");
+    }
+    const data: BossLoginResponse = await res.json();
+    setBossToken(data.access_token);
+    localStorage.setItem("boss_profile", JSON.stringify(data.profile));
+    return data;
+  },
+
+  logout: () => {
+    clearBossToken();
+  },
+
+  getToken: getBossToken,
+
+  getProfile: (): BossLoginResponse["profile"] | null => {
+    const raw = localStorage.getItem("boss_profile");
+    return raw ? JSON.parse(raw) : null;
+  },
+
+  /** 智能问数 — POST /api/dialog/message，body 带 role=boss */
+  ask: async (message: string, userId = "boss"): Promise<BossDialogResponse> => {
+    return bossRequest<BossDialogResponse>(`/dialog/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, role: "boss", user_id: userId }),
+    });
+  },
+
+  /** 发票列表（穿透全公司） */
+  listInvoices: (params?: {
+    user_id?: string;
+    status?: string;
+  }): Promise<Invoice[]> => {
+    const qs = new URLSearchParams();
+    if (params?.user_id) qs.set("user_id", params.user_id);
+    if (params?.status) qs.set("status", params.status);
+    const q = qs.toString();
+    return bossRequest<Invoice[]>(`/invoices${q ? "?" + q : ""}`);
+  },
+
+  /** 发票详情 */
+  getInvoice: (id: number): Promise<InvoiceDetail> =>
+    bossRequest<InvoiceDetail>(`/invoices/${id}`),
+
+  /** 报销单列表（穿透全公司） */
+  listReimbursements: (params?: { applicant_id?: string }): Promise<Reimbursement[]> => {
+    const qs = new URLSearchParams();
+    if (params?.applicant_id) qs.set("applicant_id", params.applicant_id);
+    const q = qs.toString();
+    return bossRequest<Reimbursement[]>(`/reimbursements${q ? "?" + q : ""}`);
+  },
+
+  /** 报销单详情 */
+  getReimbursement: (id: number): Promise<Reimbursement> =>
+    bossRequest<Reimbursement>(`/reimbursements/${id}`),
+
+  /** 员工列表（用于问数下钻） */
+  listEmployees: (): Promise<unknown[]> => bossRequest<unknown[]>(`/employees`),
+
+  /** 项目列表 */
+  listProjects: (): Promise<unknown[]> => bossRequest<unknown[]>(`/projects`),
+
+  /** 发票图片下载 URL — fetch 时仍需带 token，浏览器原生 img src 无法带 header，
+   * 故由调用方 fetch blob 后转 objectURL */
+  getInvoiceFileUrl: (id: number): string => `/api/invoices/${id}/file`,
+
+  /** 拉取发票图片为 blob URL（带 boss_token） */
+  fetchInvoiceFile: async (id: number): Promise<string | null> => {
+    try {
+      const res = await fetch(`/api/invoices/${id}/file`, {
+        headers: { Authorization: `Bearer ${getBossToken()}` },
+      });
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      return URL.createObjectURL(blob);
+    } catch {
+      return null;
+    }
+  },
+};

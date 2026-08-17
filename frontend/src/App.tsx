@@ -5,6 +5,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Sidebar } from "./components/Sidebar";
 import { PortalLayout } from "./components/PortalLayout";
 import { PortalProtected } from "./components/PortalProtected";
+import { BossProtected } from "./components/BossProtected";
+import { BossLayout } from "./components/BossLayout";
 import { ChatWidget } from "./components/ChatWidget";
 import { Dashboard } from "./pages/Dashboard";
 import { Invoices } from "./pages/Invoices";
@@ -18,6 +20,12 @@ import { PortalUpload } from "./pages/portal/Upload";
 import { PortalMyInvoices } from "./pages/portal/MyInvoices";
 import { PortalMyReimbursements } from "./pages/portal/MyReimbursements";
 import { PortalProfile } from "./pages/portal/Profile";
+import { BossLogin } from "./pages/boss/Login";
+import { BossChat } from "./pages/boss/Chat";
+import { BossInvoiceList } from "./pages/boss/InvoiceList";
+import { BossInvoiceDetail } from "./pages/boss/InvoiceDetail";
+import { BossReimbursementList } from "./pages/boss/ReimbursementList";
+import { BossReimbursementDetail } from "./pages/boss/ReimbursementDetail";
 
 function NotFound() {
   return (
@@ -37,11 +45,34 @@ function NotFound() {
 function App() {
   const location = useLocation();
   const isPortal = location.pathname.startsWith("/portal");
+  const isBoss = location.pathname.startsWith("/boss");
 
   return (
     <>
-      {/* 员工端：独立布局，不使用管理后台 Sidebar */}
-      {isPortal ? (
+      {/* 老板端：独立移动端布局，底部 3 Tab */}
+      {isBoss ? (
+        <Routes location={location}>
+          <Route path="/boss/login" element={<BossLogin />} />
+          <Route element={<BossProtected />}>
+            <Route element={<BossLayout />}>
+              <Route path="/boss/chat" element={<BossChat />} />
+              <Route path="/boss/invoices" element={<BossInvoiceList />} />
+              <Route
+                path="/boss/invoices/:id"
+                element={<BossInvoiceDetail />}
+              />
+              <Route
+                path="/boss/reimbursements"
+                element={<BossReimbursementList />}
+              />
+              <Route
+                path="/boss/reimbursements/:id"
+                element={<BossReimbursementDetail />}
+              />
+            </Route>
+          </Route>
+        </Routes>
+      ) : isPortal ? (
         <AnimatePresence mode="wait">
           <motion.div
             key={location.pathname}

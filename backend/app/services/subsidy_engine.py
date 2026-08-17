@@ -2,10 +2,11 @@
 
 核心算法：
 1. 节假日判定：法定放假=80，调休补班=60，普通工作日=60，周末=80
-2. recompute_subsidies：按「有费用发生的天」计算补贴，保留手动 included/exclude_reason
+2. recompute_subsidies：按「员工标记的出差日」计算补贴，保留手动 included/exclude_reason
 3. recompute_totals：重算 expense_total / subsidy_total / total_amount
 
-补贴口径（已确认）：按「有费用发生的天」计，当天有任意凭证即计 1 天。
+补贴口径（已确认）：按「员工标记的 travel_days」计，员工在对话框标一天即计 1 天补贴。
+带发票但未标的天**不**触发补贴。
 """
 
 import logging
@@ -20,6 +21,7 @@ from app.models.reimbursement import (
     Reimbursement,
     ReimbursementItem,
     ReimbursementDaySubsidy,
+    ReimbursementTravelDay,
 )
 from app.models.holiday import Holiday
 
@@ -93,10 +95,10 @@ async def recompute_subsidies(
 ) -> float:
     """重算报销单的日补贴
 
-    规则：
-    1. 收集本单所有有日期的 item，去重得到日期集合
+    规则（新）：
+    1. 收集本单所有 travel_days（员工标记的出差日），去重得到日期集合
     2. upsert 日补贴行（已有行保留 included/exclude_reason）
-    3. 清理不再有费用的天
+    3. 清理不再有 travel_day 的天
     4. 汇总 subsidy_total
 
     Returns: subsidy_total
@@ -106,11 +108,10 @@ async def recompute_subsidies(
         cycle_year = (reimbursement.cycle_start or date.today()).year
         holidays = await load_holidays(db, cycle_year)
 
-    # 1. 收集有费用的日期
+    # 1. 收集出差日（员工标记的 travel_days）
     result = await db.execute(
-        select(ReimbursementItem.item_date).where(
-            ReimbursementItem.reimbursement_id == reimbursement.id,
-            ReimbursementItem.item_date.isnot(None),
+        select(ReimbursementTravelDay.travel_date).where(
+            ReimbursementTravelDay.reimbursement_id == reimbursement.id,
         ).distinct()
     )
     dates_with_expense = {row for row in result.scalars().all() if row}

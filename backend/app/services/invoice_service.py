@@ -10,6 +10,7 @@ import os
 import asyncio
 import logging
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,7 +51,12 @@ class InvoiceService:
         user_id: str,
         user_description: str = "",
     ) -> Invoice:
-        """完整处理一张票据：上传 → 识别 → 分类 → 查重 → 保存"""
+        """完整处理一张票据：上传 → 识别 → 分类 → 查重 → 保存
+
+        无感上传模式（receipt_type 为空时）：
+        - 初始默认为 vat_normal，避免 DB NotNull 约束失败
+        - LLM Vision 识别后，根据返回字段自动修正为真实类型
+        """
 
         # 1. 保存原始文件
         filename = f"{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.{file_type}"
@@ -59,7 +65,8 @@ class InvoiceService:
         with open(file_path, "wb") as f:
             f.write(file_data)
 
-        # 2. 创建发票记录
+        # 2. 创建发票记录（receipt_type 为空时默认 vat_normal，后续 LLM 识别后修正）
+        actual_receipt_type = receipt_type if receipt_type else ReceiptType.vat_normal.value
         mime_map = {
             "pdf": "application/pdf",
             "ofd": "application/ofd",
@@ -68,7 +75,7 @@ class InvoiceService:
             "png": "image/png",
         }
         invoice = Invoice(
-            receipt_type=ReceiptType(receipt_type),
+            receipt_type=ReceiptType(actual_receipt_type),
             file_path=file_path,
             file_type=file_type,
             user_id=user_id,
@@ -78,6 +85,21 @@ class InvoiceService:
         self.db.add(invoice)
         await self.db.commit()
         await self.db.refresh(invoice)
+
+        # 无感上传：receipt_type 为空时，先用 LLM Vision 自动判断票据类型
+        if not receipt_type:
+            try:
+                detected_type = await self._detect_receipt_type_by_vision(file_data, file_type)
+                if detected_type and detected_type != actual_receipt_type:
+                    logger.info(
+                        f"Invoice #{invoice.id} VLM 自动识别票据类型: {actual_receipt_type} → {detected_type}"
+                    )
+                    invoice.receipt_type = ReceiptType(detected_type)
+                    actual_receipt_type = detected_type
+                    await self.db.commit()
+                    await self.db.refresh(invoice)
+            except Exception as e:
+                logger.warning(f"Invoice #{invoice.id} VLM 票据类型识别失败，使用默认值: {e}")
 
         logger.info(f"Invoice #{invoice.id} created, starting processing...")
 
@@ -116,6 +138,32 @@ class InvoiceService:
                     if invoice.receipt_type != ReceiptType.vat_normal:
                         logger.info(f"Invoice #{invoice.id} 票据类型自动修正: {invoice.receipt_type.value} → 增值税普通发票")
                         invoice.receipt_type = ReceiptType.vat_normal
+
+                # 3.6. 反向修正：OCR文本中无发票特征但有支付截图特征时，纠正误分类
+                # 当VLM将支付截图误判为增值税发票时，OCR文本不会包含"发票"字样，
+                # 但会包含支付App特征词，利用此信号做二次纠正
+                if invoice.receipt_type in (ReceiptType.vat_normal, ReceiptType.vat_special):
+                    no_invoice_keywords = "发票" not in raw and "发票代码" not in raw and "校验码" not in raw
+                    payment_keywords = any(kw in raw for kw in [
+                        "支付成功", "交易完成", "付款金额", "收款方",
+                        "交易单号", "微信支付", "支付宝", "转账",
+                    ])
+                    if no_invoice_keywords and payment_keywords:
+                        logger.info(
+                            f"Invoice #{invoice.id} 票据类型反向修正: {invoice.receipt_type.value} → 支付截图 "
+                            f"(OCR无发票特征，检测到支付App特征)"
+                        )
+                        invoice.receipt_type = ReceiptType.payment_screenshot
+                        # 类型已修正为非标，需重新路由到非标管线
+                        from app.services.nonstandard_service import NonStandardReceiptService
+                        nonstandard_svc = NonStandardReceiptService(self.db)
+                        invoice = await nonstandard_svc.process(
+                            invoice=invoice,
+                            file_data=file_data,
+                            file_type=file_type,
+                            user_description=user_description,
+                        )
+                        return invoice
 
             # 4. 双源比对
             ocr_fields = ocr_result.get("extracted_fields", {}) if ocr_result else {}
@@ -325,18 +373,215 @@ class InvoiceService:
             return invoice
 
         except Exception as e:
-            logger.error(f"Invoice #{invoice.id} processing failed: {e}", exc_info=True)
-            await self.db.rollback()
-            invoice.status = InvoiceStatus.reviewing
-            await self.db.commit()
+            # 识别失败/取消/超时 → 删除发票记录和原始文件，杜绝脏数据残留
+            # 规则：发票必须识别完成（reviewing/confirmed/reimbursed）才能出现在列表中
+            # 注意：用 __dict__ 直接拿已加载的属性值，避免触发 lazy refresh（rollback 后 session 异常态会 MissingGreenlet）
+            inv_dict = invoice.__dict__ if invoice else {}
+            invoice_id = inv_dict.get("id")
+            file_path = inv_dict.get("file_path")
+            logger.error(f"Invoice #{invoice_id} processing failed, cleaning up: {e}", exc_info=True)
+            try:
+                await self.db.rollback()
+            except Exception:
+                pass
+            # 清理用独立 session，避免主 session 处于异常态导致 MissingGreenlet
+            from app.database import get_async_sessionmaker
+            try:
+                async with get_async_sessionmaker()() as cleanup_db:
+                    if invoice_id is not None:
+                        ocr_rows = await cleanup_db.execute(
+                            select(OcrResult).where(OcrResult.invoice_id == invoice_id)
+                        )
+                        for ocr in ocr_rows.scalars().all():
+                            await cleanup_db.delete(ocr)
+                        llm_rows = await cleanup_db.execute(
+                            select(LlmResult).where(LlmResult.invoice_id == invoice_id)
+                        )
+                        for llm in llm_rows.scalars().all():
+                            await cleanup_db.delete(llm)
+                        inv_row = await cleanup_db.execute(
+                            select(Invoice).where(Invoice.id == invoice_id)
+                        )
+                        inv = inv_row.scalar_one_or_none()
+                        if inv:
+                            await cleanup_db.delete(inv)
+                        await cleanup_db.commit()
+                    if file_path and os.path.exists(file_path):
+                        try:
+                            os.remove(file_path)
+                        except OSError:
+                            pass
+                    logger.info(f"Invoice #{invoice_id} and file cleaned up (recognition failed)")
+            except Exception as cleanup_err:
+                logger.error(f"Invoice #{invoice_id} cleanup also failed: {cleanup_err}")
             raise
 
-    async def _run_dual_source(self, file_data: bytes, file_type: str) -> tuple:
-        """并行执行 OCR 和 LLM 解析
+    async def _detect_receipt_type_by_vision(
+        self,
+        file_data: bytes,
+        file_type: str,
+    ) -> Optional[str]:
+        """无感上传：用 LLM Vision 自动判断票据类型
 
-        参考: Invoice-Manager invoice_service.py
-        - OCR 用 CPU 线程池
-        - LLM 用 asyncio 异步调用
+        通过轻量级 prompt 让 LLM 看图判断属于哪种票据类型。
+        返回 ReceiptType 的 value（如"增值税普通发票"），失败返回 None。
+
+        判断策略：
+        1. 优先用 LLM Vision 直接判断（一次调用）
+        2. 失败时返回 None，由调用方使用默认值
+        """
+        try:
+            from app.services.llm_service import get_llm_service
+            svc = get_llm_service()
+            if not svc.is_available() or not svc._supports_vision():
+                return None
+
+            # PDF/OFD 转图片（复用 parse_invoice_from_image 的逻辑）
+            mime_map = {
+                "pdf": "application/pdf",
+                "ofd": "application/ofd",
+                "jpg": "image/jpeg",
+                "jpeg": "image/jpeg",
+                "png": "image/png",
+            }
+            mime_type = mime_map.get(file_type, "image/jpeg")
+
+            # 构造轻量级判断 prompt — 强调视觉布局差异而非仅文本关键词
+            detect_prompt = """请仔细观察这张图片的**视觉布局和整体样式**，判断属于以下哪种票据类型。
+
+只返回类型名称，不要其他文字。
+
+## 类型特征（按视觉布局区分）：
+
+**增值税普通发票** — 官方标准格式：
+- 顶部有红色边框和"XX省/市增值税普通发票"标题
+- 有"发票代码"、"发票号码"（20位）、"校验码"等官方字段
+- 分为购买方、销售方、货物明细、金额等标准区块
+- 底部有"国家税务总局监制"字样
+
+**增值税专用发票** — 与普票类似但标题含"专用"：
+- 顶部标题为"XX省/市增值税**专用**发票"
+- 其他布局与普通发票相同
+
+**火车票** — 12306标准格式：
+- 票面较小，横向布局
+- 包含车次、座位号、乘车人身份证号
+- 有"中国铁路"标识
+
+**机票** — 航空电子客票：
+- 包含航班号（如CA1234）、乘机人姓名
+- 有出发/到达机场、登机时间
+- 通常有航空公司Logo
+
+**收据** — 手写或简易格式：
+- 标题含"收据"或"收条"
+- 格式简单，无发票代码/号码
+- 可能为手写体
+
+**支付截图** — 手机App截图：
+- **明显是手机App界面截图**，非正式票据
+- 顶部有微信/支付宝的绿色或蓝色导航栏
+- 显示"支付成功"、"交易完成"等状态
+- 包含"收款方"、"付款金额"、"交易时间"、"交易单号"
+- 有手机状态栏（信号、电量、时间）
+- **无"发票代码"、"发票号码"、"校验码"等官方字段**
+
+**交易流水单** — 银行/支付平台流水：
+- 表格形式，多行交易记录
+- 包含日期、金额、余额、交易类型等列
+- 有账户信息或银行Logo
+
+若无法判断，返回"未知"。"""
+
+            import base64
+            b64_image = base64.b64encode(file_data).decode()
+
+            # PDF 先转图片（复用 parse_invoice_from_image 内的 PDF 转换逻辑）
+            actual_data = file_data
+            actual_mime = mime_type
+            if mime_type == "application/pdf":
+                try:
+                    from pdf2image import convert_from_bytes
+                    images = convert_from_bytes(file_data, dpi=300, first_page=1, last_page=1)
+                    if images:
+                        from io import BytesIO
+                        buf = BytesIO()
+                        images[0].save(buf, format="PNG")
+                        actual_data = buf.getvalue()
+                        actual_mime = "image/png"
+                except Exception as e:
+                    logger.warning(f"PDF to image conversion failed for type detection: {e}")
+                    return None
+            elif mime_type == "application/ofd":
+                # OFD 用内嵌图片或结构化解析判断
+                try:
+                    from app.services.ofd_parser import get_ofd_parser
+                    parsed = get_ofd_parser().parse(file_data)
+                    fields = parsed.get("fields", {})
+                    if any(v for v in fields.values()):
+                        # 有结构化字段 → 增值税发票
+                        return ReceiptType.vat_normal.value
+                    img_bytes = parsed.get("image_bytes")
+                    if img_bytes:
+                        actual_data = img_bytes
+                        actual_mime = "image/png"
+                    else:
+                        return None
+                except Exception as e:
+                    logger.warning(f"OFD parse failed for type detection: {e}")
+                    return None
+
+            try:
+                response = await svc.client.chat.completions.create(
+                    model=settings.llm_model,
+                    messages=[
+                        {"role": "user", "content": [
+                            {"type": "text", "text": detect_prompt},
+                            {"type": "image_url", "image_url": {
+                                "url": f"data:{actual_mime};base64,{base64.b64encode(actual_data).decode()}"
+                            }}
+                        ]}
+                    ],
+                    temperature=0,
+                    max_tokens=20,
+                    timeout=10.0,
+                )
+                result = response.choices[0].message.content.strip()
+
+                # 映射 LLM 输出到 ReceiptType
+                type_mapping = {
+                    "增值税普通发票": ReceiptType.vat_normal.value,
+                    "增值税专用发票": ReceiptType.vat_special.value,
+                    "火车票": ReceiptType.train_ticket.value,
+                    "机票": ReceiptType.flight_ticket.value,
+                    "收据": ReceiptType.receipt.value,
+                    "支付截图": ReceiptType.payment_screenshot.value,
+                    "交易流水单": ReceiptType.bank_statement.value,
+                }
+                for keyword, receipt_value in type_mapping.items():
+                    if keyword in result:
+                        return receipt_value
+
+                logger.info(f"VLM 票据类型识别结果未匹配: {result!r}")
+                return None
+            except Exception as e:
+                logger.warning(f"VLM 票据类型识别调用失败: {e}")
+                return None
+        except Exception as e:
+            logger.warning(f"_detect_receipt_type_by_vision error: {e}")
+            return None
+
+    async def _run_dual_source(self, file_data: bytes, file_type: str) -> tuple:
+        """按文件类型分层路由识别源（避免冗余调用 + 保留 PDF 双源兜底）
+
+        file_type 路由策略（基于 vlt_mm_31_vis 实测，详见 docs/OCR-替代视觉模型评估.md）:
+        - OFD：单源 ofd_parser（矢量文字零误差，LLM 路径对 OFD 本就跳过 Vision 走 ofd_parser，调用冗余）
+        - 图片（jpg/jpeg/png）：单源 LLM（OCR 对图片样本 0% 字段命中，纯噪声且污染 diff_engine）
+        - PDF：双源（OCR 兜底 + LLM 精度，diff_engine 做交叉验证）
+
+        Returns:
+            (ocr_result, llm_result) — 单源场景下另一源为 None，
+            下游消费方已用 `if x_result:` 守卫（见 339-357 行持久化、131 行 raw_text 修正、169-172 行 diff 输入）。
         """
         mime = {
             "pdf": "application/pdf",
@@ -346,23 +591,36 @@ class InvoiceService:
             "png": "image/png",
         }.get(file_type, "image/png")
 
-        # OCR 在线程池中执行（CPU密集型）
-        ocr_executor = get_ocr_executor(settings.ocr_max_workers)
-        if file_type == "pdf":
-            ocr_future = ocr_executor.submit(self.ocr.process_pdf, file_data)
-        elif file_type == "ofd":
-            ocr_future = ocr_executor.submit(self.ocr.process_ofd, file_data)
-        else:
-            ocr_future = ocr_executor.submit(self.ocr.process_image, file_data)
+        ocr_result = None
+        llm_result = None
 
-        # LLM 异步执行（I/O密集型）
+        # ===== 图片：单源 LLM（OCR 对图片样本无字段语义） =====
+        if file_type in ("jpg", "jpeg", "png"):
+            try:
+                llm_fields = await self.llm.parse_invoice_from_image(file_data, mime)
+                if llm_fields:
+                    llm_result = {"extracted_fields": llm_fields}
+            except Exception as e:
+                logger.error(f"LLM failed (image path): {e}")
+            return ocr_result, llm_result
+
+        # ===== OFD：单源 ofd_parser（LLM 对 OFD 检测到矢量字段后跳过 Vision，调用冗余） =====
+        if file_type == "ofd":
+            ocr_executor = get_ocr_executor(settings.ocr_max_workers)
+            ocr_future = ocr_executor.submit(self.ocr.process_ofd, file_data)
+            try:
+                ocr_result = ocr_future.result()
+            except Exception as e:
+                logger.error(f"OFD parse failed: {e}")
+            return ocr_result, llm_result
+
+        # ===== PDF：保留双源（OCR 兜底 + LLM 精度） =====
+        ocr_executor = get_ocr_executor(settings.ocr_max_workers)
+        ocr_future = ocr_executor.submit(self.ocr.process_pdf, file_data)
+
         llm_task = asyncio.create_task(
             self.llm.parse_invoice_from_image(file_data, mime)
         )
-
-        # 等待两者完成
-        ocr_result = None
-        llm_result = None
 
         try:
             ocr_result = ocr_future.result()

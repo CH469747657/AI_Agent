@@ -112,15 +112,15 @@ settings = Settings()
 
 # 任务类型 → 默认模型映射（可被环境变量 LLM_<SHORT>_MODEL 覆盖）
 # 适配自建网关 https://aigw.telecomjs.com/v1 的可用模型列表
-# - qwen-plus：非 reasoning 模型，快速响应，适合 NLU/分类/叙述
-# - vlt_mm_25_vis：视觉模型，适合 OCR
+# - qwen3-max：文本模型，适合 NLU/分类/叙述
+# - vlt_mm_31_vis：视觉模型，适合 OCR
 MODEL_ROUTING: dict[str, str] = {
-    "nlu_classify":    "qwen-plus",
-    "fee_classify":    "qwen-plus",
-    "project_extract": "qwen-plus",
-    "invoice_ocr":     "vlt_mm_25_vis",
-    "insight_narrate": "qwen-plus",
-    "batch_describe":  "qwen-plus",
+    "nlu_classify":    "qwen3-max",
+    "fee_classify":    "qwen3-max",
+    "project_extract": "qwen3-max",
+    "invoice_ocr":     "vlt_mm_31_vis",
+    "insight_narrate": "qwen3-max",
+    "batch_describe":  "qwen3-max",
 }
 
 # 任务类型 → 环境变量名映射（用于灰度覆盖 MODEL_ROUTING）
@@ -149,7 +149,7 @@ LLM_PROVIDERS = {
     "openai": {
         "base_url": "https://api.openai.com/v1",
         "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
-        "vision_prefixes": ["gpt-4o", "gpt-4-turbo", "gpt-4-vision"],
+        "vision_prefixes": ["gpt-4o", "gpt-4-turbo", "gpt-4-vision", "vlt_mm", "orb_base"],
     },
     "anthropic": {
         "base_url": "https://api.anthropic.com/v1",

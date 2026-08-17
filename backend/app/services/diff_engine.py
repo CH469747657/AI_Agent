@@ -69,6 +69,32 @@ def _validate_invoice_number(val: Any) -> bool:
     return bool(re.match(r"^\d{20}$", num))
 
 
+# 统一社会信用代码/纳税人识别号字符集不含 I/O/Z/S/V（GB 32100-2015），
+# 但实操中老税号可能含 S/V；I/O/Z 是 RapidOCR 把数字 1/0/2 误识别的高频字符。
+# 实测案例：vlt_mm_31_vis 视觉 LLM 输出 "91320412MA1MN6GE75"（正确），
+# RapidOCR 输出 "9132O412MA1MN6GE75"（数字 0 被识别成字母 O）。
+_TAX_ID_AMBIGUOUS_CHARS = set("IOZ")
+
+
+def _tax_id_has_ambiguous_chars(val: Any) -> bool:
+    """税号是否含 I/O/Z 易混淆字符（RapidOCR 常把 1/0/2 识别成 I/O/Z）"""
+    if not val:
+        return False
+    return any(c in _TAX_ID_AMBIGUOUS_CHARS for c in str(val).upper())
+
+
+def _validate_tax_id(val: Any) -> bool:
+    """税号格式校验：长度 15-20 位、字母数字、不含 I/O/Z"""
+    if not val:
+        return False
+    s = str(val).strip().upper()
+    if not re.match(r"^[A-Z0-9]{15,20}$", s):
+        return False
+    if _tax_id_has_ambiguous_chars(s):
+        return False
+    return True
+
+
 def _extract_amounts_from_raw_text(raw_text: str) -> dict | None:
     """从 OCR/LLM 原始文本中正则提取价税合计和合计金额
 
@@ -451,6 +477,32 @@ def _apply_cross_validation_rules(
                 confirmed["item_name"] = ocr_item
                 logger.info(f"项目名称完整性: OCR({ocr_item})包含LLM({llm_item}) → 采用OCR更完整值")
                 _mark_resolved(conflicts, "item_name", "完整性验证: OCR值更完整")
+
+    # 规则5: 税号格式校验 — 排除 I/O/Z 易混淆字符
+    # 实测案例: RapidOCR 把数字 0 识别成字母 O，
+    # 但 NUMERIC_FIELDS 默认择优选 OCR，错误值会胜出。
+    # 策略: 含 I/O/Z 的税号视为识别不可信，采用对方源的值。
+    for field in ("seller_tax_id", "buyer_tax_id"):
+        ocr_tax = ocr_fields.get(field)
+        llm_tax = llm_fields.get(field)
+        if not (ocr_tax and llm_tax and normalize_value(ocr_tax) != normalize_value(llm_tax)):
+            continue
+        ocr_ambiguous = _tax_id_has_ambiguous_chars(ocr_tax)
+        llm_ambiguous = _tax_id_has_ambiguous_chars(llm_tax)
+        if ocr_ambiguous and not llm_ambiguous:
+            confirmed[field] = llm_tax
+            logger.info(
+                f"税号格式校验: OCR({ocr_tax})含 I/O/Z 易混淆字符, "
+                f"LLM({llm_tax})不含 → 采用LLM"
+            )
+            _mark_resolved(conflicts, field, "税号格式校验: OCR 含 I/O/Z 易混淆字符，采用 LLM")
+        elif llm_ambiguous and not ocr_ambiguous:
+            confirmed[field] = ocr_tax
+            logger.info(
+                f"税号格式校验: LLM({llm_tax})含 I/O/Z 易混淆字符, "
+                f"OCR({ocr_tax})不含 → 采用OCR"
+            )
+            _mark_resolved(conflicts, field, "税号格式校验: LLM 含 I/O/Z 易混淆字符，采用 OCR")
 
     return confirmed
 

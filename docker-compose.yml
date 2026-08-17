@@ -4,6 +4,9 @@ services:
     build: ./backend
     ports:
       - "18080:8080"
+    # 直接加载 .env 文件，绕过 ${VAR} 替换（避免 bcrypt 哈希中的 $ 被误解析）
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgresql+asyncpg://reimburse:${DB_PASSWORD:-reimburse123}@db:5432/reimbursement
       - DB_PASSWORD=${DB_PASSWORD:-reimburse123}
@@ -14,6 +17,9 @@ services:
       - LLM_TEXT_MODEL=${LLM_TEXT_MODEL:-}
       - OCR_MAX_WORKERS=2
       - LLM_MAX_WORKERS=4
+      - AGENT_MODE_ENABLED=${AGENT_MODE_ENABLED:-false}
+      - AGENT_MODE_GRAY_RATIO=${AGENT_MODE_GRAY_RATIO:-0.0}
+      - AGENT_MAX_STEPS=${AGENT_MAX_STEPS:-5}
       - UPLOAD_DIR=/app/uploads
       - REPORT_DIR=/app/reports
       - COMPANY_NAME=${COMPANY_NAME:-常州华一防静电活动地板有限公司}
@@ -28,11 +34,68 @@ services:
       - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
       - JWT_EXPIRE_HOURS=${JWT_EXPIRE_HOURS:-24}
       - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-http://localhost:5173}
+      # 管理端账号（admin / 123456）— $$ 转义避免 docker-compose 把 $b 当变量
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH:-}
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_started
+    volumes:
+      - ./uploads:/app/uploads
+      - ./reports:/app/reports
+    restart: unless-stopped
+
+  # ===== MCP SSE 服务 =====
+  mcp-sse:
+    build: ./backend
+    command:
+      - uvicorn
+      - app.mcp.server_sse:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9000"
+    ports:
+      - "9000:9000"
+    environment:
+      - BACKEND_URL=http://backend:8080
+      - MCP_MODE=sse
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=9000
+      - DATABASE_URL=postgresql+asyncpg://reimburse:${DB_PASSWORD:-reimburse123}@db:5432/reimbursement
+      - DB_PASSWORD=${DB_PASSWORD:-reimburse123}
+      - REDIS_URL=redis://redis:6379/0
+      - LLM_PROVIDER=${LLM_PROVIDER:-qwen}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-qwen3-vl-plus}
+      - LLM_TEXT_MODEL=${LLM_TEXT_MODEL:-}
+      - OCR_MAX_WORKERS=2
+      - LLM_MAX_WORKERS=4
+      - AGENT_MODE_ENABLED=${AGENT_MODE_ENABLED:-false}
+      - AGENT_MODE_GRAY_RATIO=${AGENT_MODE_GRAY_RATIO:-0.0}
+      - AGENT_MAX_STEPS=${AGENT_MAX_STEPS:-5}
+      - UPLOAD_DIR=/app/uploads
+      - REPORT_DIR=/app/reports
+      - COMPANY_NAME=${COMPANY_NAME:-常州华一防静电活动地板有限公司}
+      - VERIFY_PROVIDER=${VERIFY_PROVIDER:-aliyun}
+      - VERIFY_API_KEY=${VERIFY_API_KEY:-}
+      - VERIFY_SECRET_KEY=${VERIFY_SECRET_KEY:-}
+      - ALIYUN_VERIFY_APPCODE=${ALIYUN_VERIFY_APPCODE:-}
+      - ALIYUN_VERIFY_APPSECRET=${ALIYUN_VERIFY_APPSECRET:-}
+      - WECOM_CORP_ID=${WECOM_CORP_ID:-}
+      - WECOM_SECRET=${WECOM_SECRET:-}
+      - JWT_SECRET=${JWT_SECRET:-}
+      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
+      - JWT_EXPIRE_HOURS=${JWT_EXPIRE_HOURS:-24}
+      - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-http://localhost:5173}
+      # 管理端账号（admin / 123456）— $$ 转义避免 docker-compose 把 $b 当变量
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH:-}
+    depends_on:
+      - backend
+      - redis
     volumes:
       - ./uploads:/app/uploads
       - ./reports:/app/reports

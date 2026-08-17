@@ -17,8 +17,8 @@ import {
   Check,
   XCircle,
   MoneyWavy,
-  FileText,
   FileXls,
+  FilePdf,
   FileZip,
   DownloadSimple,
   Receipt,
@@ -51,24 +51,24 @@ import type { ReimbursementsPageState } from "./index";
 const reportFileTypes = [
   {
     key: "xlsx",
-    label: "Excel 明细表",
-    desc: "发票明细、金额汇总、分类统计",
+    label: "Excel 费用清单",
+    desc: "按发票/明细行列示的费用清单与金额汇总",
     icon: FileXls,
     color: "text-emerald-600",
     bg: "bg-emerald-50",
   },
   {
     key: "pdf",
-    label: "PDF 报销单",
-    desc: "格式化报销申请单，含发票明细",
-    icon: FileText,
+    label: "PDF 发票汇总",
+    desc: "全部已上传发票的元数据与图片汇总",
+    icon: FilePdf,
     color: "text-rose-600",
     bg: "bg-rose-50",
   },
   {
     key: "zip",
     label: "ZIP 完整包",
-    desc: "原始发票图片 + Excel + PDF 打包",
+    desc: "原始发票图片 + Excel 费用清单 + PDF 汇总打包",
     icon: FileZip,
     color: "text-amber-600",
     bg: "bg-amber-50",
@@ -100,8 +100,6 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
     handleApprove,
     handleReject,
     handleReimburse,
-    generatingReport,
-    handleGenerateReport,
     showAddInvoice,
     setShowAddInvoice,
     addInvoiceIds,
@@ -126,6 +124,20 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
   const showReportFiles = hasReportFiles(reimb);
 
   const [togglingSubsidyDate, setTogglingSubsidyDate] = useState<string | null>(null);
+  const [downloadingReportType, setDownloadingReportType] = useState<string | null>(null);
+
+  const handleDownloadReport = async (fileType: string) => {
+    if (!reimb) return;
+    setDownloadingReportType(fileType);
+    setError(null);
+    try {
+      await reportApi.download(reimb.id, fileType);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "下载失败");
+    } finally {
+      setDownloadingReportType(null);
+    }
+  };
 
   const handleToggleSubsidy = async (subsidyDate: string, included: boolean) => {
     if (!reimb) return;
@@ -148,16 +160,16 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
       <div className="flex items-center gap-3">
         <button
           onClick={goToList}
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+          className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label="返回"
         >
           <ArrowLeft size={20} />
         </button>
         <div className="flex-1">
-          <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">
+          <h1 className="font-display text-2xl font-bold tracking-tight text-foreground">
             报销单 #{reimb?.id ?? detailId}
           </h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-muted-foreground">
             查看详情、生成报表并提交
           </p>
         </div>
@@ -167,7 +179,7 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
               setDeleteError(null);
               setDeleteTarget(reimb);
             }}
-            className="flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2 text-sm font-medium text-rose-600 transition-colors hover:bg-rose-50"
+            className="flex items-center gap-2 rounded-xl border border-rose-200 bg-background px-4 py-2 text-sm font-medium text-rose-600 transition-colors hover:bg-rose-50"
           >
             <Trash size={16} />
             删除报销单
@@ -184,8 +196,8 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
 
       {detailLoading || !reimb ? (
         <div className="space-y-4">
-          <div className="h-48 animate-pulse rounded-2xl bg-slate-200/50" />
-          <div className="h-32 animate-pulse rounded-2xl bg-slate-200/50" />
+          <div className="h-48 animate-pulse rounded-2xl bg-muted/50" />
+          <div className="h-32 animate-pulse rounded-2xl bg-muted/50" />
         </div>
       ) : (
         <>
@@ -193,7 +205,7 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="rounded-2xl border border-slate-200/60 bg-white p-6"
+            className="rounded-2xl border border-border bg-background p-6"
           >
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -211,12 +223,12 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                   </span>
                 )}
                 {reimb.auto_generated && (
-                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                  <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
                     自动生成
                   </span>
                 )}
               </div>
-              <span className="text-xs text-slate-400">
+              <span className="text-xs text-muted-foreground">
                 创建于 {reimb.created_at
                   ? new Date(reimb.created_at).toLocaleString("zh-CN")
                   : "—"}
@@ -225,35 +237,35 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
 
             <div className="grid grid-cols-2 gap-4">
               <InfoRow
-                icon={<User size={16} className="text-slate-500" />}
+                icon={<User size={16} className="text-muted-foreground" />}
                 label="申请人"
                 value={reimb.applicant_name || reimb.applicant_id}
               />
               <InfoRow
-                icon={<Building size={16} className="text-slate-500" />}
+                icon={<Building size={16} className="text-muted-foreground" />}
                 label="部门"
                 value={reimb.department || "—"}
               />
               <InfoRow
-                icon={<CalendarBlank size={16} className="text-slate-500" />}
+                icon={<CalendarBlank size={16} className="text-muted-foreground" />}
                 label="报销期间"
                 value={reimb.period || "—"}
               />
               <InfoRow
-                icon={<CalendarStar size={16} className="text-slate-500" />}
+                icon={<CalendarStar size={16} className="text-muted-foreground" />}
                 label="周期范围"
                 value={formatCycleRange(reimb.cycle_start, reimb.cycle_end)}
               />
             </div>
 
             {/* 金额明细 */}
-            <div className="mt-4 grid grid-cols-3 gap-3 border-t border-slate-100 pt-4">
-              <div className="rounded-lg bg-slate-50 p-3">
-                <div className="flex items-center gap-1 text-xs text-slate-400">
+            <div className="mt-4 grid grid-cols-3 gap-3 border-t border-border pt-4">
+              <div className="rounded-lg bg-muted p-3">
+                <div className="flex items-center gap-1 text-xs text-muted-foreground">
                   <Receipt size={14} />
                   费用合计
                 </div>
-                <p className="mt-1 font-display text-lg font-bold text-slate-800">
+                <p className="mt-1 font-display text-lg font-bold text-foreground">
                   ¥{(reimb.expense_total ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
               </div>
@@ -266,24 +278,24 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                   ¥{(reimb.subsidy_total ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
               </div>
-              <div className="rounded-lg bg-brand-50 p-3 ring-1 ring-brand-200">
-                <div className="flex items-center gap-1 text-xs text-brand-500">
+              <div className="rounded-lg bg-primary-50 p-3 ring-1 ring-primary-200">
+                <div className="flex items-center gap-1 text-xs text-primary-500">
                   <CurrencyCny size={14} />
                   报销总额
                 </div>
-                <p className="mt-1 font-display text-lg font-bold text-brand-700">
+                <p className="mt-1 font-display text-lg font-bold text-primary-700">
                   ¥{(reimb.total_amount ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
               </div>
             </div>
             {reimb.reason && (
-              <div className="mt-4 flex items-start gap-3 border-t border-slate-100 pt-4">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100">
-                  <NotePencil size={16} className="text-slate-500" />
+              <div className="mt-4 flex items-start gap-3 border-t border-border pt-4">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+                  <NotePencil size={16} className="text-muted-foreground" />
                 </div>
                 <div className="flex-1">
-                  <p className="text-xs text-slate-400">报销事由</p>
-                  <p className="text-sm font-medium text-slate-800 whitespace-pre-wrap">{reimb.reason}</p>
+                  <p className="text-xs text-muted-foreground">报销事由</p>
+                  <p className="text-sm font-medium text-foreground whitespace-pre-wrap">{reimb.reason}</p>
                 </div>
               </div>
             )}
@@ -294,22 +306,22 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="rounded-2xl border border-slate-200/60 bg-white"
+              className="rounded-2xl border border-border bg-background"
             >
-              <div className="border-b border-slate-100 px-5 py-4">
+              <div className="border-b border-border px-5 py-4">
                 <div className="flex items-center gap-2">
-                  <ListChecks size={18} className="text-slate-400" />
-                  <h2 className="font-display text-base font-semibold text-slate-700">
+                  <ListChecks size={18} className="text-muted-foreground" />
+                  <h2 className="font-display text-base font-semibold text-foreground">
                     费用明细
                   </h2>
-                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                  <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
                     {reimb.items.length} 条
                   </span>
                 </div>
               </div>
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-50 text-left text-xs text-slate-400">
+                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
                     <th className="px-5 py-3 font-medium">日期</th>
                     <th className="px-5 py-3 font-medium">星期</th>
                     <th className="px-5 py-3 font-medium">费用分类</th>
@@ -319,20 +331,20 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {reimb.items.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-50/50">
-                      <td className="px-5 py-3 text-slate-700">
+                    <tr key={item.id} className="hover:bg-muted/50">
+                      <td className="px-5 py-3 text-foreground">
                         {item.item_date || "—"}
                       </td>
-                      <td className="px-5 py-3 text-slate-500">
+                      <td className="px-5 py-3 text-muted-foreground">
                         {weekdayName(item.weekday)}
                       </td>
-                      <td className="px-5 py-3 text-slate-500">
+                      <td className="px-5 py-3 text-muted-foreground">
                         {item.fee_subcategory || item.fee_category || "—"}
                       </td>
-                      <td className="px-5 py-3 font-medium text-slate-900">
+                      <td className="px-5 py-3 font-medium text-foreground">
                         ¥{item.amount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
                       </td>
-                      <td className="px-5 py-3 text-slate-500">
+                      <td className="px-5 py-3 text-muted-foreground">
                         <div className="flex items-center gap-2">
                           <span className="truncate">{item.description || "—"}</span>
                           {item.is_late_charge && (
@@ -357,22 +369,22 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="rounded-2xl border border-slate-200/60 bg-white"
+              className="rounded-2xl border border-border bg-background"
             >
-              <div className="border-b border-slate-100 px-5 py-4">
+              <div className="border-b border-border px-5 py-4">
                 <div className="flex items-center gap-2">
-                  <Coins size={18} className="text-slate-400" />
-                  <h2 className="font-display text-base font-semibold text-slate-700">
+                  <Coins size={18} className="text-muted-foreground" />
+                  <h2 className="font-display text-base font-semibold text-foreground">
                     日补贴
                   </h2>
-                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                  <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
                     {reimb.day_subsidies.filter((d) => d.included).length}/{reimb.day_subsidies.length} 天
                   </span>
                 </div>
               </div>
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-50 text-left text-xs text-slate-400">
+                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
                     <th className="px-5 py-3 font-medium">日期</th>
                     <th className="px-5 py-3 font-medium">星期</th>
                     <th className="px-5 py-3 font-medium">日类型</th>
@@ -383,11 +395,11 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {reimb.day_subsidies.map((ds) => (
-                    <tr key={ds.id} className={`hover:bg-slate-50/50 ${!ds.included ? "opacity-50" : ""}`}>
-                      <td className="px-5 py-3 text-slate-700">
+                    <tr key={ds.id} className={`hover:bg-muted/50 ${!ds.included ? "opacity-50" : ""}`}>
+                      <td className="px-5 py-3 text-foreground">
                         {ds.subsidy_date}
                       </td>
-                      <td className="px-5 py-3 text-slate-500">
+                      <td className="px-5 py-3 text-muted-foreground">
                         {weekdayName(ds.weekday)}
                       </td>
                       <td className="px-5 py-3">
@@ -395,10 +407,10 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                           {dayTypeLabel(ds.day_type)}
                         </span>
                       </td>
-                      <td className="px-5 py-3 text-slate-500">
+                      <td className="px-5 py-3 text-muted-foreground">
                         ¥{(ds.base_rate ?? 0).toFixed(0)}
                       </td>
-                      <td className="px-5 py-3 font-medium text-slate-900">
+                      <td className="px-5 py-3 font-medium text-foreground">
                         ¥{ds.subsidy_amount.toFixed(2)}
                       </td>
                       <td className="px-5 py-3 text-center">
@@ -407,7 +419,7 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                             onClick={() => handleToggleSubsidy(ds.subsidy_date, !ds.included)}
                             disabled={togglingSubsidyDate === ds.subsidy_date}
                             className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                              ds.included ? "bg-emerald-500" : "bg-slate-300"
+                              ds.included ? "bg-emerald-500" : "bg-muted"
                             } disabled:opacity-50`}
                             title={ds.included ? "点击取消补贴" : "点击计入补贴"}
                           >
@@ -415,14 +427,14 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                               <Spinner size={12} className="absolute left-1 animate-spin text-white" />
                             ) : (
                               <span
-                                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-background transition-transform ${
                                   ds.included ? "translate-x-4" : "translate-x-1"
                                 }`}
                               />
                             )}
                           </button>
                         ) : (
-                          <span className={`text-xs font-medium ${ds.included ? "text-emerald-600" : "text-slate-400"}`}>
+                          <span className={`text-xs font-medium ${ds.included ? "text-emerald-600" : "text-muted-foreground"}`}>
                             {ds.included ? "是" : "否"}
                           </span>
                         )}
@@ -548,47 +560,27 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
             </motion.div>
           )}
 
-          {/* Report generation & download */}
-          <div className="rounded-2xl border border-slate-200/60 bg-white p-5">
+          {/* Report download */}
+          <div className="rounded-2xl border border-border bg-background p-5">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="font-display text-base font-semibold text-slate-700">
+              <h2 className="font-display text-base font-semibold text-foreground">
                 报表
               </h2>
-              {!showReportFiles && (
-                <button
-                  onClick={() => handleGenerateReport(reimb.id)}
-                  disabled={generatingReport}
-                  className="flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700 disabled:opacity-50"
-                >
-                  {generatingReport ? (
-                    <>
-                      <Spinner size={16} className="animate-spin" />
-                      生成中...
-                    </>
-                  ) : (
-                    <>
-                      <FileText size={16} />
-                      生成报表
-                    </>
-                  )}
-                </button>
-              )}
             </div>
 
             {showReportFiles ? (
               <div className="grid gap-3">
                 {reportFileTypes.map((ft, i) => {
                   const Icon = ft.icon;
-                  const url = reportApi.downloadUrl(reimb.id, ft.key);
                   return (
-                    <motion.a
+                    <motion.button
                       key={ft.key}
-                      href={url}
-                      download
+                      onClick={() => handleDownloadReport(ft.key)}
+                      disabled={downloadingReportType === ft.key}
                       initial={{ opacity: 0, x: -20 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: i * 0.08 }}
-                      className="group flex items-center gap-4 rounded-xl border border-slate-200/60 p-4 transition-colors hover:border-brand-300 hover:bg-slate-50"
+                      className="group flex w-full items-center gap-4 rounded-xl border border-border p-4 text-left transition-colors hover:border-primary-300 hover:bg-muted disabled:opacity-50"
                     >
                       <div
                         className={`flex h-10 w-10 items-center justify-center rounded-lg ${ft.bg}`}
@@ -596,38 +588,40 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                         <Icon size={20} className={ft.color} />
                       </div>
                       <div className="flex-1">
-                        <p className="text-sm font-medium text-slate-800">
+                        <p className="text-sm font-medium text-foreground">
                           {ft.label}
                         </p>
-                        <p className="text-xs text-slate-400">{ft.desc}</p>
+                        <p className="text-xs text-muted-foreground">{ft.desc}</p>
                       </div>
-                      <DownloadSimple
-                        size={18}
-                        className="text-slate-300 group-hover:text-brand-600"
-                      />
-                    </motion.a>
+                      {downloadingReportType === ft.key ? (
+                        <Spinner size={18} className="animate-spin text-muted-foreground" />
+                      ) : (
+                        <DownloadSimple
+                          size={18}
+                          className="text-muted-foreground group-hover:text-primary-600"
+                        />
+                      )}
+                    </motion.button>
                   );
                 })}
               </div>
             ) : (
-              <p className="py-6 text-center text-sm text-slate-400">
-                {generatingReport
-                  ? "正在生成报表..."
-                  : "暂无报表，点击「生成报表」创建"}
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                暂无报表
               </p>
             )}
           </div>
 
           {/* Linked invoices */}
-          <div className="rounded-2xl border border-slate-200/60 bg-white">
-            <div className="border-b border-slate-100 px-5 py-4">
+          <div className="rounded-2xl border border-border bg-background">
+            <div className="border-b border-border px-5 py-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Receipt size={18} className="text-slate-400" />
-                  <h2 className="font-display text-base font-semibold text-slate-700">
+                  <Receipt size={18} className="text-muted-foreground" />
+                  <h2 className="font-display text-base font-semibold text-foreground">
                     关联发票
                   </h2>
-                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                  <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
                     {detailInvoices.length} 张
                   </span>
                 </div>
@@ -637,7 +631,7 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                       setShowAddInvoice(true);
                       setAddInvoiceIds([]);
                     }}
-                    className="flex items-center gap-1.5 rounded-lg bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 transition-colors hover:bg-brand-100"
+                    className="flex items-center gap-1.5 rounded-lg bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100"
                   >
                     <Plus size={14} weight="bold" />
                     追加发票
@@ -648,12 +642,12 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
 
             {/* 追加发票面板 */}
             {showAddInvoice && (
-              <div className="border-b border-slate-100 bg-slate-50/50 p-4">
+              <div className="border-b border-border bg-muted/50 p-4">
                 <div className="mb-3 flex items-center justify-between">
-                  <p className="text-sm text-slate-600">选择要追加的发票</p>
+                  <p className="text-sm text-foreground">选择要追加的发票</p>
                   <div className="flex items-center gap-2">
                     {addInvoiceIds.length > 0 && (
-                      <span className="text-xs text-brand-600">
+                      <span className="text-xs text-primary-600">
                         已选 {addInvoiceIds.length} 张
                       </span>
                     )}
@@ -681,7 +675,7 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                         }
                       }}
                       disabled={addingInvoices}
-                      className="flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-700 disabled:opacity-50"
+                      className="flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-primary-700 disabled:opacity-50"
                     >
                       {addingInvoices ? (
                         <Spinner size={14} className="animate-spin" />
@@ -692,7 +686,7 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                     </button>
                     <button
                       onClick={() => setShowAddInvoice(false)}
-                      className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-200"
+                      className="rounded-lg px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
                     >
                       取消
                     </button>
@@ -717,8 +711,8 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                           key={inv.id}
                           className={`flex cursor-pointer items-center gap-3 rounded-lg border p-2.5 transition-colors ${
                             isSelected
-                              ? "border-brand-300 bg-brand-50"
-                              : "border-slate-200 bg-white hover:bg-slate-50"
+                              ? "border-primary-300 bg-primary-50"
+                              : "border-border bg-background hover:bg-muted"
                           }`}
                         >
                           <input
@@ -731,17 +725,17 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                                   : [...prev, inv.id]
                               )
                             }
-                            className="h-3.5 w-3.5 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                            className="h-3.5 w-3.5 rounded border-border text-primary-600 focus:ring-primary-500"
                           />
                           <div className="flex-1 min-w-0">
-                            <span className="text-sm text-slate-700">
+                            <span className="text-sm text-foreground">
                               {inv.seller_name || "未知销方"}
                             </span>
-                            <span className="ml-2 text-xs text-slate-400">
+                            <span className="ml-2 text-xs text-muted-foreground">
                               {inv.issue_date || ""}
                             </span>
                           </div>
-                          <span className="text-sm font-medium text-slate-900">
+                          <span className="text-sm font-medium text-foreground">
                             {inv.total_with_tax ? `¥${inv.total_with_tax}` : "—"}
                           </span>
                         </label>
@@ -754,7 +748,7 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                       (!inv.reimbursement_id || inv.reimbursement_id === reimb.id) &&
                       !detailInvoices.some((di) => di.id === inv.id),
                   ).length === 0 && (
-                    <p className="py-4 text-center text-xs text-slate-400">
+                    <p className="py-4 text-center text-xs text-muted-foreground">
                       没有可追加的发票（标准发票需验真通过、非标票据需审核通过，均需查重唯一且未关联其他报销单）
                     </p>
                   )}
@@ -763,13 +757,13 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
             )}
 
             {detailInvoices.length === 0 && !showAddInvoice ? (
-              <p className="py-8 text-center text-sm text-slate-400">
+              <p className="py-8 text-center text-sm text-muted-foreground">
                 暂无关联发票
               </p>
             ) : (
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-50 text-left text-xs text-slate-400">
+                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
                     <th className="px-5 py-3 font-medium">编号</th>
                     <th className="px-5 py-3 font-medium">销方</th>
                     <th className="px-5 py-3 font-medium">金额</th>
@@ -782,14 +776,14 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {detailInvoices.map((inv) => (
-                    <tr key={inv.id} className="hover:bg-slate-50/50">
-                      <td className="px-5 py-3 font-mono text-xs text-slate-400">
+                    <tr key={inv.id} className="hover:bg-muted/50">
+                      <td className="px-5 py-3 font-mono text-xs text-muted-foreground">
                         #{inv.id}
                       </td>
-                      <td className="max-w-[200px] truncate px-5 py-3 text-slate-700">
+                      <td className="max-w-[200px] truncate px-5 py-3 text-foreground">
                         {inv.seller_name || "—"}
                       </td>
-                      <td className="px-5 py-3 font-medium text-slate-900">
+                      <td className="px-5 py-3 font-medium text-foreground">
                         {inv.total_with_tax
                           ? `¥${inv.total_with_tax}`
                           : "—"}
@@ -844,15 +838,15 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
           </div>
 
           {/* Attachments */}
-          <div className="rounded-2xl border border-slate-200/60 bg-white">
-            <div className="border-b border-slate-100 px-5 py-4">
+          <div className="rounded-2xl border border-border bg-background">
+            <div className="border-b border-border px-5 py-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Paperclip size={18} className="text-slate-400" />
-                  <h2 className="font-display text-base font-semibold text-slate-700">
+                  <Paperclip size={18} className="text-muted-foreground" />
+                  <h2 className="font-display text-base font-semibold text-foreground">
                     附件
                   </h2>
-                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                  <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
                     {detailAttachments.length} 个
                   </span>
                 </div>
@@ -861,7 +855,7 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                     <button
                       onClick={() => detailFileInputRef.current?.click()}
                       disabled={uploadingAttachment}
-                      className="flex items-center gap-1.5 rounded-lg bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 transition-colors hover:bg-brand-100 disabled:opacity-50"
+                      className="flex items-center gap-1.5 rounded-lg bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100 disabled:opacity-50"
                     >
                       {uploadingAttachment ? (
                         <Spinner size={14} className="animate-spin" />
@@ -896,19 +890,19 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
               </div>
             </div>
             {detailAttachments.length === 0 ? (
-              <p className="py-8 text-center text-sm text-slate-400">
+              <p className="py-8 text-center text-sm text-muted-foreground">
                 暂无附件
               </p>
             ) : (
               <div className="divide-y divide-slate-50">
                 {detailAttachments.map((att) => (
                   <div key={att.id} className="flex items-center gap-3 px-5 py-3">
-                    <Paperclip size={18} className="shrink-0 text-slate-400" />
+                    <Paperclip size={18} className="shrink-0 text-muted-foreground" />
                     <div className="flex-1 min-w-0">
-                      <p className="truncate text-sm font-medium text-slate-700">
+                      <p className="truncate text-sm font-medium text-foreground">
                         {att.filename}
                       </p>
-                      <p className="text-xs text-slate-400">
+                      <p className="text-xs text-muted-foreground">
                         {(att.file_size / 1024).toFixed(1)} KB
                         {att.created_at && (
                           <span className="ml-2">
@@ -925,7 +919,7 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                           att.filename
                         );
                       }}
-                      className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
+                      className="shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-primary-50 hover:text-primary-600"
                       title="下载"
                     >
                       <DownloadSimple size={18} />
@@ -946,7 +940,7 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                           }
                         }}
                         disabled={deletingAttachmentId === att.id}
-                        className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
+                        className="shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
                         title="删除"
                       >
                         {deletingAttachmentId === att.id ? (

@@ -12,6 +12,7 @@ import type {
   LlmProviderInfo,
   LlmSettings,
   LlmTestResult,
+  VerifySettings,
   OnlineVerifyResponse,
   OcrResult,
   PortalDashboard,
@@ -29,12 +30,46 @@ import type {
 
 const BASE = "/api";
 
+/** 获取管理端 token */
+function getAdminToken(): string | null {
+  return localStorage.getItem("admin_token");
+}
+
+/** 保存管理端 token */
+function setAdminToken(token: string) {
+  localStorage.setItem("admin_token", token);
+}
+
+/** 清除管理端 token */
+function clearAdminToken() {
+  localStorage.removeItem("admin_token");
+}
+
 async function request<T>(
   url: string,
   options?: RequestInit
 ): Promise<T> {
-  const res = await fetch(`${BASE}${url}`, options);
+  // 管理端接口自动注入 admin token（与员工端 portal_token 物理隔离）
+  const token = getAdminToken();
+  const headers: Record<string, string> = {
+    ...(options?.headers as Record<string, string>),
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${BASE}${url}`, {
+    ...options,
+    headers,
+  });
   if (!res.ok) {
+    if (res.status === 401) {
+      clearAdminToken();
+      // 避免在登录页跳转自身造成循环
+      if (!window.location.pathname.startsWith("/admin/login")) {
+        window.location.href = "/admin/login";
+      }
+      throw new Error("登录已过期，请重新登录");
+    }
     const error = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(error.detail || `请求失败 (${res.status})`);
   }
@@ -78,7 +113,8 @@ export const invoiceApi = {
     const formData = new FormData();
     formData.append("file", params.file);
     formData.append("user_id", params.user_id);
-    formData.append("receipt_type", params.receipt_type || "增值税普通发票");
+    // 无感上传：receipt_type 留空时，后端 LLM Vision 自动识别
+    formData.append("receipt_type", params.receipt_type ?? "");
     formData.append("user_description", params.user_description || "");
     return request<Invoice>("/invoices/upload", {
       method: "POST",
@@ -315,6 +351,27 @@ export const reportApi = {
 
   downloadUrl: (reimbursementId: number, fileType: string) =>
     `${BASE}/reports/download/${reimbursementId}/${fileType}`,
+
+  download: async (reimbursementId: number, fileType: string): Promise<void> => {
+    const token = getAdminToken();
+    const res = await fetch(
+      `${BASE}/reports/download/${reimbursementId}/${fileType}`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+    );
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(error.detail || "下载失败");
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `reimbursement_${reimbursementId}.${fileType}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  },
 };
 
 // ===== 员工 API =====
@@ -351,6 +408,50 @@ export const employeeApi = {
 
   sync: () =>
     request<EmployeeSyncResult>("/employees/sync", { method: "POST" }),
+
+  /** 下载批量添加模板（.xlsx） */
+  downloadTemplate: async (): Promise<void> => {
+    const token = getAdminToken();
+    const res = await fetch("/api/employees/batch/template", {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      throw new Error("模板下载失败");
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "employee_batch_template.xlsx";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  },
+
+  /** 批量上传 Excel 添加员工 */
+  batchUpload: async (
+    file: File
+  ): Promise<{
+    total: number;
+    success: number;
+    failed: number;
+    errors: string[];
+  }> => {
+    const token = getAdminToken();
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/employees/batch/upload", {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(error.detail || `上传失败 (${res.status})`);
+    }
+    return res.json();
+  },
 };
 
 // ===== 员工端 Portal API =====
@@ -617,14 +718,21 @@ export const portalApi = {
   ) => {
     const formData = new FormData();
     formData.append("file", file);
-    formData.append(
-      "receipt_type",
-      options?.receipt_type || "增值税普通发票"
-    );
+    // 无感上传：receipt_type 留空时，后端 LLM Vision 自动识别
+    formData.append("receipt_type", options?.receipt_type ?? "");
     formData.append("user_description", options?.description || "");
     return portalRequest<Invoice>("/invoices/upload", {
       method: "POST",
       body: formData,
+    });
+  },
+
+  /** 更新发票字段（补充用途等） */
+  updateInvoice: async (id: number, data: { user_description?: string }) => {
+    return portalRequest<Invoice>(`/invoices/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
     });
   },
 
@@ -702,6 +810,141 @@ export const dialogApi = {
   },
 
   /**
+   * 流式发送消息（SSE）
+   * 通过 POST + ReadableStream 解析 SSE 事件流（EventSource 仅支持 GET，无法用）。
+   *
+   * 回调约定：
+   * - onProgress(text): 收到 {"phase":"progress","text":"..."} 事件
+   * - onDone(response): 收到 {"phase":"done","response":<DialogAPIResponse>} 事件
+   * - onError(message): 收到 {"phase":"error","message":"..."} 事件或网络异常
+   *
+   * 兼容性：若服务端不支持 SSE（返回非 text/event-stream），降级为一次性 JSON 响应。
+   */
+  streamMessage: async (
+    params: {
+      user_id: string;
+      text: string;
+      role: DialogRole;
+      has_attachment?: boolean;
+      attachment_base64?: string | null;
+      attachment_file_type?: string | null;
+      receipt_type?: string | null;
+      user_description?: string | null;
+      no_receipt_amount?: string | null;
+    },
+    handlers: {
+      onProgress?: (text: string) => void;
+      onDone?: (response: DialogAPIResponse) => void;
+      onError?: (message: string) => void;
+    }
+  ): Promise<void> => {
+    const body = {
+      user_id: params.user_id,
+      text: params.text,
+      role: params.role,
+      has_attachment: params.has_attachment ?? false,
+      attachment_base64: params.attachment_base64 ?? null,
+      attachment_file_type: params.attachment_file_type ?? null,
+      receipt_type: params.receipt_type ?? null,
+      user_description: params.user_description ?? null,
+      no_receipt_amount: params.no_receipt_amount ?? null,
+    };
+
+    // 构造请求头：admin/boss 走通用端点（带 admin token），employee 走 portal 端点（带 JWT）
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    };
+    const url = params.role === "employee" ? `${PORTAL_BASE}/dialog/message/stream` : `${BASE}/dialog/message/stream`;
+    if (params.role === "employee") {
+      const token = getPortalToken();
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+    } else {
+      const adminToken = getAdminToken();
+      if (adminToken) headers["Authorization"] = `Bearer ${adminToken}`;
+    }
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      handlers.onError?.(err instanceof Error ? err.message : "网络请求失败");
+      return;
+    }
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({ detail: res.statusText }));
+      handlers.onError?.(errBody.detail || `请求失败 (${res.status})`);
+      return;
+    }
+
+    // 兼容降级：服务端返回 JSON 而非 SSE
+    const contentType = res.headers.get("content-type") || "";
+    if (!contentType.includes("text/event-stream")) {
+      try {
+        const data = await res.json();
+        handlers.onDone?.(data as DialogAPIResponse);
+      } catch (err) {
+        handlers.onError?.(err instanceof Error ? err.message : "响应解析失败");
+      }
+      return;
+    }
+
+    // 解析 SSE 事件流
+    const reader = res.body?.getReader();
+    if (!reader) {
+      handlers.onError?.("无法读取响应流");
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // 按 "data: <json>\n\n" 分割事件
+        let idx: number;
+        while ((idx = buffer.indexOf("\n\n")) !== -1) {
+          const eventChunk = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+
+          // 提取 data: 行
+          const lines = eventChunk.split("\n");
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const jsonStr = trimmed.slice(5).trim();
+            if (!jsonStr) continue;
+
+            try {
+              const event = JSON.parse(jsonStr);
+              if (event.phase === "progress" && event.text) {
+                handlers.onProgress?.(event.text);
+              } else if (event.phase === "done" && event.response) {
+                handlers.onDone?.(event.response as DialogAPIResponse);
+              } else if (event.phase === "error") {
+                handlers.onError?.(event.message || "服务端处理失败");
+              }
+            } catch {
+              // 单个事件解析失败不中断整体流
+            }
+          }
+        }
+      }
+    } catch (err) {
+      handlers.onError?.(err instanceof Error ? err.message : "响应流读取失败");
+    }
+  },
+
+  /**
    * 重置对话上下文
    * employee → JWT 鉴权端点 /api/portal/dialog/reset
    */
@@ -757,4 +1000,81 @@ export const settingsApi = {
   /** 获取所有服务商信息 */
   getProviders: () =>
     request<Record<string, LlmProviderInfo>>("/settings/llm/providers"),
+
+  /** 获取验真 API 配置 */
+  getVerifySettings: () => request<VerifySettings>("/settings/verify"),
+
+  /** 保存验真 API 配置 */
+  updateVerifySettings: (data: Partial<VerifySettings>) =>
+    request<VerifySettings>("/settings/verify", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+};
+
+// ===== 管理端 Admin API =====
+
+export interface AdminLoginResponse {
+  access_token: string;
+  token_type: string;
+  admin: {
+    username: string;
+    name: string;
+    role: string;
+  };
+}
+
+export const adminApi = {
+  login: async (
+    username: string,
+    password: string
+  ): Promise<AdminLoginResponse> => {
+    const res = await fetch(`/api/admin/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(error.detail || "登录失败");
+    }
+    const data: AdminLoginResponse = await res.json();
+    setAdminToken(data.access_token);
+    localStorage.setItem("admin_user", JSON.stringify(data.admin));
+    return data;
+  },
+
+  logout: () => {
+    clearAdminToken();
+    localStorage.removeItem("admin_user");
+  },
+
+  getToken: getAdminToken,
+
+  getStoredAdmin: (): AdminLoginResponse["admin"] | null => {
+    const raw = localStorage.getItem("admin_user");
+    return raw ? JSON.parse(raw) : null;
+  },
+
+  /** 修改管理员密码（需当前登录态） */
+  changePassword: async (oldPassword: string, newPassword: string) => {
+    const token = getAdminToken();
+    const res = await fetch(`/api/admin/auth/change-password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        old_password: oldPassword,
+        new_password: newPassword,
+      }),
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(error.detail || `修改失败 (${res.status})`);
+    }
+    return res.json();
+  },
 };

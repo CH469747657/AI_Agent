@@ -9,6 +9,7 @@
 
 import os
 import uuid
+import logging
 from datetime import date, datetime, timezone
 from typing import Optional
 
@@ -28,6 +29,7 @@ from app.models.invoice import Invoice, InvoiceStatus, VerifyStatus, DuplicateSt
 from app.models.employee import Employee
 from app.services.expense_date_engine import determine_expense_date
 from app.services.subsidy_engine import recompute_all, recompute_totals, load_holidays
+from app.services.report_generator import ReportGenerator
 
 # 附件限制
 MAX_ATTACHMENT_SIZE = 20 * 1024 * 1024
@@ -274,13 +276,24 @@ async def unlink_invoice(
 async def submit_reimbursement(
     db: AsyncSession, reimbursement_id: int
 ) -> Reimbursement:
-    """提交报销单（DRAFT → SUBMITTED）"""
+    """提交报销单（DRAFT → SUBMITTED）
+
+    提交后自动生成报销报表（Excel + PDF + ZIP）。
+    """
     reimbursement = await get_reimbursement_or_404(db, reimbursement_id)
     await assert_draft(reimbursement)
     reimbursement.status = ReimbursementStatus.submitted
     reimbursement.submitted_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(reimbursement)
+
+    # 提交后自动生成报表（失败不阻断提交主流程）
+    try:
+        generator = ReportGenerator(db)
+        await generator.generate_all(reimbursement_id)
+    except Exception:
+        logger.exception(f"报销单 #{reimbursement_id} 提交后自动生成报表失败")
+
     return reimbursement
 
 

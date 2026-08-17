@@ -32,16 +32,16 @@ export function ReimbursementList({ state }: { state: ReimbursementsPageState })
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">
+            <h1 className="font-display text-2xl font-bold tracking-tight text-foreground">
               报销单管理
             </h1>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="mt-1 text-sm text-muted-foreground">
               创建报销单、关联发票、生成报表并下载
             </p>
           </div>
           <button
             onClick={goToCreate}
-            className="flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-brand-700 active:scale-[0.98]"
+            className="flex items-center gap-2 rounded-xl bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-primary-700 active:scale-[0.98]"
           >
             <Plus size={18} weight="bold" />
             新建报销单
@@ -63,8 +63,8 @@ export function ReimbursementList({ state }: { state: ReimbursementsPageState })
               onClick={() => setStatusFilter(tab.key)}
               className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors ${
                 statusFilter === tab.key
-                  ? "bg-brand-600 text-white"
-                  : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+                  ? "bg-primary-600 text-white"
+                  : "bg-background text-foreground ring-1 ring-border hover:bg-muted"
               }`}
             >
               {tab.label}
@@ -76,15 +76,15 @@ export function ReimbursementList({ state }: { state: ReimbursementsPageState })
         {loading ? (
           <TableSkeleton rows={5} />
         ) : filteredReimbs.length === 0 ? (
-          <div className="rounded-2xl border border-slate-200/60 bg-white">
+          <div className="rounded-2xl border border-border bg-background">
             <EmptyState
-              icon={<Stack size={28} className="text-slate-300" />}
+              icon={<Stack size={28} className="text-muted-foreground" />}
               title="暂无报销单"
               description="点击「新建报销单」选择发票并创建"
               action={
                 <button
                   onClick={goToCreate}
-                  className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700"
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
                 >
                   <Plus size={16} weight="bold" />
                   新建报销单
@@ -93,10 +93,10 @@ export function ReimbursementList({ state }: { state: ReimbursementsPageState })
             />
           </div>
         ) : (
-          <div className="overflow-hidden rounded-2xl border border-slate-200/60 bg-white">
+          <div className="overflow-hidden rounded-2xl border border-border bg-background">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
+                <tr className="border-b border-border text-left text-xs text-muted-foreground">
                   <th className="px-4 py-3 font-medium">序号</th>
                   <th className="px-4 py-3 font-medium">申请人</th>
                   <th className="px-4 py-3 font-medium">部门</th>
@@ -120,20 +120,20 @@ export function ReimbursementList({ state }: { state: ReimbursementsPageState })
                       damping: 20,
                     }}
                     onClick={() => goToDetail(r.id)}
-                    className="cursor-pointer transition-colors hover:bg-slate-50"
+                    className="cursor-pointer transition-colors hover:bg-muted"
                   >
-                    <td className="px-4 py-3 font-mono text-xs text-slate-400">
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                       {i + 1}
                     </td>
-                    <td className="px-4 py-3 text-slate-700">
+                    <td className="px-4 py-3 text-foreground">
                       {r.applicant_name || r.applicant_id}
                     </td>
-                    <td className="px-4 py-3 text-slate-500">
+                    <td className="px-4 py-3 text-muted-foreground">
                       {r.department || "—"}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-0.5">
-                        <span className="font-mono text-xs text-slate-700">
+                        <span className="font-mono text-xs text-foreground">
                           {cycleLabel(r.cycle_key)}
                         </span>
                         {r.is_cycle_locked && (
@@ -146,7 +146,7 @@ export function ReimbursementList({ state }: { state: ReimbursementsPageState })
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col">
-                        <span className="font-medium text-slate-900">
+                        <span className="font-medium text-foreground">
                           {r.total_amount != null
                             ? `¥${r.total_amount.toLocaleString("zh-CN", {
                                 minimumFractionDigits: 2,
@@ -155,7 +155,7 @@ export function ReimbursementList({ state }: { state: ReimbursementsPageState })
                             : "—"}
                         </span>
                         {r.expense_total != null && r.subsidy_total != null && (
-                          <span className="text-[10px] text-slate-400">
+                          <span className="text-[10px] text-muted-foreground">
                             费用 {r.expense_total.toLocaleString("zh-CN", { minimumFractionDigits: 2 })} + 补贴 {r.subsidy_total.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
                           </span>
                         )}
@@ -164,7 +164,7 @@ export function ReimbursementList({ state }: { state: ReimbursementsPageState })
                     <td className="px-4 py-3">
                       <ReimbStatusBadge status={r.status} />
                     </td>
-                    <td className="px-4 py-3 text-xs text-slate-400">
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
                       {r.created_at
                         ? new Date(r.created_at).toLocaleDateString("zh-CN")
                         : "—"}
@@ -178,7 +178,7 @@ export function ReimbursementList({ state }: { state: ReimbursementsPageState })
                               handleWithdraw(r.id);
                             }}
                             disabled={withdrawing}
-                            className="inline-flex items-center justify-center rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-amber-50 hover:text-amber-600"
+                            className="inline-flex items-center justify-center rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-amber-50 hover:text-amber-600"
                             title="撤回报销单"
                           >
                             <ArrowUUpLeft size={16} />
@@ -191,7 +191,7 @@ export function ReimbursementList({ state }: { state: ReimbursementsPageState })
                               handleReimburse(r.id);
                             }}
                             disabled={reimbursing}
-                            className="inline-flex items-center justify-center rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-emerald-50 hover:text-emerald-600"
+                            className="inline-flex items-center justify-center rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-emerald-50 hover:text-emerald-600"
                             title="直接报销"
                           >
                             <Check size={16} />
@@ -203,7 +203,7 @@ export function ReimbursementList({ state }: { state: ReimbursementsPageState })
                             setDeleteError(null);
                             setDeleteTarget(r);
                           }}
-                          className="inline-flex items-center justify-center rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                          className="inline-flex items-center justify-center rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-rose-50 hover:text-rose-600"
                           title="删除报销单"
                         >
                           <Trash size={16} />

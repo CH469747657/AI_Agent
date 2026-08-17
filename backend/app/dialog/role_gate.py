@@ -18,13 +18,12 @@ logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------
 # 员工端受限对话 — 意图黑名单
-# 报销单的生成与汇总由系统后台按报销周期自动完成，员工不可手动触发；
-# 发票核心字段修改不在员工操作白名单（上传/补充说明/查询）内。
+# 报销单的生成与汇总由系统后台按报销周期自动完成，员工不可手动触发。
+# 员工可修改自己上传的发票字段（含用途描述），但仅限未关联报销单的发票。
 # 管理员不受此限制（可代为提交/修改）。
 # ------------------------------------------------------------
 EMPLOYEE_BLOCKED_INTENTS: dict[str, str] = {
     "emp_submit_reimbursement": "报销单由系统按报销周期自动生成与归集，您无需手动提交。",
-    "emp_modify_field": "员工端暂不支持修改发票字段，如需修正请联系管理员。",
 }
 
 
@@ -146,3 +145,53 @@ class RoleGate:
         if role == UserRole.BOSS and intent_name.startswith("emp_query_"):
             return True
         return False
+
+    # ============================================================
+    # Step 3.1.3：Tool 可见性过滤（Agent mode 用）
+    # ============================================================
+
+    def check_tool(self, tool_name: str, role: UserRole) -> PermissionResult:
+        """检查角色是否有权调用该 Tool（Agent mode 用）
+
+        与 check() 的区别：
+        - check() 基于 Intent.role_scope + 前缀矩阵（旧路径用）
+        - check_tool() 基于 Tool.required_roles（新 Agent 路径用）
+        - 两者结果应一致，但 Tool 校验更严格（Pydantic schema）
+
+        Args:
+            tool_name: Tool 名称（与 Intent.name 对齐）
+            role: 用户角色
+
+        Returns:
+            PermissionResult 含 allowed/reason/data_scope
+        """
+        from .tool_registry import get_tool_registry
+
+        registry = get_tool_registry()
+        tool = registry.get(tool_name)
+        if not tool:
+            return PermissionResult(
+                allowed=False,
+                reason=f"未知工具: {tool_name}",
+            )
+
+        if not tool.is_visible_to_role(role):
+            role_name = {UserRole.EMPLOYEE: "员工", UserRole.ADMIN: "管理员",
+                         UserRole.BOSS: "老板"}.get(role, str(role))
+            return PermissionResult(
+                allowed=False,
+                reason=f"{role_name}无权调用工具 {tool_name}",
+            )
+
+        # 复用现有数据范围映射（Tool 名称与 Intent 名称对齐）
+        data_scope = self._get_data_scope(tool_name, role)
+        return PermissionResult(allowed=True, data_scope=data_scope)
+
+    def get_visible_tools(self, role: UserRole) -> list:
+        """获取角色可见的所有 Tool 实例（Agent mode 用）
+
+        Returns:
+            Tool 实例列表
+        """
+        from .tool_registry import get_tool_registry
+        return get_tool_registry().get_visible_tools(role)

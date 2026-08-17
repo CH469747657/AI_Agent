@@ -47,16 +47,16 @@ export function ReimbursementCreate({ state }: { state: ReimbursementsPageState 
       <div className="flex items-center gap-3">
         <button
           onClick={goToList}
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+          className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label="返回"
         >
           <ArrowLeft size={20} />
         </button>
         <div>
-          <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">
+          <h1 className="font-display text-2xl font-bold tracking-tight text-foreground">
             新建报销单
           </h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-muted-foreground">
             选择发票并填写申请人信息，系统将自动汇总金额
           </p>
         </div>
@@ -70,13 +70,13 @@ export function ReimbursementCreate({ state }: { state: ReimbursementsPageState 
       )}
 
       {/* Invoice selection */}
-      <div className="rounded-2xl border border-slate-200/60 bg-white p-5">
+      <div className="rounded-2xl border border-border bg-background p-5">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="font-display text-base font-semibold text-slate-700">
+          <h2 className="font-display text-base font-semibold text-foreground">
             选择发票
           </h2>
           {selectedIds.length > 0 && (
-            <span className="text-sm text-slate-500">
+            <span className="text-sm text-muted-foreground">
               已选 {selectedIds.length} 张 · 合计 ¥
               {selectedTotal.toLocaleString("zh-CN", {
                 minimumFractionDigits: 2,
@@ -87,11 +87,11 @@ export function ReimbursementCreate({ state }: { state: ReimbursementsPageState 
         </div>
 
         {allInvoices.length === 0 ? (
-          <p className="py-8 text-center text-sm text-slate-400">
+          <p className="py-8 text-center text-sm text-muted-foreground">
             暂无发票记录
           </p>
         ) : availableInvoices.length === 0 ? (
-          <p className="py-8 text-center text-sm text-slate-400">
+          <p className="py-8 text-center text-sm text-muted-foreground">
             没有可关联的发票（标准发票需验真通过、非标票据需审核通过，均需查重唯一且未关联其他报销单）
           </p>
         ) : (
@@ -103,27 +103,27 @@ export function ReimbursementCreate({ state }: { state: ReimbursementsPageState 
                   key={inv.id}
                   className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-colors ${
                     isSelected
-                      ? "border-brand-300 bg-brand-50"
-                      : "border-slate-100 hover:bg-slate-50"
+                      ? "border-primary-300 bg-primary-50"
+                      : "border-border hover:bg-muted"
                   }`}
                 >
                   <input
                     type="checkbox"
                     checked={isSelected}
                     onChange={() => toggleInvoice(inv.id)}
-                    className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                    className="h-4 w-4 rounded border-border text-primary-600 focus:ring-primary-500"
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs text-slate-400">
+                      <span className="font-mono text-xs text-muted-foreground">
                         #{inv.id}
                       </span>
-                      <span className="truncate text-sm font-medium text-slate-700">
+                      <span className="truncate text-sm font-medium text-foreground">
                         {inv.seller_name || "未知销方"}
                       </span>
                     </div>
                     <div className="mt-0.5 flex items-center gap-3">
-                      <span className="text-xs text-slate-400">
+                      <span className="text-xs text-muted-foreground">
                         {inv.issue_date || "—"}
                       </span>
                       <CategoryBadge category={inv.fee_category} subcategory={inv.fee_subcategory} />
@@ -132,7 +132,7 @@ export function ReimbursementCreate({ state }: { state: ReimbursementsPageState 
                       <DuplicateBadge status={inv.duplicate_status} />
                     </div>
                   </div>
-                  <span className="font-medium text-slate-900">
+                  <span className="font-medium text-foreground">
                     {inv.total_with_tax
                       ? `¥${inv.total_with_tax}`
                       : "—"}
@@ -145,100 +145,100 @@ export function ReimbursementCreate({ state }: { state: ReimbursementsPageState 
       </div>
 
       {/* Applicant form */}
-      <div className="space-y-4 rounded-2xl border border-slate-200/60 bg-white p-5">
-        <h2 className="font-display text-base font-semibold text-slate-700">
+      <div className="space-y-4 rounded-2xl border border-border bg-background p-5">
+        <h2 className="font-display text-base font-semibold text-foreground">
           申请人信息
         </h2>
 
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">
+            <label className="text-sm font-medium text-foreground">
               申请人 ID
             </label>
             <input
               type="text"
               value={applicantId}
               onChange={(e) => setApplicantId(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 focus:border-brand-400 focus:bg-white"
+              className="w-full rounded-lg border border-border bg-muted px-3 py-2.5 text-sm text-foreground focus:border-primary-400 focus:bg-background"
               placeholder="企业微信 UserID"
             />
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">
+            <label className="text-sm font-medium text-foreground">
               申请人姓名
             </label>
             <input
               type="text"
               value={applicantName}
               onChange={(e) => setApplicantName(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 focus:border-brand-400 focus:bg-white"
+              className="w-full rounded-lg border border-border bg-muted px-3 py-2.5 text-sm text-foreground focus:border-primary-400 focus:bg-background"
               placeholder="选填"
             />
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">
+            <label className="text-sm font-medium text-foreground">
               部门
             </label>
             <input
               type="text"
               value={department}
               onChange={(e) => setDepartment(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 focus:border-brand-400 focus:bg-white"
+              className="w-full rounded-lg border border-border bg-muted px-3 py-2.5 text-sm text-foreground focus:border-primary-400 focus:bg-background"
               placeholder="选填"
             />
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">
+            <label className="text-sm font-medium text-foreground">
               报销期间
             </label>
             <input
               type="month"
               value={period}
               onChange={(e) => setPeriod(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 focus:border-brand-400 focus:bg-white"
+              className="w-full rounded-lg border border-border bg-muted px-3 py-2.5 text-sm text-foreground focus:border-primary-400 focus:bg-background"
             />
           </div>
         </div>
       </div>
 
       {/* Reimbursement reason */}
-      <div className="space-y-2 rounded-2xl border border-slate-200/60 bg-white p-5">
-        <label className="text-sm font-medium text-slate-700">
+      <div className="space-y-2 rounded-2xl border border-border bg-background p-5">
+        <label className="text-sm font-medium text-foreground">
           报销事由 <span className="text-rose-500">*</span>
         </label>
         <textarea
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           rows={3}
-          className="w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 focus:border-brand-400 focus:bg-white"
+          className="w-full resize-none rounded-lg border border-border bg-muted px-3 py-2.5 text-sm text-foreground focus:border-primary-400 focus:bg-background"
           placeholder="例如：XX项目差旅费、部门日常办公采购等"
         />
-        <p className="text-xs text-slate-400">
+        <p className="text-xs text-muted-foreground">
           简要说明本次报销的事由及补充说明，将显示在报表中
         </p>
       </div>
 
       {/* Attachments */}
-      <div className="space-y-3 rounded-2xl border border-slate-200/60 bg-white p-5">
+      <div className="space-y-3 rounded-2xl border border-border bg-background p-5">
         <div className="flex items-center justify-between">
-          <h2 className="font-display text-base font-semibold text-slate-700">
+          <h2 className="font-display text-base font-semibold text-foreground">
             附件
           </h2>
           {pendingFiles.length > 0 && (
-            <span className="text-sm text-slate-500">
+            <span className="text-sm text-muted-foreground">
               已选 {pendingFiles.length} 个文件
             </span>
           )}
         </div>
         <div
           onClick={() => fileInputRef.current?.click()}
-          className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50/50 py-8 transition-colors hover:border-brand-300 hover:bg-brand-50/30"
+          className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed border-border bg-muted/50 py-8 transition-colors hover:border-primary-300 hover:bg-primary-50/30"
         >
-          <Paperclip size={28} className="text-slate-300" />
-          <p className="text-sm text-slate-500">
+          <Paperclip size={28} className="text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
             点击选择附件文件
           </p>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-muted-foreground">
             支持图片/PDF/Office/压缩包，单文件最大 20MB
           </p>
           <input
@@ -258,12 +258,12 @@ export function ReimbursementCreate({ state }: { state: ReimbursementsPageState 
             {pendingFiles.map((file, i) => (
               <div
                 key={`${file.name}-${i}`}
-                className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50/50 px-3 py-2"
+                className="flex items-center gap-3 rounded-lg border border-border bg-muted/50 px-3 py-2"
               >
-                <Paperclip size={16} className="shrink-0 text-slate-400" />
+                <Paperclip size={16} className="shrink-0 text-muted-foreground" />
                 <div className="flex-1 min-w-0">
-                  <p className="truncate text-sm text-slate-700">{file.name}</p>
-                  <p className="text-xs text-slate-400">
+                  <p className="truncate text-sm text-foreground">{file.name}</p>
+                  <p className="text-xs text-muted-foreground">
                     {(file.size / 1024).toFixed(1)} KB
                   </p>
                 </div>
@@ -271,7 +271,7 @@ export function ReimbursementCreate({ state }: { state: ReimbursementsPageState 
                   onClick={() => {
                     setPendingFiles((prev) => prev.filter((_, idx) => idx !== i));
                   }}
-                  className="shrink-0 rounded-md p-1 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                  className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-rose-50 hover:text-rose-600"
                 >
                   <XCircle size={16} />
                 </button>
@@ -282,10 +282,10 @@ export function ReimbursementCreate({ state }: { state: ReimbursementsPageState 
       </div>
 
       {/* Summary & submit */}
-      <div className="flex items-center justify-between rounded-2xl border border-brand-200 bg-brand-50/50 p-5">
+      <div className="flex items-center justify-between rounded-2xl border border-primary-200 bg-primary-50/50 p-5">
         <div>
-          <p className="text-sm text-slate-500">报销总金额</p>
-          <p className="font-display text-2xl font-bold text-slate-900">
+          <p className="text-sm text-muted-foreground">报销总金额</p>
+          <p className="font-display text-2xl font-bold text-foreground">
             ¥
             {selectedTotal.toLocaleString("zh-CN", {
               minimumFractionDigits: 2,
@@ -296,7 +296,7 @@ export function ReimbursementCreate({ state }: { state: ReimbursementsPageState 
         <button
           onClick={handleCreate}
           disabled={creating || uploadingAttachments || !applicantId || !reason.trim()}
-          className="flex items-center gap-2 rounded-xl bg-brand-600 px-6 py-3 text-sm font-semibold text-white transition-all hover:bg-brand-700 disabled:opacity-50 active:scale-[0.98]"
+          className="flex items-center gap-2 rounded-xl bg-primary-600 px-6 py-3 text-sm font-semibold text-white transition-all hover:bg-primary-700 disabled:opacity-50 active:scale-[0.98]"
         >
           {creating || uploadingAttachments ? (
             <>

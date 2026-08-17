@@ -1,6 +1,6 @@
 import { useSearchParams } from "react-router-dom";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { reimbursementApi, invoiceApi, reportApi } from "../../api/client";
+import { reimbursementApi, invoiceApi } from "../../api/client";
 import type {
   Reimbursement,
   Invoice,
@@ -39,7 +39,6 @@ function useReimbursementsPageState() {
   const [detailReimb, setDetailReimb] = useState<Reimbursement | null>(null);
   const [detailInvoices, setDetailInvoices] = useState<Invoice[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [generatingReport, setGeneratingReport] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
   const [approving, setApproving] = useState(false);
@@ -268,20 +267,6 @@ function useReimbursementsPageState() {
     }
   };
 
-  const handleGenerateReport = async (id: number) => {
-    setGeneratingReport(true);
-    setError(null);
-    try {
-      await reportApi.generate(id);
-      const updated = await reimbursementApi.detail(id);
-      setDetailReimb(updated);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "生成失败");
-    } finally {
-      setGeneratingReport(false);
-    }
-  };
-
   const handleDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -380,7 +365,6 @@ function useReimbursementsPageState() {
     detailLoading,
     detailAttachments,
     setDetailAttachments,
-    generatingReport,
     submitting,
     withdrawing,
     approving,
@@ -391,7 +375,6 @@ function useReimbursementsPageState() {
     handleApprove,
     handleReject,
     handleReimburse,
-    handleGenerateReport,
     showAddInvoice,
     setShowAddInvoice,
     addInvoiceIds,

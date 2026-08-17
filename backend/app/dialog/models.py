@@ -109,6 +109,9 @@ class Intent:
     optional_slots: list[str]          # 可选槽位名称
     nlu_level: NluLevel                # 最低NLU层级
     prompt_template: str = ""          # 追问话术模板
+    # Step 2.1.1：典型用户表述，3-5 条/意图，用于 RAG embedding 检索
+    # 设计：覆盖口语化、省略、同义词等多种表述，提升 Top-K 检索召回率
+    typical_utterances: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -136,9 +139,11 @@ class DialogContext:
     pending_invoice_id: Optional[int] = None
     # 前端传入的费用用途（仅当次请求有效，处理后清除）
     user_description: Optional[str] = None
-    # 批量描述映射 — batch_describe 意图 LLM 拆解结果
-    # 格式: [{"invoice_id": int, "description": str}, ...]
-    batch_desc_map: list[dict] = field(default_factory=list)
+    # 批量描述映射 — 用户分次说明时累积，key 为 0-based 索引字符串，value 为描述
+    # 例: {"0": "餐饮费", "1": "打车费"} 表示第1张=餐饮费，第2张=打车费
+    batch_desc_map: dict[str, str] = field(default_factory=dict)
+    # 当前轮附件数据（Agent 路径用，仅 _handle_upload_invoice 读取 base64/file_type）
+    attachment_data: Optional[dict] = None
     # 当前轮原始文本（供 Insight Engine 解析时间段/实体名）
     current_text: str = ""
     # 对话历史 — 最近 N 轮的查询/操作记录，用于跨轮槽位继承与指代消解
@@ -250,6 +255,92 @@ class DialogContext:
         """清空对话历史"""
         self.history.clear()
 
+    def get_history_summary(
+        self,
+        max_turns: int = 3,
+        max_tokens: int = 500,
+    ) -> str:
+        """Step 2.2.1/2.2.2：生成紧凑对话历史摘要，供 LLM NLU 注入
+
+        模板：
+            [对话历史（最近N轮）]
+            T-k: intent=xxx, slots={key:val, ...}
+            ...
+            [当前状态] state=IDLE
+            [当前意图] current_intent=xxx（如有）
+
+        设计要点：
+        - 只取最近 max_turns 轮，避免 token 爆炸
+        - slots 只输出非空键值，过滤 None / 空串
+        - 粗略 token 估算：按字符数 / 2（中文约 2 字符/token）
+        - 无历史时返回空串，由调用方决定是否注入
+
+        Args:
+            max_turns: 最多包含的轮次数
+            max_tokens: 摘要最大 token 数（粗略估算）
+
+        Returns:
+            历史摘要字符串；无历史时返回空串
+        """
+        if not self.history:
+            return ""
+
+        # 取最近 max_turns 轮
+        recent = self.history[-max_turns:]
+        total_turns = len(self.history)
+
+        lines: list[str] = [f"[对话历史（最近{len(recent)}轮，共{total_turns}轮）]"]
+
+        # 标注轮次：最早的轮次用 T-(N-1)，最近用 T-1
+        n = len(recent)
+        for i, entry in enumerate(recent):
+            t_label = f"T-{n - i}" if (n - i) > 0 else "T"
+            intent = entry.get("intent", "unknown")
+            slots = entry.get("slots", {}) or {}
+            referents = entry.get("referents", {}) or {}
+
+            # 合并 slots + referents，过滤空值
+            merged: dict = {}
+            for k, v in {**slots, **referents}.items():
+                if v is None or v == "" or v == []:
+                    continue
+                # 截断长值（避免单槽位占太多 token）
+                v_str = str(v)
+                if len(v_str) > 30:
+                    v_str = v_str[:30] + "..."
+                merged[k] = v_str
+
+            slots_str = ", ".join(f"{k}:{v}" for k, v in merged.items()) if merged else "无"
+            user_text = (entry.get("user_text", "") or "")[:40]
+            lines.append(f"{t_label}: intent={intent}, slots={{{slots_str}}}, text=\"{user_text}\"")
+
+        # 当前状态
+        state_str = self.state.value if hasattr(self.state, "value") else str(self.state)
+        lines.append(f"[当前状态] state={state_str}")
+        if self.current_intent:
+            lines.append(f"[当前意图] current_intent={self.current_intent}")
+
+        summary = "\n".join(lines)
+
+        # 粗略 token 估算（中文约 2 字符/token），超长则截断
+        # 保留开头与结尾的关键信息
+        max_chars = max_tokens * 2
+        if len(summary) > max_chars:
+            # 截断中间轮次，保留首尾
+            header = lines[0]
+            footer = lines[-2:]  # state + current_intent
+            middle = lines[1:-2]
+            # 保留最早的 1 轮 + 最新的 1 轮
+            if len(middle) > 2:
+                kept_middle = [middle[0], f"...（省略{len(middle) - 2}轮）...", middle[-1]]
+            else:
+                kept_middle = middle
+            summary = "\n".join([header] + kept_middle + footer)
+            if len(summary) > max_chars:
+                summary = summary[:max_chars] + "..."
+
+        return summary
+
     @staticmethod
     def _auto_summary(intent: str, text: str) -> str:
         """自动生成历史摘要（避免调用 LLM，简单截断用户输入）"""
@@ -270,6 +361,7 @@ class DialogContext:
             "pending_invoice_id": self.pending_invoice_id,
             "user_description": self.user_description,
             "current_text": self.current_text,
+            "batch_desc_map": self.batch_desc_map,
             "history": self.history,
             "updated_at": self.updated_at,
             "turn_count": self.turn_count,
@@ -288,6 +380,7 @@ class DialogContext:
         ctx.pending_invoice_id = data.get("pending_invoice_id")
         ctx.user_description = data.get("user_description")
         ctx.current_text = data.get("current_text", "")
+        ctx.batch_desc_map = data.get("batch_desc_map", {}) or {}
         ctx.history = data.get("history", [])
         for k, v in data.get("slots", {}).items():
             ctx.slots[k] = Slot(

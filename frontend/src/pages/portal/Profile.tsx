@@ -59,7 +59,7 @@ export function PortalProfile() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Spinner size={24} className="animate-spin text-brand-600" />
+        <Spinner size={24} className="animate-spin text-primary-700" />
       </div>
     );
   }
@@ -69,47 +69,47 @@ export function PortalProfile() {
   return (
     <div className="mx-auto max-w-lg space-y-6">
       {/* 个人信息 */}
-      <div className="rounded-2xl border border-slate-200/60 bg-white p-6 shadow-sm">
+      <div className="rounded-2xl border border-border/60 bg-background p-6 shadow-sm">
         <div className="mb-4 flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-50 text-brand-600">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary-50 text-primary-600">
             <UserCircle size={28} />
           </div>
           <div>
-            <h2 className="font-display text-lg font-bold text-slate-900">
+            <h2 className="font-display text-lg font-bold text-foreground">
               {profile.name}
             </h2>
-            <p className="text-sm text-slate-500">{profile.employee_no}</p>
+            <p className="text-sm text-muted-foreground">{profile.employee_no}</p>
           </div>
         </div>
 
         <div className="space-y-3 text-sm">
-          <div className="flex justify-between border-t border-slate-100 pt-3">
-            <span className="text-slate-400">部门</span>
-            <span className="font-medium text-slate-700">
+          <div className="flex justify-between border-t border-border pt-3">
+            <span className="text-muted-foreground">部门</span>
+            <span className="font-medium text-foreground">
               {profile.department || "-"}
             </span>
           </div>
-          <div className="flex justify-between border-t border-slate-100 pt-3">
-            <span className="text-slate-400">职务</span>
-            <span className="font-medium text-slate-700">
+          <div className="flex justify-between border-t border-border pt-3">
+            <span className="text-muted-foreground">职务</span>
+            <span className="font-medium text-foreground">
               {profile.position || "-"}
             </span>
           </div>
-          <div className="flex justify-between border-t border-slate-100 pt-3">
-            <span className="text-slate-400">手机</span>
-            <span className="font-medium text-slate-700">
+          <div className="flex justify-between border-t border-border pt-3">
+            <span className="text-muted-foreground">手机</span>
+            <span className="font-medium text-foreground">
               {profile.mobile || "-"}
             </span>
           </div>
-          <div className="flex justify-between border-t border-slate-100 pt-3">
-            <span className="text-slate-400">邮箱</span>
-            <span className="font-medium text-slate-700">
+          <div className="flex justify-between border-t border-border pt-3">
+            <span className="text-muted-foreground">邮箱</span>
+            <span className="font-medium text-foreground">
               {profile.email || "-"}
             </span>
           </div>
-          <div className="flex justify-between border-t border-slate-100 pt-3">
-            <span className="text-slate-400">最后登录</span>
-            <span className="font-medium text-slate-700">
+          <div className="flex justify-between border-t border-border pt-3">
+            <span className="text-muted-foreground">最后登录</span>
+            <span className="font-medium text-foreground">
               {profile.last_login_at
                 ? new Date(profile.last_login_at).toLocaleString("zh-CN")
                 : "-"}
@@ -119,9 +119,9 @@ export function PortalProfile() {
       </div>
 
       {/* 修改密码 */}
-      <div className="rounded-2xl border border-slate-200/60 bg-white p-6 shadow-sm">
-        <h3 className="mb-4 flex items-center gap-2 font-display text-base font-semibold text-slate-900">
-          <LockKey size={18} className="text-slate-400" />
+      <div className="rounded-2xl border border-border/60 bg-background p-6 shadow-sm">
+        <h3 className="mb-4 flex items-center gap-2 font-display text-base font-semibold text-foreground">
+          <LockKey size={18} className="text-muted-foreground" />
           修改密码
         </h3>
 
@@ -144,39 +144,39 @@ export function PortalProfile() {
           )}
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">
+            <label className="mb-1 block text-sm font-medium text-foreground">
               旧密码
             </label>
             <input
               type="password"
               value={oldPwd}
               onChange={(e) => setOldPwd(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+              className="w-full rounded-xl border border-border px-4 py-2 text-sm focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
               required
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">
+            <label className="mb-1 block text-sm font-medium text-foreground">
               新密码
             </label>
             <input
               type="password"
               value={newPwd}
               onChange={(e) => setNewPwd(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+              className="w-full rounded-xl border border-border px-4 py-2 text-sm focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
               required
               minLength={6}
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">
+            <label className="mb-1 block text-sm font-medium text-foreground">
               确认新密码
             </label>
             <input
               type="password"
               value={confirmPwd}
               onChange={(e) => setConfirmPwd(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+              className="w-full rounded-xl border border-border px-4 py-2 text-sm focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
               required
               minLength={6}
             />
@@ -184,7 +184,7 @@ export function PortalProfile() {
           <button
             type="submit"
             disabled={changing}
-            className="flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-700 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-xl bg-primary-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-800 disabled:opacity-50"
           >
             {changing && <Spinner size={16} className="animate-spin" />}
             确认修改

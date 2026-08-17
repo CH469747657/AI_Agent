@@ -8,7 +8,7 @@ export const reimbStatusConfig: Record<
   ReimbursementStatus,
   { label: string; className: string }
 > = {
-  DRAFT: { label: "草稿", className: "bg-slate-100 text-slate-600" },
+  DRAFT: { label: "草稿", className: "bg-muted text-foreground" },
   SUBMITTED: { label: "已提交", className: "bg-blue-50 text-blue-700" },
   REVIEWED: { label: "已审核", className: "bg-amber-50 text-amber-700" },
   REIMBURSED: { label: "已报销", className: "bg-emerald-50 text-emerald-700" },
@@ -38,12 +38,12 @@ export function InfoRow({
 }) {
   return (
     <div className="flex items-center gap-3">
-      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100">
+      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted">
         {icon}
       </div>
       <div className="flex-1">
-        <p className="text-xs text-slate-400">{label}</p>
-        <p className="text-sm font-medium text-slate-800">{value ?? "—"}</p>
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="text-sm font-medium text-foreground">{value ?? "—"}</p>
       </div>
     </div>
   );
@@ -75,7 +75,7 @@ export function weekdayName(n: number | null): string {
 }
 
 const _dayTypeConfig: Record<string, { label: string; badge: string }> = {
-  workday: { label: "工作日", badge: "bg-slate-100 text-slate-600" },
+  workday: { label: "工作日", badge: "bg-muted text-foreground" },
   rest_day: { label: "休息日", badge: "bg-blue-50 text-blue-600" },
   holiday: { label: "法定节假日", badge: "bg-rose-50 text-rose-600" },
   adjusted_workday: { label: "调休补班", badge: "bg-amber-50 text-amber-600" },
@@ -87,8 +87,8 @@ export function dayTypeLabel(type: string | null): string {
 }
 
 export function dayTypeBadge(type: string | null): string {
-  if (!type) return "bg-slate-100 text-slate-600";
-  return _dayTypeConfig[type]?.badge ?? "bg-slate-100 text-slate-600";
+  if (!type) return "bg-muted text-foreground";
+  return _dayTypeConfig[type]?.badge ?? "bg-muted text-foreground";
 }
 
 export function formatCycleRange(start: string | null, end: string | null): string {

@@ -226,13 +226,13 @@ const filtered = useMemo(() => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">
+          <h1 className="font-display text-2xl font-bold tracking-tight text-foreground">
             发票列表
           </h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-muted-foreground">
             共 {filtered.length} 张发票
             {selectedIds.size > 0 && (
-              <span className="ml-2 text-brand-600">
+              <span className="ml-2 text-primary-600">
                 已选 {selectedIds.size} 张
               </span>
             )}
@@ -241,14 +241,14 @@ const filtered = useMemo(() => {
         <div className="flex items-center gap-2">
           <button
             onClick={() => { setExportUploader(""); setShowExportModal(true); }}
-            className="flex items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-4 py-2.5 text-sm font-semibold text-brand-700 transition-all hover:bg-brand-100 active:scale-[0.98]"
+            className="flex items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-sm font-medium text-primary-700 transition-all hover:bg-primary-100 active:scale-[0.98]"
           >
             <FileXls size={18} weight="bold" />
             导出清单
           </button>
           <button
             onClick={() => navigate("/upload")}
-            className="flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-brand-700 active:scale-[0.98]"
+            className="flex items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-sm font-medium text-white transition-all hover:bg-primary-700 active:scale-[0.98]"
           >
             <UploadSimple size={18} weight="bold" />
             上传发票
@@ -261,14 +261,14 @@ const filtered = useMemo(() => {
         <div className="relative flex-1 max-w-md">
           <MagnifyingGlass
             size={16}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
           />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="搜索发票号、销售方、日期..."
-            className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-4 text-sm text-slate-700 outline-none transition-colors placeholder:text-slate-400 focus:border-brand-400"
+            className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-4 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary-400"
           />
         </div>
       </div>
@@ -277,16 +277,16 @@ const filtered = useMemo(() => {
       <div className="space-y-3">
         {/* 状态筛选 */}
         <div className="flex items-center gap-3">
-          <span className="w-14 shrink-0 text-xs font-medium text-slate-400">状态</span>
+          <span className="w-14 shrink-0 text-xs font-medium text-muted-foreground">状态</span>
           <div className="flex flex-wrap gap-1.5">
             {statusOptions.map((opt) => (
               <button
                 key={opt.value}
                 onClick={() => setStatusFilter(opt.value)}
-                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                className={`rounded-md px-2.5 py-1 text-sm font-medium transition-colors ${
                   statusFilter === opt.value
-                    ? "bg-brand-600 text-white"
-                    : "bg-white text-slate-600 hover:bg-slate-100"
+                    ? "bg-primary-600 text-white"
+                    : "bg-background text-foreground hover:bg-muted"
                 }`}
               >
                 {opt.label}
@@ -296,16 +296,16 @@ const filtered = useMemo(() => {
         </div>
         {/* 验真筛选 */}
         <div className="flex items-center gap-3">
-          <span className="w-14 shrink-0 text-xs font-medium text-slate-400">验真</span>
+          <span className="w-14 shrink-0 text-xs font-medium text-muted-foreground">验真</span>
           <div className="flex flex-wrap gap-1.5">
             {verifyOptions.map((opt) => (
               <button
                 key={opt.value}
                 onClick={() => setVerifyFilter(opt.value)}
-                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                className={`rounded-md px-2.5 py-1 text-sm font-medium transition-colors ${
                   verifyFilter === opt.value
-                    ? "bg-brand-600 text-white"
-                    : "bg-white text-slate-600 hover:bg-slate-100"
+                    ? "bg-primary-600 text-white"
+                    : "bg-background text-foreground hover:bg-muted"
                 }`}
               >
                 {opt.label}
@@ -315,16 +315,16 @@ const filtered = useMemo(() => {
         </div>
         {/* 查重筛选 */}
         <div className="flex items-center gap-3">
-          <span className="w-14 shrink-0 text-xs font-medium text-slate-400">查重</span>
+          <span className="w-14 shrink-0 text-xs font-medium text-muted-foreground">查重</span>
           <div className="flex flex-wrap gap-1.5">
             {dupOptions.map((opt) => (
               <button
                 key={opt.value}
                 onClick={() => setDupFilter(opt.value)}
-                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                className={`rounded-md px-2.5 py-1 text-sm font-medium transition-colors ${
                   dupFilter === opt.value
-                    ? "bg-brand-600 text-white"
-                    : "bg-white text-slate-600 hover:bg-slate-100"
+                    ? "bg-primary-600 text-white"
+                    : "bg-background text-foreground hover:bg-muted"
                 }`}
               >
                 {opt.label}
@@ -334,16 +334,16 @@ const filtered = useMemo(() => {
         </div>
         {/* 票据类型筛选 */}
         <div className="flex items-center gap-3">
-          <span className="w-14 shrink-0 text-xs font-medium text-slate-400">类型</span>
+          <span className="w-14 shrink-0 text-xs font-medium text-muted-foreground">类型</span>
           <div className="flex flex-wrap gap-1.5">
             {receiptTypeOptions.map((opt) => (
               <button
                 key={opt.value}
                 onClick={() => setReceiptTypeFilter(opt.value)}
-                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                className={`rounded-md px-2.5 py-1 text-sm font-medium transition-colors ${
                   receiptTypeFilter === opt.value
-                    ? "bg-brand-600 text-white"
-                    : "bg-white text-slate-600 hover:bg-slate-100"
+                    ? "bg-primary-600 text-white"
+                    : "bg-background text-foreground hover:bg-muted"
                 }`}
               >
                 {opt.label}
@@ -360,10 +360,10 @@ const filtered = useMemo(() => {
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="flex items-center gap-4 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3"
+            className="flex items-center gap-4 rounded-lg border border-primary-200 bg-primary-50 px-4 py-3"
           >
-            <Checks size={18} className="text-brand-600" />
-            <span className="text-sm font-medium text-brand-700">
+            <Checks size={18} className="text-primary-600" />
+            <span className="text-sm font-medium text-primary-700">
               已选中 {selectedIds.size} 张发票
             </span>
             <div className="ml-auto flex items-center gap-2">
@@ -372,7 +372,7 @@ const filtered = useMemo(() => {
                   navigate(`/reimbursements?ids=${[...selectedIds].join(",")}`);
                   clearSelection();
                 }}
-                className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-700"
+                className="rounded-md bg-primary-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-700"
               >
                 创建报销单
               </button>
@@ -391,13 +391,13 @@ const filtered = useMemo(() => {
                     setDeleteError(null);
                   }
                 }}
-                className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-rose-700"
+                className="rounded-md bg-error-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-error-700"
               >
                 批量删除
               </button>
               <button
                 onClick={clearSelection}
-                className="rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100"
+                className="rounded-md bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
               >
                 取消选择
               </button>
@@ -407,7 +407,7 @@ const filtered = useMemo(() => {
       </AnimatePresence>
 
       {error && (
-        <div className="flex items-center gap-2 rounded-xl bg-rose-50 p-4 text-sm text-rose-700">
+        <div className="flex items-center gap-2 rounded-lg bg-error-50 p-4 text-sm text-error-700">
           <Warning size={18} />
           {error}
         </div>
@@ -417,26 +417,26 @@ const filtered = useMemo(() => {
       {loading ? (
         <TableSkeleton rows={8} />
       ) : paged.length === 0 ? (
-        <div className="rounded-2xl border border-slate-200/60 bg-white">
+        <div className="rounded-xl border border-border bg-background">
           <EmptyState
-            icon={<Receipt size={28} className="text-slate-300" />}
+            icon={<Receipt size={28} className="text-muted-foreground" />}
             title="没有匹配的发票"
             description="尝试更换筛选条件，或上传新的发票"
           />
         </div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-2xl border border-slate-200/60 bg-white">
+          <div className="overflow-hidden rounded-xl border border-border bg-background">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
+                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
                     <th className="px-3 py-2.5 w-10">
                       <input
                         type="checkbox"
                         checked={selectedIds.size === paged.length && paged.length > 0}
                         onChange={toggleSelectAll}
-                        className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                        className="h-4 w-4 rounded border-border text-primary-600 focus:ring-primary-500"
                       />
                     </th>
                     <th className="px-3 py-2.5 w-12 whitespace-nowrap text-center font-medium">序号</th>
@@ -454,15 +454,15 @@ const filtered = useMemo(() => {
                     <th className="px-3 py-2.5 w-20 whitespace-nowrap text-center font-medium">操作</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-50">
+                <tbody className="divide-y divide-border">
                   {paged.map((inv, i) => (
                     <motion.tr
                       key={inv.id}
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       transition={{ delay: i * 0.02 }}
-                      className={`cursor-pointer transition-colors hover:bg-slate-50 ${
-                        selectedIds.has(inv.id) ? "bg-brand-50/50" : ""
+                      className={`cursor-pointer transition-colors hover:bg-muted ${
+                        selectedIds.has(inv.id) ? "bg-primary-50/50" : ""
                       }`}
                     >
                       <td
@@ -477,11 +477,11 @@ const filtered = useMemo(() => {
                           checked={selectedIds.has(inv.id)}
                           onChange={() => toggleSelect(inv.id)}
                           onClick={(e) => e.stopPropagation()}
-                          className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                          className="h-4 w-4 rounded border-border text-primary-600 focus:ring-primary-500"
                         />
                       </td>
                       <td
-                        className="px-3 py-2.5 text-center font-mono text-xs text-slate-400"
+                        className="px-3 py-2.5 text-center font-mono text-xs text-muted-foreground"
                         onClick={() => setSelectedId(inv.id)}
                       >
                         {(currentPage - 1) * PAGE_SIZE + i + 1}
@@ -494,30 +494,30 @@ const filtered = useMemo(() => {
                           <span
                             className={`inline-block whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-medium ${
                               inv.is_nonstandard
-                                ? "bg-violet-100 text-violet-700"
-                                : "bg-slate-100 text-slate-600"
+                                ? "bg-accent-100 text-accent-700"
+                                : "bg-muted text-foreground"
                             }`}
                           >
                             {inv.receipt_type}
                           </span>
                         ) : (
-                          <span className="text-xs text-slate-300">—</span>
+                          <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </td>
                       <td
-                        className="px-3 py-2.5 whitespace-nowrap font-mono text-xs text-slate-600"
+                        className="px-3 py-2.5 whitespace-nowrap font-mono text-xs text-foreground"
                         onClick={() => setSelectedId(inv.id)}
                       >
                         {inv.invoice_number || "—"}
                       </td>
                       <td
-                        className="max-w-[180px] truncate px-3 py-2.5 text-slate-700"
+                        className="max-w-[180px] truncate px-3 py-2.5 text-foreground"
                         onClick={() => setSelectedId(inv.id)}
                       >
                         {inv.seller_name || "—"}
                       </td>
                       <td
-                        className="px-3 py-2.5 whitespace-nowrap font-medium text-slate-900"
+                        className="px-3 py-2.5 whitespace-nowrap font-medium text-foreground"
                         onClick={() => setSelectedId(inv.id)}
                       >
                         {inv.total_with_tax ? `¥${inv.total_with_tax}` : "—"}
@@ -548,18 +548,18 @@ const filtered = useMemo(() => {
                           <span
                             className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${
                               inv.risk_level === "high"
-                                ? "bg-rose-100 text-rose-700"
+                                ? "bg-error-100 text-error-700"
                                 : inv.risk_level === "medium"
-                                  ? "bg-amber-100 text-amber-700"
-                                  : "bg-emerald-100 text-emerald-700"
+                                  ? "bg-warning-100 text-warning-700"
+                                  : "bg-success-100 text-success-700"
                             }`}
                           >
                             {inv.risk_level === "high" ? "高" : inv.risk_level === "medium" ? "中" : "低"}
                           </span>
                         ) : inv.is_nonstandard ? (
-                          <span className="text-xs text-slate-300">—</span>
+                          <span className="text-xs text-muted-foreground">—</span>
                         ) : (
-                          <span className="text-xs text-slate-300">—</span>
+                          <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </td>
                       <td
@@ -569,13 +569,13 @@ const filtered = useMemo(() => {
                         <StatusBadge status={inv.status} linked={!!inv.reimbursement_id} />
                       </td>
                       <td
-                        className="px-3 py-2.5 whitespace-nowrap text-slate-600"
+                        className="px-3 py-2.5 whitespace-nowrap text-foreground"
                         onClick={() => setSelectedId(inv.id)}
                       >
                         {inv.uploader_name || "—"}
                       </td>
                       <td
-                        className="px-3 py-2.5 whitespace-nowrap text-slate-500"
+                        className="px-3 py-2.5 whitespace-nowrap text-muted-foreground"
                         onClick={() => setSelectedId(inv.id)}
                       >
                         {inv.created_at
@@ -593,7 +593,7 @@ const filtered = useMemo(() => {
                                   setInvoices((prev) => prev.map((i) => i.id === updated.id ? updated : i));
                                 } catch { /* ignore */ }
                               }}
-                              className="inline-flex items-center justify-center rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-emerald-50 hover:text-emerald-600"
+                              className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-success-50 hover:text-success-600"
                               title="审核通过"
                             >
                               <Checks size={16} />
@@ -604,7 +604,7 @@ const filtered = useMemo(() => {
                               e.stopPropagation();
                               window.open(invoiceApi.fileUrl(inv.id), "_blank");
                             }}
-                            className="inline-flex items-center justify-center rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
+                            className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-primary-50 hover:text-primary-600"
                             title="下载原始发票"
                           >
                             <DownloadSimple size={16} />
@@ -620,7 +620,7 @@ const filtered = useMemo(() => {
                                 setDeleteTarget(inv);
                               }
                             }}
-                            className="inline-flex items-center justify-center rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                            className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-error-50 hover:text-error-600"
                             title="删除发票"
                           >
                             <Trash size={16} />
@@ -637,14 +637,14 @@ const filtered = useMemo(() => {
           {/* Pagination */}
           {totalPages > 1 && (
             <div className="flex items-center justify-between">
-              <p className="text-sm text-slate-500">
+              <p className="text-sm text-muted-foreground">
                 第 {currentPage} / {totalPages} 页，共 {filtered.length} 条
               </p>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                   disabled={currentPage === 1}
-                  className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex items-center gap-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <CaretLeft size={14} /> 上一页
                 </button>
@@ -663,10 +663,10 @@ const filtered = useMemo(() => {
                     <button
                       key={page}
                       onClick={() => setCurrentPage(page)}
-                      className={`h-9 w-9 rounded-lg text-sm font-medium transition-colors ${
+                      className={`h-8 w-8 rounded-md text-sm font-medium transition-colors ${
                         currentPage === page
-                          ? "bg-brand-600 text-white"
-                          : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                          ? "bg-primary-600 text-white"
+                          : "border border-border bg-background text-foreground hover:bg-muted"
                       }`}
                     >
                       {page}
@@ -676,7 +676,7 @@ const filtered = useMemo(() => {
                 <button
                   onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                   disabled={currentPage === totalPages}
-                  className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex items-center gap-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   下一页 <CaretRight size={14} />
                 </button>
@@ -704,7 +704,7 @@ const filtered = useMemo(() => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-background/40 backdrop-blur-sm"
             onClick={() => { if (!deleting) { setDeleteTarget(null); setBatchDeleteIds(null); setDeleteError(null); } }}
           >
             <motion.div
@@ -712,22 +712,22 @@ const filtered = useMemo(() => {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 10 }}
               transition={{ type: "spring", damping: 25, stiffness: 400 }}
-              className="mx-4 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+              className="mx-4 w-full max-w-md rounded-xl bg-background p-6 shadow-lg"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-start gap-4">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-rose-50">
-                  <Warning size={22} className="text-rose-600" />
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-error-50">
+                  <Warning size={20} className="text-error-600" />
                 </div>
                 <div className="flex-1">
-                  <h3 className="font-display text-lg font-semibold text-slate-900">
+                  <h3 className="font-display text-base font-semibold text-foreground">
                     {batchDeleteIds ? "批量删除发票" : "删除发票"}
                   </h3>
-                  <p className="mt-1 text-sm text-slate-500">
+                  <p className="mt-1 text-sm text-muted-foreground">
                     {batchDeleteIds ? (
-                      <>确定要删除选中的 <span className="font-mono font-medium text-slate-700">{batchDeleteIds.size}</span> 张发票吗？</>
+                      <>确定要删除选中的 <span className="font-mono font-medium text-foreground">{batchDeleteIds.size}</span> 张发票吗？</>
                     ) : (
-                      <>确定要删除发票{" "}<span className="font-mono font-medium text-slate-700">{deleteTarget?.invoice_number || `#${deleteTarget?.id}`}</span>{" "}吗？</>
+                      <>确定要删除发票{" "}<span className="font-mono font-medium text-foreground">{deleteTarget?.invoice_number || `#${deleteTarget?.id}`}</span>{" "}吗？</>
                     )}
                     删除后不可恢复，关联的识别结果和原始文件将一并删除。
                   </p>
@@ -735,7 +735,7 @@ const filtered = useMemo(() => {
               </div>
 
               {deleteError && (
-                <div className="mt-4 flex items-start gap-2 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                <div className="mt-4 flex items-start gap-2 rounded-lg bg-error-50 px-4 py-3 text-sm text-error-700">
                   <XCircle size={18} className="mt-0.5 shrink-0" />
                   <span>{deleteError}</span>
                 </div>
@@ -745,14 +745,14 @@ const filtered = useMemo(() => {
                 <button
                   onClick={() => { if (!deleting) { setDeleteTarget(null); setBatchDeleteIds(null); setDeleteError(null); } }}
                   disabled={deleting}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   取消
                 </button>
                 <button
                   onClick={batchDeleteIds ? handleBatchDelete : handleDelete}
                   disabled={deleting}
-                  className="flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center gap-2 rounded-md bg-error-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-error-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {deleting ? (
                     <>
@@ -779,7 +779,7 @@ const filtered = useMemo(() => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-background/40 backdrop-blur-sm"
             onClick={() => !exporting && setShowExportModal(false)}
           >
             <motion.div
@@ -787,18 +787,18 @@ const filtered = useMemo(() => {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 10 }}
               transition={{ type: "spring", damping: 25, stiffness: 400 }}
-              className="mx-4 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+              className="mx-4 w-full max-w-md rounded-xl bg-background p-6 shadow-lg"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-start gap-4">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-50">
-                  <FileXls size={22} className="text-brand-600" />
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-50">
+                  <FileXls size={20} className="text-primary-600" />
                 </div>
                 <div className="flex-1">
-                  <h3 className="font-display text-lg font-semibold text-slate-900">
+                  <h3 className="font-display text-base font-semibold text-foreground">
                     导出发票清单
                   </h3>
-                  <p className="mt-1 text-sm text-slate-500">
+                  <p className="mt-1 text-sm text-muted-foreground">
                     选择要导出的上传者范围，将生成 xlsx 文件下载。
                   </p>
                 </div>
@@ -808,7 +808,7 @@ const filtered = useMemo(() => {
                 <select
                   value={exportUploader}
                   onChange={(e) => setExportUploader(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none transition-colors focus:border-brand-400"
+                  className="w-full rounded-lg border border-border bg-background px-4 py-2.5 text-sm text-foreground outline-none transition-colors focus:border-primary-400"
                 >
                   <option value="">全部上传者</option>
                   {uploaderOptions.map((opt) => (
@@ -821,14 +821,14 @@ const filtered = useMemo(() => {
                 <button
                   onClick={() => { if (!exporting) { setShowExportModal(false); setExportUploader(""); } }}
                   disabled={exporting}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   取消
                 </button>
                 <button
                   onClick={handleExport}
                   disabled={exporting}
-                  className="flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center gap-2 rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {exporting ? (
                     <>

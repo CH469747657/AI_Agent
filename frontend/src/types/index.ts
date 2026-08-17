@@ -206,7 +206,7 @@ export interface Employee {
 }
 
 export interface EmployeeCreate {
-  wecom_user_id: string;
+  wecom_user_id?: string | null;
   name: string;
   employee_no?: string | null;
   department?: string | null;
@@ -258,6 +258,19 @@ export interface DialogMessage {
   invoiceId?: number;
   /** 是否已撤销（隐藏撤销按钮） */
   undone?: boolean;
+  /** 追问用途时附带的发票摘要列表 */
+  batchSummary?: BatchInvoiceSummary[];
+  /** 追问状态（如 waiting_purpose） */
+  followUpState?: string;
+}
+
+export interface BatchInvoiceSummary {
+  index: number;
+  id: number;
+  seller_name: string;
+  total_with_tax: string;
+  receipt_type: string;
+  issue_date: string;
 }
 
 export interface DialogAPIResponse {
@@ -295,20 +308,14 @@ export interface PortalLoginResponse {
 export interface PortalDashboard {
   invoice_count: number;
   invoice_total: number;
-  reimbursement_count: number;
-  draft_count: number;
-  submitted_count: number;
+  cycle_key: string;
+  cycle_start: string;
+  cycle_end: string;
   recent_invoices: {
     id: number;
     seller_name: string | null;
     total_with_tax: string | null;
     fee_subcategory: string | null;
-    status: string;
-    created_at: string | null;
-  }[];
-  recent_reimbursements: {
-    id: number;
-    total_amount: number | null;
     status: string;
     created_at: string | null;
   }[];
@@ -397,4 +404,12 @@ export interface LlmProviderInfo {
   base_url: string;
   models: string[];
   vision_prefixes: string[];
+}
+
+export interface VerifySettings {
+  verify_provider: string;
+  verify_api_key: string;
+  verify_secret_key: string;
+  aliyun_verify_appcode: string;
+  aliyun_verify_appsecret: string;
 }

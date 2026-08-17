@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.routers.admin_auth import get_current_admin
 from app.schemas import (
     InvoiceResponse, InvoiceUpdateRequest, NoReceiptRequest,
     WeComProcessRequest, StatisticsResponse, InvoiceVerifyRequest,
@@ -12,7 +13,7 @@ from app.schemas import (
 )
 from app.services.invoice_service import InvoiceService
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_admin)])
 
 # 上传发票允许的文件扩展名
 ALLOWED_INVOICE_EXTS = {"pdf", "ofd", "jpg", "jpeg", "png", "gif", "bmp", "webp"}
@@ -21,15 +22,18 @@ ALLOWED_INVOICE_EXTS = {"pdf", "ofd", "jpg", "jpeg", "png", "gif", "bmp", "webp"
 @router.post("/upload", response_model=InvoiceResponse)
 async def upload_invoice(
     file: UploadFile = File(...),
-    receipt_type: str = Form("增值税普通发票"),
+    receipt_type: str = Form(""),  # 留空 → LLM Vision 自动识别
     user_id: str = Form(...),
-    user_description: str = Form(..., min_length=1),
+    user_description: str = Form("", min_length=0),  # 无感上传：备注可选
     db: AsyncSession = Depends(get_db),
 ):
     """上传票据文件并自动处理（OCR + LLM 双源验证 + 分类 + 查重）
 
     支持 PDF / OFD / JPG / PNG / GIF / BMP / WEBP。
-    OFD 转换需容器内 JRE + ofdrw jar，未配置时 OFD 上传后识别字段为空。
+
+    无感上传模式：
+    - receipt_type 留空时，由 LLM Vision 自动判断票据类型
+    - user_description 留空时，识别完成后由前端引导用户补充用途
     """
     file_data = await file.read()
     file_ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename else "jpg"
@@ -44,7 +48,7 @@ async def upload_invoice(
     invoice = await service.process_upload(
         file_data=file_data,
         file_type=file_ext,
-        receipt_type=receipt_type,
+        receipt_type=receipt_type or "",
         user_id=user_id,
         user_description=user_description,
     )
@@ -96,10 +100,15 @@ async def list_invoices(
     from app.models.invoice import Invoice, InvoiceStatus
     from app.models.employee import Employee
 
-    query = select(Invoice).order_by(Invoice.created_at.desc())
+    # 默认排除 processing 状态（识别中/失败的脏数据），除非用户显式筛选该状态
+    query = select(Invoice).where(Invoice.status != InvoiceStatus.processing).order_by(Invoice.created_at.desc())
     if user_id:
         query = query.where(Invoice.user_id == user_id)
     if status:
+        # 显式筛选指定状态时，覆盖默认过滤
+        query = select(Invoice).order_by(Invoice.created_at.desc())
+        if user_id:
+            query = query.where(Invoice.user_id == user_id)
         query = query.where(Invoice.status == InvoiceStatus(status))
     result = await db.execute(query)
     invoices = list(result.scalars().all())

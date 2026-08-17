@@ -172,15 +172,14 @@ def create_mcp_server():
     支持 stdio 和 SSE 两种模式部署。
     """
     try:
-        from mcp.server.fastmcp import FastMCP
+        from fastmcp import FastMCP
     except ImportError:
-        logger.error("mcp package not installed. Run: pip install mcp")
+        logger.error("fastmcp package not installed. Run: pip install fastmcp")
         raise
 
     mcp = FastMCP(
         name="ai-reimbursement",
-        version="1.0.0",
-        description="AI报销智能体 MCP 插件 — 企微智能机器人对话入口",
+        instructions="AI报销智能体 MCP 插件 — 企微智能机器人对话入口",
     )
 
     # 注册 Tool: send_dialog_message
@@ -231,6 +230,62 @@ def create_mcp_server():
     )
     async def _query_reimbursements(user_id: str, role: str = "employee") -> str:
         return await query_reimbursements(user_id=user_id, role=role)
+
+    # Step 3.1.6：注册 Tool: list_dialog_tools
+    # 返回 DialogEngine 内部 Tool 注册表，供外部 LLM 客户端了解可用能力
+    @mcp.tool(
+        name="list_dialog_tools",
+        description=(
+            "列出 AI 报销智能体内部可用的所有 Tool（按角色过滤）。"
+            "返回每个 Tool 的 name/description/parameters/required_roles。"
+            "用于了解 send_dialog_message 可以触发哪些具体能力。"
+        ),
+    )
+    async def _list_dialog_tools(role: str = "employee") -> str:
+        """列出指定角色可见的所有内部 Tool"""
+        import json as _json
+        try:
+            # 延迟导入避免启动时循环依赖
+            from app.dialog.tools import register_all_tools
+            from app.dialog.tool_registry import get_tool_registry
+            from app.dialog.models import UserRole
+
+            register_all_tools()
+            registry = get_tool_registry()
+
+            try:
+                user_role = UserRole(role)
+            except ValueError:
+                return _json.dumps(
+                    {"error": f"无效的角色: {role}"},
+                    ensure_ascii=False,
+                )
+
+            visible_tools = registry.get_visible_tools(user_role)
+            tools_info = []
+            for tool in visible_tools:
+                schema = tool.to_openai_schema()
+                tools_info.append({
+                    "name": schema["function"]["name"],
+                    "description": schema["function"]["description"],
+                    "parameters": schema["function"]["parameters"],
+                    "required_roles": [r.value for r in tool.required_roles],
+                })
+
+            return _json.dumps(
+                {
+                    "role": role,
+                    "count": len(tools_info),
+                    "tools": tools_info,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        except Exception as e:
+            return _json.dumps(
+                {"error": f"查询工具列表失败: {e}"},
+                ensure_ascii=False,
+            )
 
     return mcp
 

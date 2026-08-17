@@ -1,12 +1,12 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { useState, useCallback, useRef } from "react";
-import { UploadSimple, Warning, Spinner } from "@phosphor-icons/react";
+import { UploadSimple, Warning, Sparkle, ChatCircleDots } from "@phosphor-icons/react";
 import { invoiceApi } from "../api/client";
 import type { Invoice } from "../types";
 import {
-  receiptTypes,
-  NONSTANDARD_TYPES,
+  MAX_FILE_SIZE,
+  ACCEPTED_TYPES,
   FileDropZone,
   FilePreviewCard,
   ProcessingTimeline,
@@ -18,39 +18,67 @@ export function Upload() {
   const [file, setFile] = useState<File | null>(null);
   const [userId] = useState("admin");
   const [description, setDescription] = useState("");
-  const [receiptType, setReceiptType] = useState("增值税普通发票");
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<Invoice | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = useCallback((f: File) => {
+  /** 文件选择 → 立即自动上传（无感上传，无需手动选类型） */
+  const handleFile = useCallback(async (f: File) => {
+    const ext = f.name.split(".").pop()?.toLowerCase();
+    const isAccepted =
+      ACCEPTED_TYPES.includes(f.type) ||
+      ["png", "jpg", "jpeg", "gif", "bmp", "webp", "pdf", "ofd"].includes(ext || "");
+
+    if (!isAccepted) {
+      setError("不支持的文件格式，请上传 PNG / JPG / GIF / BMP / WEBP / PDF / OFD 文件");
+      return;
+    }
+
+    if (f.size > MAX_FILE_SIZE) {
+      setError(`文件大小不能超过 20MB，当前文件 ${(f.size / (1024 * 1024)).toFixed(1)} MB`);
+      return;
+    }
+
+    // 立即触发自动上传
     setFile(f);
     setResult(null);
     setError(null);
-  }, []);
-
-  const handleUpload = async () => {
-    if (!file || !userId) return;
-    if (!description.trim()) {
-      setError("请填写备注说明");
-      return;
-    }
     setUploading(true);
-    setError(null);
+
     try {
       const res = await invoiceApi.upload({
-        file,
+        file: f,
         user_id: userId,
-        user_description: description,
-        receipt_type: receiptType,
+        user_description: "",  // 无感上传：备注留空，识别后由用户补充
+        receipt_type: "",      // 留空 → 后端 LLM Vision 自动判断
       });
       setResult(res);
+      setFile(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "上传失败");
+      const msg = e instanceof Error ? e.message : "上传失败";
+      if (msg.includes("识别") || msg.includes("VLM") || msg.includes("vision")) {
+        setError("无法识别票据类型，请重新上传清晰的发票图片");
+      } else {
+        setError(msg);
+      }
     } finally {
       setUploading(false);
+    }
+  }, [userId]);
+
+  /** 识别完成后补充用途说明 */
+  const handleAddDescription = async () => {
+    if (!result || !description.trim()) return;
+    try {
+      const updated = await invoiceApi.update(result.id, {
+        user_description: description.trim(),
+      });
+      setResult(updated);
+      setDescription("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "补充用途失败");
     }
   };
 
@@ -65,16 +93,16 @@ export function Upload() {
     <div className="mx-auto max-w-2xl space-y-6">
       {/* Header */}
       <div>
-        <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">
+        <h1 className="font-display text-2xl font-bold tracking-tight text-foreground">
           上传发票
         </h1>
-        <p className="mt-1 text-sm text-slate-500">
-          上传票据图片，系统将自动进行 OCR 识别、费用分类与查重
+        <p className="mt-1 text-sm text-muted-foreground">
+          拖拽发票图片或 PDF，系统将自动识别票据类型与关键字段
         </p>
       </div>
 
       {/* Upload zone */}
-      {!file && !result && (
+      {!file && !result && !uploading && (
         <FileDropZone
           onFile={handleFile}
           dragOver={dragOver}
@@ -83,120 +111,139 @@ export function Upload() {
         />
       )}
 
-      {/* File preview & form */}
-      {file && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="space-y-4"
-        >
-          <FilePreviewCard
-            file={file}
-            onRemove={() => {
-              setFile(null);
-              setError(null);
-            }}
-          />
-
-          {/* Form */}
-          <div className="space-y-4 rounded-xl border border-slate-200/60 bg-white p-5">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">
-                票据类型
-              </label>
-              <select
-                value={receiptType}
-                onChange={(e) => setReceiptType(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 focus:border-brand-400 focus:bg-white"
-              >
-                {receiptTypes.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-              {NONSTANDARD_TYPES.has(receiptType) && (
-                <p className="mt-1.5 text-xs text-amber-600">
-                  非标准票据将使用 AI 视觉识别提取信息，不支持在线验真，建议填写详细备注以便审核。
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">
-                备注说明{" "}
-                <span className="text-rose-500">*</span>
-              </label>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={2}
-                className="w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 focus:border-brand-400 focus:bg-white"
-                placeholder="例如：2026年产数关键岗位能力实训班培训费"
-              />
-            </div>
-          </div>
-
-          {/* Error */}
-          <AnimatePresence>
-            {error && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                className="flex items-center gap-2 rounded-xl bg-rose-50 p-4 text-sm text-rose-700"
-              >
-                <Warning size={18} />
-                {error}
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Submit */}
-          <button
-            onClick={handleUpload}
-            disabled={uploading || !userId || !description.trim()}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white transition-all hover:bg-brand-700 disabled:opacity-50 active:scale-[0.98]"
+      {/* 上传中：智能识别状态 */}
+      <AnimatePresence>
+        {uploading && file && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-4"
           >
-            {uploading ? (
-              <>
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                正在识别中...
-              </>
-            ) : (
-              <>
-                <UploadSimple size={18} />
-                开始上传并识别
-              </>
-            )}
-          </button>
+            <FilePreviewCard
+              file={file}
+              onRemove={() => {
+                setFile(null);
+                setError(null);
+                setUploading(false);
+              }}
+            />
 
-          {/* Processing timeline */}
-          <AnimatePresence>
-            {uploading && (
+            {/* 智能识别加载状态 */}
+            <div className="rounded-lg border border-primary-200 bg-primary-50/30 p-4">
+              <div className="flex items-center gap-3">
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-100"
+                >
+                  <Sparkle size={18} className="text-primary-600" weight="fill" />
+                </motion.div>
+                <div>
+                  <p className="text-sm font-semibold text-primary-700">
+                    正在智能识别票据类型...
+                  </p>
+                  <p className="text-xs text-primary-600/70">
+                    大模型视觉分析中，无需手动选择
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <ProcessingTimeline uploading />
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 识别结果 + 用途补充 */}
+      <AnimatePresence>
+        {result && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-4"
+          >
+            <UploadResult
+              result={result}
+              onViewDetail={() => navigate(`/invoices?id=${result.id}`)}
+              onReset={reset}
+            />
+
+            {/* 补充费用用途引导 */}
+            {!result.user_description && (
               <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                className="overflow-hidden"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="rounded-xl border border-primary-200 bg-gradient-to-br from-primary-50 to-background p-4"
               >
-                <div className="rounded-xl border border-brand-200 bg-brand-50/30 p-4">
-                  <ProcessingTimeline uploading />
+                <div className="flex items-center gap-2">
+                  <ChatCircleDots size={18} className="text-primary-600" weight="fill" />
+                  <h3 className="font-display text-sm font-semibold text-primary-800">
+                    补充费用用途
+                  </h3>
+                </div>
+                <p className="mt-1 text-xs text-primary-600/80">
+                  识别已完成，请补充该笔费用的用途说明，以便完成报销单生成
+                </p>
+
+                <div className="mt-3 flex gap-2">
+                  <input
+                    type="text"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && description.trim()) handleAddDescription();
+                    }}
+                    placeholder="请补充说明该笔费用的用途（如：7月团建餐费）"
+                    className="flex-1 rounded-md border border-primary-200 bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleAddDescription}
+                    disabled={!description.trim()}
+                    className="flex items-center gap-1.5 rounded-md bg-primary-600 px-3 py-2 text-sm font-medium text-white transition-all hover:bg-primary-700 disabled:opacity-40 active:scale-[0.98]"
+                  >
+                    <UploadSimple size={14} />
+                    确认
+                  </button>
                 </div>
               </motion.div>
             )}
-          </AnimatePresence>
-        </motion.div>
-      )}
 
-      {/* Result */}
+            {/* 已有用途时显示 */}
+            {result.user_description && (
+              <div className="rounded-lg border border-success-200 bg-success-50/50 p-3">
+                <p className="text-xs text-success-700/70">费用用途</p>
+                <p className="mt-0.5 text-sm font-medium text-success-900">
+                  {result.user_description}
+                </p>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Error */}
       <AnimatePresence>
-        {result && (
-          <UploadResult
-            result={result}
-            onViewDetail={() => navigate(`/invoices?id=${result.id}`)}
-            onReset={reset}
-          />
+        {error && !uploading && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="flex items-center gap-2 rounded-lg bg-error-50 p-4 text-sm text-error-700"
+          >
+            <Warning size={18} weight="fill" />
+            {error}
+            <button
+              onClick={() => setError(null)}
+              className="ml-auto text-xs text-error-500 hover:text-error-700"
+            >
+              重试
+            </button>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

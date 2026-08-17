@@ -14,6 +14,7 @@ from app.database import get_db
 from app.models.reimbursement import Reimbursement, ReimbursementAttachment
 from app.models.invoice import Invoice
 from app.models.employee import Employee
+from app.routers.admin_auth import get_current_admin
 from app.schemas import (
     ReimbursementCreateRequest,
     ReimbursementResponse,
@@ -23,7 +24,7 @@ from app.schemas import (
 )
 from app.services import reimbursement_service as svc
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_admin)])
 
 
 @router.post("", response_model=ReimbursementResponse)

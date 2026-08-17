@@ -130,6 +130,38 @@ async def resolve_person(
         )
 
     if len(fuzzy_emps) > 1:
+        # 模糊匹配多候选 → 让 LLM 消歧（覆盖"小陈"=陈辉、"老王"=王建国 等昵称场景）
+        from app.services.llm_service import get_llm_service
+        llm_svc = get_llm_service()
+        if llm_svc.is_available():
+            candidates = [
+                {
+                    "employee_no": e.employee_no,
+                    "name": e.name,
+                    "department": e.department,
+                    "wecom_user_id": e.wecom_user_id,
+                }
+                for e in fuzzy_emps
+            ]
+            matched_no = await llm_svc.resolve_person_llm(person, candidates)
+            if matched_no:
+                matched_emp = next(
+                    (e for e in fuzzy_emps
+                     if e.employee_no == matched_no or e.wecom_user_id == matched_no),
+                    None,
+                )
+                if matched_emp:
+                    ids = set()
+                    if matched_emp.wecom_user_id:
+                        ids.add(matched_emp.wecom_user_id)
+                    if matched_emp.employee_no:
+                        ids.add(matched_emp.employee_no)
+                    return PersonResolution(
+                        match_type="exact",
+                        user_ids=list(ids),
+                        display_name=matched_emp.name or person,
+                    )
+        # LLM 不可用或无法消歧 → 返回候选列表让用户选择
         return PersonResolution(
             match_type="disambiguate",
             candidates=[
@@ -289,8 +321,8 @@ class PeriodResolver:
 # InsightEngine — 数据洞察引擎
 # ============================================================
 
-# 费用分类别名映射 — 用于从 fee_category_keyword 推导匹配别名
-# 当 NLU 未提供 fee_category_aliases 槽位时，自动从 keyword 推导
+# 费用分类别名映射 — 仅作为 LLM 不可用时的兜底（弱匹配）
+# 主路径已改为 LLM 语义筛选：handler 取候选发票后让 LLM 判断哪些属于用户问的分类
 _CATEGORY_ALIASES: dict[str, list[str]] = {
     "差旅": ["差旅", "住宿", "交通", "出差", "机票", "火车"],
     "交通": ["交通", "车费", "打车", "出行", "机票", "火车"],
@@ -448,7 +480,7 @@ class InsightEngine:
     ) -> dict[str, Any]:
         """self_insight_category — 本人费用分类占比"""
         start, end, desc = self._get_period(ctx)
-        query = select(Invoice).where(Invoice.user_id == ctx.user_id)
+        query = select(Invoice).where(Invoice.user_id == ctx.user_id, Invoice.status != InvoiceStatus.processing)
         if start:
             query = query.where(Invoice.created_at >= start)
         if end:
@@ -496,7 +528,7 @@ class InsightEngine:
         aliases = aliases_slot.value if aliases_slot and aliases_slot.filled else None
 
         # 查询本人所有发票（不要求 reimbursement_id，覆盖未关联报销单的发票）
-        query = select(Invoice).where(Invoice.user_id == ctx.user_id)
+        query = select(Invoice).where(Invoice.user_id == ctx.user_id, Invoice.status != InvoiceStatus.processing)
         if start:
             query = query.where(Invoice.created_at >= start)
         if end:
@@ -509,27 +541,50 @@ class InsightEngine:
             return {"text": f"📊 您在（{desc}）暂无发票记录。", "data": {"count": 0}}
 
         # 按分类名过滤 — 员工端
+        # 主路径：LLM 语义筛选。理解"打车费"="差旅-交通子类下用途为打车费的发票"等语义等价
+        # 回退：硬编码 _CATEGORY_ALIASES 字典 + 子串包含（LLM 不可用时兜底）
         matched_invoices = []
         if keyword:
-            # 始终用 _derive_aliases 推导别名（忽略 LLM aliases），
-            # 避免 LLM 过度扩展导致跨大类误匹配（如"交通"→含"差旅"→匹配"差旅-餐饮"）
-            aliases = _derive_aliases(keyword)
-            # 复合子类关键词（"差旅-交通"）精确匹配，避免别名扩散误匹配其他子类
-            keyword_is_compound = "-" in (keyword or "")
-            for inv in invoices:
-                subcat = inv.fee_subcategory or ""
-                cat = inv.fee_category or ""
-                item = inv.item_name or ""
-                if keyword_is_compound:
-                    # 精确匹配：子类或主分类完全相等
-                    if subcat == keyword or cat == keyword:
-                        matched_invoices.append(inv)
-                else:
-                    # 模糊匹配：别名子串包含（保留原有行为）
-                    for alias in aliases:
-                        if alias in subcat or alias in cat or alias in item:
+            from app.services.llm_service import get_llm_service
+            llm_svc = get_llm_service()
+            if llm_svc.is_available():
+                candidates_payload = [
+                    {
+                        "id": inv.id,
+                        "fee_subcategory": inv.fee_subcategory,
+                        "fee_category": inv.fee_category,
+                        "item_name": inv.item_name,
+                        "user_description": inv.user_description,
+                    }
+                    for inv in invoices
+                ]
+                matched_ids = await llm_svc.classify_invoices_by_category(
+                    keyword, candidates_payload
+                )
+                matched_id_set = set(matched_ids)
+                matched_invoices = [inv for inv in invoices if inv.id in matched_id_set]
+                logger.info(
+                    "LLM category filter: user=%s keyword=%s matched %d/%d invoices",
+                    ctx.user_id, keyword, len(matched_invoices), len(invoices),
+                )
+
+            # LLM 不可用或返回空 → 回退到硬编码字典
+            if not matched_invoices:
+                aliases = _derive_aliases(keyword)
+                keyword_is_compound = "-" in (keyword or "")
+                for inv in invoices:
+                    subcat = inv.fee_subcategory or ""
+                    cat = inv.fee_category or ""
+                    item = inv.item_name or ""
+                    desc_field = inv.user_description or ""
+                    if keyword_is_compound:
+                        if subcat == keyword or cat == keyword:
                             matched_invoices.append(inv)
-                            break
+                    else:
+                        for alias in aliases:
+                            if alias in subcat or alias in cat or alias in item or alias in desc_field:
+                                matched_invoices.append(inv)
+                                break
         else:
             # 无关键词时返回全部分类汇总
             matched_invoices = invoices
@@ -553,10 +608,19 @@ class InsightEngine:
         lines.append(f"💰 金额合计：{self._fmt_money(total)}")
         lines.append(f"📋 发票张数：{len(matched_invoices)} 张")
         lines.append("")
-        for inv in matched_invoices:
-            amt = self._safe_float(inv.total_with_tax)
-            subcat = inv.fee_subcategory or "未分类"
-            lines.append(f"  - {subcat}：{self._fmt_money(amt)}")
+        # 旧版仅输出子分类汇总行，但用户问"我有哪些快递费的发票"期望看到明细列表
+        # 现在追加 markdown 表格列出每张发票明细，与 _build_user_invoices_table 列结构一致
+        lines.append("| 序号 | 类型 | 销售方 | 金额 | 用途 | 出差日期 | 状态 | 上传时间 |")
+        lines.append("|------|------|--------|------|------|----------|------|----------|")
+        for idx, inv in enumerate(sorted(matched_invoices, key=lambda x: x.created_at, reverse=True), 1):
+            rt = inv.receipt_type.value if inv.receipt_type else "未知"
+            seller = (inv.seller_name or "无票报销")[:10]
+            amt = inv.total_with_tax or "—"
+            desc_short = (inv.user_description or "待补充")[:12]
+            expense_date = str(inv.expense_date) if inv.expense_date else "—"
+            st = self._inv_status_text(inv)
+            created = inv.created_at.strftime("%Y-%m-%d %H:%M") if inv.created_at else "—"
+            lines.append(f"| {idx} | {rt} | {seller} | ¥{amt} | {desc_short} | {expense_date} | {st} | {created} |")
 
         return {"text": "\n".join(lines), "data": {
             "category": display_keyword, "total": total,
@@ -757,7 +821,7 @@ class InsightEngine:
         start, end, desc = self._get_period(ctx)
 
         # 查询所有发票（含未关联报销单的，确保数据完整）
-        query = select(Invoice)
+        query = select(Invoice).where(Invoice.status != InvoiceStatus.processing)
         if start:
             query = query.where(Invoice.created_at >= start)
         if end:
@@ -805,7 +869,7 @@ class InsightEngine:
         aliases = aliases_slot.value if aliases_slot and aliases_slot.filled else None
 
         # 查询全公司所有发票（不要求 reimbursement_id，覆盖未关联报销单的发票）
-        query = select(Invoice)
+        query = select(Invoice).where(Invoice.status != InvoiceStatus.processing)
         if start:
             query = query.where(Invoice.created_at >= start)
         if end:
@@ -818,27 +882,48 @@ class InsightEngine:
             return {"text": f"📊 （{desc}）暂无发票数据。", "data": {"count": 0}}
 
         # 按分类名过滤 — 管理端
+        # 主路径：LLM 语义筛选；回退：硬编码字典
         matched_invoices = []
         if keyword:
-            # 始终用 _derive_aliases 推导别名（忽略 LLM aliases），
-            # 避免 LLM 过度扩展导致跨大类误匹配
-            aliases = _derive_aliases(keyword)
-            # 复合子类关键词（"差旅-交通"）精确匹配，避免别名扩散误匹配其他子类
-            keyword_is_compound = "-" in (keyword or "")
-            for inv in invoices:
-                subcat = inv.fee_subcategory or ""
-                cat = inv.fee_category or ""
-                item = inv.item_name or ""
-                if keyword_is_compound:
-                    # 精确匹配：子类或主分类完全相等
-                    if subcat == keyword or cat == keyword:
-                        matched_invoices.append(inv)
-                else:
-                    # 模糊匹配：别名子串包含
-                    for alias in aliases:
-                        if alias in subcat or alias in cat or alias in item:
+            from app.services.llm_service import get_llm_service
+            llm_svc = get_llm_service()
+            if llm_svc.is_available():
+                candidates_payload = [
+                    {
+                        "id": inv.id,
+                        "fee_subcategory": inv.fee_subcategory,
+                        "fee_category": inv.fee_category,
+                        "item_name": inv.item_name,
+                        "user_description": inv.user_description,
+                    }
+                    for inv in invoices
+                ]
+                matched_ids = await llm_svc.classify_invoices_by_category(
+                    keyword, candidates_payload
+                )
+                matched_id_set = set(matched_ids)
+                matched_invoices = [inv for inv in invoices if inv.id in matched_id_set]
+                logger.info(
+                    "LLM category filter (admin): keyword=%s matched %d/%d invoices",
+                    keyword, len(matched_invoices), len(invoices),
+                )
+
+            if not matched_invoices:
+                aliases = _derive_aliases(keyword)
+                keyword_is_compound = "-" in (keyword or "")
+                for inv in invoices:
+                    subcat = inv.fee_subcategory or ""
+                    cat = inv.fee_category or ""
+                    item = inv.item_name or ""
+                    desc_field = inv.user_description or ""
+                    if keyword_is_compound:
+                        if subcat == keyword or cat == keyword:
                             matched_invoices.append(inv)
-                            break
+                    else:
+                        for alias in aliases:
+                            if alias in subcat or alias in cat or alias in item or alias in desc_field:
+                                matched_invoices.append(inv)
+                                break
         else:
             matched_invoices = invoices
 
@@ -861,11 +946,22 @@ class InsightEngine:
         lines.append(f"💰 金额合计：{self._fmt_money(total)}")
         lines.append(f"📋 发票张数：{len(matched_invoices)} 张")
         lines.append("")
-        for inv in matched_invoices:
-            amt = self._safe_float(inv.total_with_tax)
-            subcat = inv.fee_subcategory or "未分类"
-            user = inv.user_id or "未知"
-            lines.append(f"  - {subcat}（{user}）：{self._fmt_money(amt)}")
+        # 旧版仅输出子分类+上传者汇总行，用户问"哪些是快递费"期望看到明细列表
+        # 现在追加 markdown 表格，列含上传者和出差日期（管理端特有）
+        lines.append("| 序号 | 类型 | 销售方 | 金额 | 用途 | 出差日期 | 上传者 | 状态 | 上传时间 |")
+        lines.append("|------|------|--------|------|------|----------|--------|------|----------|")
+        uploader_ids = list(set(inv.user_id for inv in matched_invoices if inv.user_id))
+        uploader_names = await self._resolve_user_names(uploader_ids, db)
+        for idx, inv in enumerate(sorted(matched_invoices, key=lambda x: x.created_at, reverse=True), 1):
+            rt = inv.receipt_type.value if inv.receipt_type else "未知"
+            seller = (inv.seller_name or "无票报销")[:10]
+            amt = inv.total_with_tax or "—"
+            desc_short = (inv.user_description or "待补充")[:12]
+            expense_date = str(inv.expense_date) if inv.expense_date else "—"
+            uploader = uploader_names.get(inv.user_id, inv.user_id or "未知")
+            st = self._inv_status_text(inv)
+            created = inv.created_at.strftime("%Y-%m-%d %H:%M") if inv.created_at else "—"
+            lines.append(f"| {idx} | {rt} | {seller} | ¥{amt} | {desc_short} | {expense_date} | {uploader} | {st} | {created} |")
 
         return {"text": "\n".join(lines), "data": {
             "category": display_keyword, "total": total,
@@ -1327,6 +1423,10 @@ class InsightEngine:
         if not person_name:
             return {"text": "请告诉我员工姓名，例如「查张三的费用」。", "data": {}}
 
+        # 防御：过滤时间词/通用词，避免"目前"等被当人名查询
+        if not _is_valid_person(person_name):
+            return {"text": f"「{person_name}」不是有效的员工姓名，请使用具体人名或工号查询。", "data": {}}
+
         # 统一人名解析（先精确 ==，后模糊 contains，多候选消歧）
         resolution = await resolve_person(person_name, db, table_hint="reimbursement")
 
@@ -1476,21 +1576,17 @@ class InsightEngine:
     # ============================================================
 
     def _get_period(self, ctx: DialogContext) -> tuple[datetime | None, datetime | None, str]:
-        """从上下文槽位或原始文本解析时间段
+        """从上下文槽位解析时间段
 
         优先级：
-        1. 当前文本中明确表达的时间段（_extract_period）— 覆盖上下文继承
-        2. NLU/上下文继承填充的 period slot
+        1. NLU/Tool 参数填充的 period slot（Agent 路径下 LLM 直接输出标准 period 标识）
+        2. period slot 值为中文口语词时，PeriodResolver 内部用 _extract_period 兜底
         3. 兜底：全部时间
 
-        这样用户说"今天上传了多少发票"时，即使上一轮的 period slot
-        是"最近半年"，也会正确使用"今天"。
+        注：原"从 ctx.current_text 提取时间段"的正则兜底已删除
+        —— 让 LLM 在 NLU 阶段就把"上上周""前天""Q2""本月"等口语词转为标准 period 标识
         """
-        # 优先从当前文本提取 — 用户明确表达的时间应覆盖上下文继承
-        text_period = _extract_period(ctx.current_text) if ctx.current_text else None
-        if text_period:
-            return PeriodResolver.resolve(text_period, ctx.current_text)
-        # 文本无明确时间段 → 回退到 slot（可能来自上下文继承）
+        # period slot（Agent 路径下 LLM 直接输出标准 period 标识）
         period_slot = ctx.slots.get("period")
         period_val = period_slot.value if period_slot and period_slot.filled else None
         return PeriodResolver.resolve(period_val, ctx.current_text)
@@ -1512,11 +1608,16 @@ class InsightEngine:
 
     @staticmethod
     def _safe_float(val: Any) -> float:
-        """安全转换为 float（Invoice.total_with_tax 是 String）"""
-        try:
-            return float(val) if val else 0.0
-        except (ValueError, TypeError):
+        """安全转换为 float（Invoice.total_with_tax 是 String，可能含"200元"等非数字字符）"""
+        if not val:
             return 0.0
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            # 提取首个数字部分（兼容"200元""¥500.00"等脏数据）
+            import re
+            m = re.search(r"\d+(?:\.\d+)?", str(val))
+            return float(m.group()) if m else 0.0
 
     @staticmethod
     def _fmt_money(amount: float) -> str:
@@ -1593,12 +1694,11 @@ class InsightEngine:
         # --- 人员筛选 ---
         person_slot = ctx.slots.get("person")
         person_val = person_slot.value if person_slot and person_slot.filled else None
-        # 文本兜底提取（LLM 偶发未提取时用）
-        if not person_val and ctx.current_text:
-            person_val = _extract_person(ctx.current_text)
+        # 仅信任 LLM 提取的 person slot，不再用 _extract_person 文本兜底
+        # （文本兜底会把"查看公司所有"等误提取为人名，导致全公司查询失败）
 
         person_label = None  # 显示用
-        if person_val:
+        if person_val and _is_valid_person(person_val):
             # 统一人名解析（先精确 ==，后模糊 contains，多候选消歧）
             resolution = await resolve_person(person_val, db, table_hint="invoice")
             if resolution.match_type == "not_found":
@@ -1614,9 +1714,12 @@ class InsightEngine:
             # exact
             matching_ids = resolution.user_ids
             person_label = resolution.display_name or person_val
-            query = select(Invoice).where(Invoice.user_id.in_(matching_ids))
+            query = select(Invoice).where(
+                Invoice.user_id.in_(matching_ids),
+                Invoice.status != InvoiceStatus.processing,
+            )
         else:
-            query = select(Invoice)
+            query = select(Invoice).where(Invoice.status != InvoiceStatus.processing)
 
         if start:
             query = query.where(Invoice.created_at >= start)
@@ -1654,6 +1757,23 @@ class InsightEngine:
                 amt = sum(self._safe_float(inv.total_with_tax) for inv in invs)
                 lines.append(f"  {name}：{len(invs)} 张，{self._fmt_money(amt)}")
 
+        # 追加发票列表表格（最多 20 条，便于管理员查看明细）
+        if invoices:
+            lines.append("")
+            lines.append("| 序号 | 类型 | 销售方 | 金额 | 用途 | 出差日期 | 状态 | 上传时间 |")
+            lines.append("|------|------|--------|------|------|----------|------|----------|")
+            for idx, inv in enumerate(invoices[:20], 1):
+                rt = inv.receipt_type.value if inv.receipt_type else "未知"
+                seller = (inv.seller_name or "无票报销")[:10]
+                amt = inv.total_with_tax or "—"
+                desc_short = (inv.user_description or "待补充")[:12]
+                expense_date = str(inv.expense_date) if inv.expense_date else "—"
+                st = self._inv_status_text(inv)
+                created = inv.created_at.strftime("%Y-%m-%d %H:%M") if inv.created_at else "—"
+                lines.append(f"| {idx} | {rt} | {seller} | ¥{amt} | {desc_short} | {expense_date} | {st} | {created} |")
+            if len(invoices) > 20:
+                lines.append(f"| **...** | | | | | | | 共 {len(invoices)} 张，仅展示前 20 条 |")
+
         return {"text": "\n".join(lines), "data": {
             "count": len(invoices), "total_amount": total_amount,
             "tax_amount": tax_amount, "period": desc,
@@ -1669,13 +1789,31 @@ class InsightEngine:
         filter_type_slot = ctx.slots.get("filter_type")
         filter_type = filter_type_slot.value if filter_type_slot and filter_type_slot.filled else None
 
+        # NLU 兜底：LLM 偶尔把费用分类词误填进 filter_type 槽位
+        # filter_type 严格枚举仅 duplicate/invalid/high_risk/pending/receipt，其他值需 LLM 判定
+        _VALID_FILTER_TYPES = {"duplicate", "invalid", "high_risk", "pending", "receipt"}
+        if filter_type and filter_type not in _VALID_FILTER_TYPES:
+            from app.services.llm_service import get_llm_service
+            llm_svc = get_llm_service()
+            kind = (
+                await llm_svc.classify_filter_type(filter_type)
+                if llm_svc.is_available() else "category"
+            )
+            if kind == "category":
+                logger.info(
+                    "filter_type %r classified as fee category, delegating to category_amount",
+                    filter_type,
+                )
+                ctx.fill_slot("fee_category_keyword", filter_type)
+                return await self._insight_category_amount(ctx, db)
+
         # 人名筛选（可选）— "陈辉的重复发票"等
         person_slot = ctx.slots.get("person")
         person_name = person_slot.value if person_slot and person_slot.filled else ""
         person_label = ""
         matching_user_ids: list[str] | None = None
 
-        if person_name:
+        if person_name and _is_valid_person(person_name):
             resolution = await resolve_person(person_name, db, table_hint="invoice")
             if resolution.match_type == "not_found":
                 return {"text": f"未找到员工「{person_name}」，请确认姓名或工号。", "data": {"count": 0}}
@@ -1687,8 +1825,8 @@ class InsightEngine:
             matching_user_ids = resolution.user_ids
             person_label = resolution.display_name or person_name
 
-        # 基础查询
-        query = select(Invoice)
+        # 基础查询（排除 processing 脏数据）
+        query = select(Invoice).where(Invoice.status != InvoiceStatus.processing)
         if matching_user_ids is not None:
             query = query.where(Invoice.user_id.in_(matching_user_ids))
         if start:
@@ -1763,9 +1901,12 @@ class InsightEngine:
     async def _self_invoice_total(
         self, ctx: DialogContext, db: AsyncSession
     ) -> dict[str, Any]:
-        """self_insight_invoice_total — 本人发票统计"""
+        """self_insight_invoice_total — 本人发票统计（排除 processing 脏数据）"""
         start, end, desc = self._get_period(ctx)
-        query = select(Invoice).where(Invoice.user_id == ctx.user_id)
+        query = select(Invoice).where(
+            Invoice.user_id == ctx.user_id,
+            Invoice.status != InvoiceStatus.processing,
+        )
         if start:
             query = query.where(Invoice.created_at >= start)
         if end:
@@ -1810,8 +1951,34 @@ class InsightEngine:
         filter_type_slot = ctx.slots.get("filter_type")
         filter_type = filter_type_slot.value if filter_type_slot and filter_type_slot.filled else None
 
-        # 仅查本人发票
-        query = select(Invoice).where(Invoice.user_id == ctx.user_id)
+        # NLU 兜底：LLM 偶尔把费用分类词（如"打车费""快递费"）误填进 filter_type 槽位
+        # filter_type 严格枚举仅 duplicate/invalid/high_risk/pending/receipt
+        # 非法值时让 LLM 判断这是异常条件还是费用分类词：
+        # - 异常条件（重复/验真失败/高风险/待审核/收据等表述）→ 按异常筛选处理
+        # - 费用分类词（打车费/快递费/差旅费等）→ 转交 _self_category_amount 用 LLM 语义筛选
+        _VALID_FILTER_TYPES = {"duplicate", "invalid", "high_risk", "pending", "receipt"}
+        if filter_type and filter_type not in _VALID_FILTER_TYPES:
+            from app.services.llm_service import get_llm_service
+            llm_svc = get_llm_service()
+            kind = (
+                await llm_svc.classify_filter_type(filter_type)
+                if llm_svc.is_available() else "category"
+            )
+            if kind == "category":
+                logger.info(
+                    "filter_type %r classified as fee category, delegating to category_amount",
+                    filter_type,
+                )
+                ctx.fill_slot("fee_category_keyword", filter_type)
+                return await self._self_category_amount(ctx, db)
+            # kind == "issue" → 继续按异常筛选处理，filter_type 保持原值
+            # 走下面的中文映射逻辑
+
+        # 仅查本人发票（排除 processing 脏数据）
+        query = select(Invoice).where(
+            Invoice.user_id == ctx.user_id,
+            Invoice.status != InvoiceStatus.processing,
+        )
         if start:
             query = query.where(Invoice.created_at >= start)
         if end:
@@ -1820,7 +1987,7 @@ class InsightEngine:
         result = await db.execute(query)
         invoices = list(result.scalars().all())
 
-        # 按 filter_type 筛选
+        # 按 filter_type 筛选（含中文异常表述的非枚举值映射）
         filter_labels = {
             "duplicate": "重复发票",
             "invalid": "验真失败",
@@ -1900,6 +2067,12 @@ _NON_PERSON_WORDS = frozenset({
     "上周", "上一周", "这个月", "本月", "上个月", "上月", "个月",
     "今年", "去年", "最近", "近半年", "最近半年", "最近一年",
     "公司", "全公司", "全部", "所有人", "一共", "总共", "多少",
+    # 补全缺失的高频时间副词 — 防止被误识别为人名
+    "目前", "现在", "当前", "至今", "迄今", "暂时",
+    "刚才", "刚刚", "近期", "这几天",
+    # 英文通用词 — LLM 偶发将"所有/全部"翻译成英文填入 person slot
+    "all", "total", "everyone", "everybody", "all_users",
+    "all_employees", "whole", "entire",
 })
 
 # 候选人名不应以后缀词结尾（防止日期碎片"月一共"等被误识别）

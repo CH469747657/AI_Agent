@@ -5,19 +5,28 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.dialog.dialog_engine import get_dialog_engine
 from app.dialog.context_store import RedisContextStore
 from app.dialog.models import UserRole, DialogState
+from app.routers.admin_auth import get_current_admin
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+# 管理端对话接口鉴权 — 与员工端 /api/portal/dialog/* (portal.py 独立实现) 物理隔离
+router = APIRouter(dependencies=[Depends(get_current_admin)])
+
+
+def _sse_event(event: dict) -> str:
+    """构造 SSE 事件字符串（data: <json>\n\n）"""
+    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
 # ============================================================
@@ -109,6 +118,87 @@ async def send_message(req: DialogRequest):
         quick_replies=response.quick_replies,
         error=response.error,
         data=action_data,
+    )
+
+
+@router.post("/message/stream")
+async def stream_message(req: DialogRequest):
+    """流式发送消息，获取对话引擎 SSE 响应
+
+    事件流格式（每行 `data: <json>\\n\\n`）：
+    1. {"phase": "thinking", "text": "正在理解您的需求…"}   — LLM NLU 前
+    2. {"phase": "querying", "text": "正在查询数据…"}        — Action 执行前（如有）
+    3. {"phase": "done", "response": <DialogAPIResponse>}    — 最终响应
+
+    若中途异常，发送 {"phase": "error", "message": "..."} 后结束。
+
+    兼容性：不支持 SSE 的客户端仍可调用 POST /message 获取一次性响应。
+    """
+    try:
+        role = UserRole(req.role)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"无效的角色: {req.role}")
+
+    engine = get_dialog_engine()
+
+    attachment_data = {"base64": req.attachment_base64} if req.attachment_base64 else None
+    if attachment_data and req.attachment_file_type:
+        attachment_data["file_type"] = req.attachment_file_type
+
+    # on_progress 回调 → SSE thinking/querying 事件
+    progress_queue: list[dict] = []
+
+    async def on_progress(text: str) -> None:
+        progress_queue.append({"text": text})
+
+    async def event_gen():
+        try:
+            # 推送已累积的进度事件（thinking/querying）
+            response = await engine.process_message(
+                user_id=req.user_id,
+                text=req.text,
+                role=role,
+                has_attachment=req.has_attachment,
+                attachment_data=attachment_data,
+                receipt_type=req.receipt_type,
+                user_description=req.user_description,
+                no_receipt_amount=req.no_receipt_amount,
+                on_progress=on_progress,
+            )
+            # 推送所有进度事件
+            for ev in progress_queue:
+                yield _sse_event({"phase": "progress", "text": ev["text"]})
+
+            # 从 action_result 中提取 data 字段
+            action_data: Optional[dict] = None
+            if isinstance(response.action_result, dict):
+                d = response.action_result.get("data")
+                if d:
+                    action_data = d
+
+            final = DialogAPIResponse(
+                text=response.text,
+                state=response.state.value,
+                intent=response.intent_name,
+                action_taken=response.action_taken,
+                need_user_input=response.need_user_input,
+                quick_replies=response.quick_replies,
+                error=response.error,
+                data=action_data,
+            )
+            yield _sse_event({"phase": "done", "response": final.model_dump()})
+        except Exception as e:
+            logger.exception("SSE stream error: %s", e)
+            yield _sse_event({"phase": "error", "message": str(e)})
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲，确保实时推送
+        },
     )
 
 

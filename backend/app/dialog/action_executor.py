@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import re
 from datetime import date
@@ -36,6 +37,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_sessionmaker
+from app.config import settings
 from app.models.invoice import Invoice, InvoiceStatus, ReceiptType
 from app.models.reimbursement import Reimbursement, ReimbursementStatus
 from app.models.employee import Employee
@@ -131,6 +133,8 @@ class ActionExecutor:
             "emp_query_invoices": self._handle_query_invoices,
             "emp_query_status": self._handle_query_status,
             "emp_query_my_reimbursement": self._handle_query_my_reimbursement,
+            # 员工越权查询拦截 — LLM 判定后由本处统一回复
+            "emp_permission_denied": self._handle_permission_denied,
             # 管理员操作
             "admin_approve": self._handle_admin_approve,
             "admin_reject": self._handle_admin_reject,
@@ -156,22 +160,71 @@ class ActionExecutor:
         file_data = base64.b64decode(attachment["base64"])
         file_type = attachment.get("file_type", "jpg")
 
-        # 发票类型：优先用前端弹窗选择的，其次从槽位读取，最后默认
+        # 发票类型：优先用前端传入的，否则留空让 InvoiceService 走 LLM Vision 自动识别
         receipt_type = ctx.slots.get("receipt_type")
-        receipt_type_val = receipt_type.value if receipt_type and receipt_type.filled else "增值税普通发票"
+        receipt_type_val = receipt_type.value if receipt_type and receipt_type.filled else ""
 
-        # 费用用途：优先用前端弹窗输入的，否则默认"对话上传"（后续 follow_up 追问）
-        user_desc = ctx.user_description or "对话上传"
-        has_purpose = bool(ctx.user_description)
+        # 费用用途：优先用前端弹窗传入的 user_description，
+        # 否则回退到用户在聊天框输入的文本（ctx.current_text）
+        user_desc = ctx.user_description or ctx.current_text or ""
+        has_purpose = bool(user_desc)
+
+        # 当前发票索引（0-based，基于已上传数量）
+        current_invoice_index = len(ctx.batch_invoice_ids)
+
+        # 检测并解析批量描述（如"第一张是打车费，第二张是快递费"）
+        # 设计：新前端流程会为每张发票都携带同一份 purpose 文本，
+        # 因此只在第一张（batch_desc_map 为空时）解析一次，后续张直接用缓存。
+        # existing_count 用于"这两张"等相对指代的偏移（分次说明场景）
+        if has_purpose and not ctx.batch_desc_map:
+            existing_count = len(ctx.batch_invoice_ids)
+            new_map = await self._parse_batch_description(user_desc, existing_count=existing_count)
+            if new_map:
+                ctx.batch_desc_map.update({str(k): v for k, v in new_map.items()})
+                logger.info(
+                    f"Initial batch description parsed, {len(ctx.batch_desc_map)} entries: {ctx.batch_desc_map}"
+                )
+        elif has_purpose and ctx.batch_desc_map:
+            # batch_desc_map 已有缓存但当前索引缺失（如分次说明："第一张打车费" + "这两张餐费"）
+            # 尝试增量解析本次说明，补充未覆盖的索引
+            if str(current_invoice_index) not in ctx.batch_desc_map:
+                existing_count = len(ctx.batch_invoice_ids)
+                incremental = await self._parse_batch_description(user_desc, existing_count=existing_count)
+                if incremental:
+                    # 仅合并新索引，不覆盖已有
+                    for k, v in incremental.items():
+                        if str(k) not in ctx.batch_desc_map:
+                            ctx.batch_desc_map[str(k)] = v
+                    logger.info(
+                        f"Incremental batch description merged, total {len(ctx.batch_desc_map)} entries: {ctx.batch_desc_map}"
+                    )
+
+        # 优先从持久化的批量描述映射取当前发票的描述
+        cached_desc = ctx.batch_desc_map.get(str(current_invoice_index))
+        if cached_desc:
+            user_desc = cached_desc
+            logger.info(f"Invoice #{current_invoice_index + 1} using cached batch description: {user_desc}")
 
         service = InvoiceService(db)
-        invoice = await service.process_upload(
-            file_data=file_data,
-            file_type=file_type,
-            receipt_type=receipt_type_val,
-            user_id=ctx.user_id,
-            user_description=user_desc,
-        )
+        try:
+            invoice = await service.process_upload(
+                file_data=file_data,
+                file_type=file_type,
+                receipt_type=receipt_type_val,
+                user_id=ctx.user_id,
+                user_description=user_desc,
+            )
+        except Exception as e:
+            logger.exception("Invoice upload failed")
+            error_msg = str(e) or "未知错误"
+            text = (
+                "❌ 发票识别失败\n\n"
+                "| 项目 | 内容 |\n"
+                "|------|------|\n"
+                f"| 状态 | 识别失败 |\n"
+                f"| 原因 | {error_msg} |\n"
+            )
+            return {"text": text, "data": {"error": error_msg}}
 
         # 清除临时字段（仅当次请求有效）
         ctx.user_description = None
@@ -183,27 +236,51 @@ class ActionExecutor:
         # 设置待处理发票ID，供后续描述补充使用
         ctx.pending_invoice_id = invoice.id
 
-        # 格式化结果
-        seller = invoice.seller_name or "未知"
-        amount = invoice.total_with_tax or "未知"
-        status_emoji = self._status_emoji(invoice)
-        verify_emoji = self._verify_emoji(invoice)
+        # 格式化结果为 Markdown 表格
+        # 注：user_description 是用户填的用途，expense_date 是出差日期（费用发生日期）
+        # 两者是后续自动生成报销单的核心依据，必须确保完整
+        has_expense_date = bool(invoice.expense_date)
+        table_rows = [
+            ("发票编号", f"#{invoice.id}"),
+            ("发票类型", invoice.receipt_type.value if invoice.receipt_type else "未知"),
+            ("单号", invoice.invoice_number or "—"),
+            ("销售方", invoice.seller_name or "未知"),
+            ("金额（含税）", f"¥{invoice.total_with_tax or '未知'}"),
+            ("税额", f"¥{invoice.tax_amount or '—'}"),
+            ("开票时间", invoice.issue_date or "—"),
+            ("费用分类", invoice.fee_subcategory or "—"),
+            ("用途", invoice.user_description or "待补充"),
+            ("出差日期", invoice.expense_date or "待补充"),
+            ("状态", f"{self._status_emoji(invoice)} {self._status_text(invoice)}"),
+            ("验真", f"{self._verify_emoji(invoice)} {self._verify_text(invoice)}"),
+        ]
 
-        text = (
-            f"✅ 发票已上传并处理\n\n"
-            f"📋 发票编号：#{invoice.id}\n"
-            f"🏪 销售方：{seller}\n"
-            f"💰 金额：¥{amount}\n"
-            f"{status_emoji} 状态：{self._status_text(invoice)}\n"
-            f"{verify_emoji} 验真：{self._verify_text(invoice)}\n"
-        )
-
-        if invoice.fee_subcategory:
-            text += f"📊 分类：{invoice.fee_subcategory}\n"
+        # 添加警告信息
+        warnings = []
         if invoice.duplicate_status and invoice.duplicate_status.value == "DUPLICATE":
-            text += f"⚠️ 提示：此发票可能为重复发票\n"
+            warnings.append("⚠️ 此发票可能为重复发票")
         if invoice.diff_conflicts:
-            text += f"⚠️ 提示：OCR与LLM识别存在差异，请核实\n"
+            warnings.append("⚠️ OCR与LLM识别存在差异，请核实")
+        # 用途/出差日期缺失提醒（自动生成报销单的核心字段，必须完整）
+        missing_fields = []
+        if not invoice.user_description:
+            missing_fields.append("用途")
+        if not has_expense_date:
+            missing_fields.append("出差日期")
+        if missing_fields:
+            warnings.append(
+                f"⚠️ 请补充：{'、'.join(missing_fields)}（这两项是后续自动生成报销单的核心依据）"
+            )
+
+        # 构造表格
+        text = "✅ 发票已上传并识别\n\n"
+        text += "| 项目 | 内容 |\n"
+        text += "|------|------|\n"
+        for label, value in table_rows:
+            text += f"| {label} | {value} |\n"
+
+        if warnings:
+            text += "\n" + "\n".join(warnings) + "\n"
 
         text += f"\n已添加到批量提交列表（当前 {len(ctx.batch_invoice_ids)} 张）\n"
 
@@ -222,12 +299,15 @@ class ActionExecutor:
                 "data": {"invoice_id": invoice.id},
             }
 
-        # 无用途 → follow_up 追问
-        text += "请简要描述这笔费用的用途（可回复「跳过」跳过）"
+        # 无用途 → follow_up 追问，并附带当前 batch 发票摘要，帮助用户对应“第几张”
+        text += "请按序号描述每张发票的用途（如“1 打车费，2 餐费”），可回复「跳过」跳过"
         # 追加当前批量发票的 Markdown 汇总表格
         md_table = await self._build_batch_summary_table(ctx, db)
         if md_table:
             text += "\n\n" + md_table
+
+        # 构造供前端展示的可识别摘要
+        batch_summary = await self._build_batch_invoice_summaries(ctx, db)
         return {
             "text": text,
             "data": {
@@ -235,8 +315,9 @@ class ActionExecutor:
                 "follow_up": {
                     "state": "waiting_purpose",
                     "intent": "emp_fill_invoice_desc",
-                    "prompt": "请简要描述这笔费用的用途，例如：去机场打车",
+                    "prompt": "请按序号描述每张发票的用途（如“1 打车费，2 餐费”）",
                     "pending_invoice_id": invoice.id,
+                    "batch_summary": batch_summary,
                 },
             },
         }
@@ -244,11 +325,36 @@ class ActionExecutor:
     async def _handle_fill_invoice_desc(
         self, ctx: DialogContext, db: AsyncSession, _: Optional[dict]
     ) -> dict:
-        """为刚上传的发票补充用途描述/备注"""
+        """为刚上传的发票补充用途描述/出差日期，支持按索引批量补描述
+
+        用户回复"出差时间8月1日，项目投标费"时，LLM 会拆分为：
+        - purpose="项目投标费"
+        - expense_date="2026-08-01"
+        两个参数同时传入。本 handler 同时写入 user_description 和 expense_date。
+        """
         purpose_slot = ctx.slots.get("purpose")
         if not purpose_slot or not purpose_slot.filled:
             return {"text": "请描述这笔费用的用途。", "data": {}}
 
+        purpose_text = str(purpose_slot.value).strip()
+
+        # 出差日期（可选参数，LLM 识别到日期时填入）
+        expense_date_slot = ctx.slots.get("expense_date")
+        expense_date_raw = (
+            str(expense_date_slot.value).strip()
+            if expense_date_slot and expense_date_slot.filled
+            else None
+        )
+        parsed_date = self._parse_expense_date(expense_date_raw) if expense_date_raw else None
+
+        # 1. 尝试按索引批量解析（如 "1 打车费，2 餐费"）
+        indexed_map = self._parse_indexed_descriptions(purpose_text)
+        if indexed_map and ctx.batch_invoice_ids:
+            return await self._apply_indexed_descriptions(
+                ctx, db, indexed_map, purpose_text, parsed_date
+            )
+
+        # 2. 单张发票兜底：按 pending_invoice_id 更新
         invoice_id = ctx.pending_invoice_id
         if not invoice_id:
             return {"text": "没有待描述的发票，请先上传发票图片。", "data": {}}
@@ -259,17 +365,23 @@ class ActionExecutor:
             ctx.pending_invoice_id = None
             return {"text": f"未找到发票 #{invoice_id}。", "data": {}}
 
-        invoice.user_description = str(purpose_slot.value)
+        invoice.user_description = purpose_text
+        date_updated = False
+        if parsed_date:
+            invoice.expense_date = parsed_date
+            invoice.expense_date_source = "note"  # 用户口述的日期
+            date_updated = True
         await db.commit()
 
         # 清除待处理标记
         ctx.pending_invoice_id = None
 
-        text = (
-            f"已为发票 #{invoice_id} 添加用途描述\n\n"
-            f"描述：{purpose_slot.value}\n\n"
-            f"已添加到批量提交列表（当前 {len(ctx.batch_invoice_ids)} 张）\n"
-        )
+        text_parts = [f"已为发票 #{invoice_id} 添加用途描述"]
+        text_parts.append(f"用途：{purpose_text}")
+        if date_updated:
+            text_parts.append(f"出差日期：{parsed_date.isoformat()}")
+        text_parts.append(f"已添加到批量提交列表（当前 {len(ctx.batch_invoice_ids)} 张）")
+        text = "\n\n".join(text_parts) + "\n"
         # 追加 Markdown 汇总表格
         md_table = await self._build_batch_summary_table(ctx, db)
         if md_table:
@@ -279,6 +391,146 @@ class ActionExecutor:
         else:
             text += "继续上传可发送更多发票，输入「完成」提交报销。"
         return {"text": text, "data": {"invoice_id": invoice_id}}
+
+    @staticmethod
+    def _parse_expense_date(raw: str | None) -> Optional[date]:
+        """解析用户口述的出差日期为 date 对象
+
+        支持格式：
+        - 2026-08-01 / 2026/8/1 / 2026年8月1日
+        - 8月1日 / 8-1 / 8/1（缺省年份补当前年份）
+        - 20260801（紧凑 8 位）
+        解析失败返回 None（不写入 expense_date，避免脏数据）
+        """
+        if not raw:
+            return None
+        import re
+        from datetime import date as date_cls
+
+        s = raw.strip()
+
+        # 1. YYYY-MM-DD / YYYY/M/D / YYYY年M月D日
+        m = re.match(r"^(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})日?$", s)
+        if m:
+            try:
+                return date_cls(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            except ValueError:
+                return None
+
+        # 2. 紧凑 8 位 YYYYMMDD
+        m = re.match(r"^(\d{4})(\d{2})(\d{2})$", s)
+        if m:
+            try:
+                return date_cls(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            except ValueError:
+                return None
+
+        # 3. M月D日 / M-D / M/D（缺省年份补当前年份）
+        m = re.match(r"^(\d{1,2})[-/月](\d{1,2})日?$", s)
+        if m:
+            try:
+                from datetime import date as date_cls2
+                today = date_cls2.today()
+                return date_cls2(today.year, int(m.group(1)), int(m.group(2)))
+            except ValueError:
+                return None
+
+        return None
+
+    def _parse_indexed_descriptions(self, text: str) -> dict[int, str] | None:
+        """解析 "1 打车费，2 餐费" 这类按索引描述
+
+        返回 {1: "打车费", 2: "餐费"}；若无法解析返回 None。
+        """
+        if not text:
+            return None
+
+        # 支持中英文逗号、分号、换行分隔
+        # 格式：序号 + 分隔 + 描述，如 "1 打车费", "1. 打车费", "1=打车费"
+        parts = re.split(r"[，,；;\n]", text)
+        result: dict[int, str] = {}
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            # 匹配：1 描述 / 1.描述 / 1=描述 / 1 - 描述
+            m = re.match(r"^(\d+)\s*[\.:\-=\s]\s*(.+)$", part)
+            if not m:
+                m = re.match(r"^(\d+)\s+(.+)$", part)
+            if not m:
+                # 某一段不符合索引格式，整体视为非索引描述
+                return None
+            idx = int(m.group(1))
+            desc = m.group(2).strip()
+            if idx < 1 or not desc:
+                return None
+            result[idx] = desc
+
+        return result if result else None
+
+    async def _apply_indexed_descriptions(
+        self,
+        ctx: DialogContext,
+        db: AsyncSession,
+        indexed_map: dict[int, str],
+        original_text: str,
+        parsed_date: Optional[date] = None,
+    ) -> dict:
+        """应用按索引描述到 batch 发票
+
+        parsed_date 非空时，同时回填到每张发票的 expense_date。
+        """
+        if not ctx.batch_invoice_ids:
+            return {"text": "没有待描述的发票，请先上传发票图片。", "data": {}}
+
+        # 按 batch 顺序查询发票
+        result = await db.execute(
+            select(Invoice).where(Invoice.id.in_(ctx.batch_invoice_ids))
+        )
+        invoice_map = {inv.id: inv for inv in result.scalars().all()}
+        ordered = [invoice_map[i] for i in ctx.batch_invoice_ids if i in invoice_map]
+
+        updated: list[tuple[int, int, str]] = []  # (batch_index, invoice_id, desc)
+        not_found: list[int] = []
+        for idx, desc in indexed_map.items():
+            if idx > len(ordered):
+                not_found.append(idx)
+                continue
+            inv = ordered[idx - 1]
+            inv.user_description = desc
+            if parsed_date:
+                inv.expense_date = parsed_date
+                inv.expense_date_source = "note"
+            updated.append((idx, inv.id, desc))
+
+        await db.commit()
+
+        # 清除待处理标记
+        ctx.pending_invoice_id = None
+
+        # 构建回复
+        lines = ["✅ 已按序号添加用途描述"]
+        if parsed_date:
+            lines.append(f"📅 出差日期：{parsed_date.isoformat()}（已应用到所有发票）")
+        lines.append("")
+        for batch_idx, inv_id, desc in updated:
+            lines.append(f"  {batch_idx}. 发票 #{inv_id} → {desc}")
+        if not_found:
+            lines.append(f"\n⚠️ 以下序号超出范围，未找到对应发票：{', '.join(str(i) for i in not_found)}")
+
+        md_table = await self._build_batch_summary_table(ctx, db)
+        if md_table:
+            lines.append("\n" + md_table)
+
+        if ctx.role == UserRole.EMPLOYEE:
+            lines.append("\n继续上传可发送更多发票。报销单将按周期自动生成与归集。")
+        else:
+            lines.append("\n继续上传可发送更多发票，输入「完成」提交报销。")
+
+        return {
+            "text": "\n".join(lines),
+            "data": {"updated": len(updated), "total": len(ordered)},
+        }
 
     async def _handle_delete_invoice(
         self, ctx: DialogContext, db: AsyncSession, _: Optional[dict]
@@ -499,15 +751,40 @@ class ActionExecutor:
     async def _handle_modify_field(
         self, ctx: DialogContext, db: AsyncSession, _: Optional[dict]
     ) -> dict:
-        """修改发票字段"""
+        """修改发票字段
+
+        支持通过 invoice_index 槽位指定"第N张"（1-based，对应 batch_invoice_ids），
+        未指定时回退到 ctx.pending_invoice_id。
+        可修改字段：金额、日期、销售方、税号、发票号、用途。
+        """
         field_name = ctx.slots.get("field_name")
         field_value = ctx.slots.get("field_value")
         if not field_name or not field_name.filled or not field_value or not field_value.filled:
             return {"text": "请告诉我要修改哪个字段以及新值。", "data": {}}
 
-        invoice_id = ctx.pending_invoice_id
+        # 解析目标发票：优先 invoice_index 槽位（"第N张"），回退 pending_invoice_id
+        invoice_id = None
+        index_slot = ctx.slots.get("invoice_index")
+        if index_slot and index_slot.filled:
+            try:
+                idx = int(index_slot.value)
+                if idx < 1:
+                    return {"text": f"发票序号需大于0，您输入的是 {idx}。", "data": {}}
+                if not ctx.batch_invoice_ids:
+                    return {"text": "您还没有上传任何发票，无法按序号修改。", "data": {}}
+                if idx > len(ctx.batch_invoice_ids):
+                    return {
+                        "text": f"序号超出范围，您当前共 {len(ctx.batch_invoice_ids)} 张发票。",
+                        "data": {},
+                    }
+                invoice_id = ctx.batch_invoice_ids[idx - 1]
+            except (ValueError, TypeError):
+                return {"text": f"无法解析发票序号「{index_slot.value}」，请说「第2张」。", "data": {}}
+
         if not invoice_id:
-            return {"text": "请先指定要修改的发票编号。", "data": {}}
+            invoice_id = ctx.pending_invoice_id
+        if not invoice_id:
+            return {"text": "请先指定要修改的发票，例如「第一张发票的金额改成100」。", "data": {}}
 
         result = await db.execute(select(Invoice).where(Invoice.id == invoice_id))
         invoice = result.scalar_one_or_none()
@@ -524,15 +801,20 @@ class ActionExecutor:
             "销售方": "seller_name", "seller": "seller_name",
             "税号": "seller_tax_id", "tax_id": "seller_tax_id",
             "发票号": "invoice_number", "invoice_number": "invoice_number",
+            "用途": "user_description", "description": "user_description",
+            "备注": "user_description",
         }
         model_attr = field_map.get(fn.lower() if isinstance(fn, str) else fn, fn)
 
         if hasattr(invoice, model_attr):
             setattr(invoice, model_attr, fv)
             await db.commit()
-            return {"text": f"✅ 已将发票 #{invoice_id} 的{fn}修改为 {fv}。", "data": {"invoice_id": invoice_id}}
+            text = f"✅ 已将发票 #{invoice_id} 的{fn}修改为 {fv}。"
+            # 仅返回本次修改的发票详情（场景B：单次操作）
+            text += "\n\n" + self._build_single_invoice_table(invoice)
+            return {"text": text, "data": {"invoice_id": invoice_id}}
         else:
-            return {"text": f"不支持修改字段「{fn}」。可修改：金额、日期、销售方、税号、发票号。", "data": {}}
+            return {"text": f"不支持修改字段「{fn}」。可修改：金额、日期、销售方、税号、发票号、用途。", "data": {}}
 
     async def _handle_confirm_category(
         self, ctx: DialogContext, db: AsyncSession, _: Optional[dict]
@@ -763,23 +1045,244 @@ class ActionExecutor:
     async def _parse_batch_modifications(self, text: str) -> dict[str, str]:
         """解析批量修改指令为字段映射
 
+        策略：
+        1. 正则 fast-path：覆盖常见固定句式，零 LLM 成本。
+        2. LLM fallback：处理自然语言变体，如"把金额改成一百块"。
+
         支持的格式:
         - "金额改为100, 日期改为2026-08-01"
         - "金额=100, 日期=2026-08-01"
         - "把销售方改成XX公司, 税号改成123"
+        - "把金额改成一百块，日期调到8月1号"
         """
-        modifications = {}
-        # 分割多个修改项
+        text = (text or "").strip()
+        if not text:
+            return {}
+
+        allowed_fields = {
+            "金额", "amount", "日期", "date",
+            "销售方", "seller", "税号", "tax_id",
+            "发票号", "invoice_number",
+        }
+        modifications: dict[str, str] = {}
+
+        # 1. 正则 fast-path：固定句式快速解析
         parts = re.split(r'[,，;；\n]', text)
         for part in parts:
             part = part.strip()
             if not part:
                 continue
-            # 匹配 "字段名 改为/改成/改为/=/→ 值"
-            m = re.match(r'(金额|日期|销售方|税号|发票号|amount|date|seller|tax_id|invoice_number)\s*(?:改为|改成|更改为|=|→)\s*(.+)', part, re.IGNORECASE)
+            m = re.match(
+                r'(金额|日期|销售方|税号|发票号|amount|date|seller|tax_id|invoice_number)'
+                r'\s*(?:改为|改成|更改为|=|→)\s*(.+)',
+                part,
+                re.IGNORECASE,
+            )
             if m:
-                modifications[m.group(1)] = m.group(2).strip()
+                modifications[m.group(1).lower()] = m.group(2).strip()
+
+        if modifications:
+            return modifications
+
+        # 2. LLM fallback：自然语言变体解析
+        from app.services.llm_service import get_llm_service
+        llm = get_llm_service()
+        if not llm.is_available():
+            logger.warning("LLM unavailable for batch modification parsing")
+            return {}
+
+        current_year = date.today().year
+        prompt = (
+            "你是发票字段修改解析助手。请将用户的修改描述解析为字段修改列表。\n\n"
+            f"当前年份为 {current_year}。\n"
+            "只允许修改以下字段：金额(amount)、日期(date)、销售方(seller)、税号(tax_id)、发票号(invoice_number)。\n\n"
+            "输出严格 JSON 数组，每项包含：\n"
+            '  - "field": 字段名（使用上面列表中的中文或英文名称）\n'
+            '  - "value": 修改后的值。日期请标准化为 YYYY-MM-DD 格式；金额只保留数字和小数点。\n\n'
+            "示例：\n"
+            '输入：把金额改成一百块，日期调到8月1号\n'
+            '输出：[{"field": "金额", "value": "100"}, {"field": "日期", "value": "' + str(current_year) + '-08-01"}]\n\n'
+            '输入：销售方换成 ABC 公司，税号改为 91110000XXXX\n'
+            '输出：[{"field": "销售方", "value": "ABC公司"}, {"field": "税号", "value": "91110000XXXX"}]\n\n'
+            f"输入：{text}\n"
+            "只输出 JSON 数组，不要任何其他文字。"
+        )
+
+        try:
+            resp = await llm.client.chat.completions.create(
+                model=settings.get_model_for_task("fee_classify"),
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0,
+                max_tokens=256,
+            )
+            content = resp.choices[0].message.content.strip()
+            result = json.loads(content)
+            items = result if isinstance(result, list) else result.get("modifications", [])
+
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                field = str(item.get("field", "")).strip().lower()
+                value = str(item.get("value", "")).strip()
+                if field and value and field in allowed_fields:
+                    modifications[field] = value
+
+            if modifications:
+                logger.info(
+                    "Batch modification parsed by LLM: text=%r modifications=%s",
+                    text[:50], list(modifications.keys()),
+                )
+        except json.JSONDecodeError as e:
+            logger.warning("Batch modification LLM response is not valid JSON: %s content=%r", e, content[:200])
+        except Exception as e:
+            logger.warning("Batch modification LLM parse failed: %s", e)
+
         return modifications
+
+    async def _parse_batch_description(
+        self, text: str, existing_count: int = 0
+    ) -> dict[int, str]:
+        """用 LLM 理解用户自然语言描述，拆分为 {0-based全局索引: 描述} 映射
+
+        覆盖各种自然语言表达：
+        - "第一张是餐饮费、第二张是打车费"
+        - "这两张都是 办公用品采购"（"这两张"指当前批次的新两张）
+        - "前两张是交通费，第三张是餐费"
+        - "打车费, 快递费" (按顺序分配)
+        - "去机场打车" (单张，不拆分)
+
+        Args:
+            text: 用户输入的描述文本
+            existing_count: 之前已上传且已描述过的发票数量（用于"这两张"等相对指代的偏移）
+
+        Returns:
+            dict[int, str]: {0-based全局索引: 描述} 映射，空dict表示未检测到批量描述
+        """
+        text = (text or "").strip()
+        if not text:
+            return {}
+
+        from app.services.llm_service import get_llm_service
+        llm = get_llm_service()
+        if not llm.is_available():
+            logger.warning("LLM unavailable, cannot parse batch description")
+            return {}
+
+        # 序号偏移说明：若已有 existing_count 张，"第一张/这两张"等指代从 existing_count+1 开始
+        offset_hint = ""
+        if existing_count > 0:
+            offset_hint = (
+                f"\n注意：用户之前已上传 {existing_count} 张发票并已说明用途。"
+                f"本次说明中的'第一张'、'这两张'、'前两张'等指代指的是"
+                f"第 {existing_count + 1} 张起的新发票（即本次新上传的发票）。"
+            )
+
+        prompt = (
+            "你是发票报销助手。用户正在批量上传发票，并给出一段说明。"
+            "请把说明拆分为每张发票对应的用途描述。\n\n"
+            "规则：\n"
+            "1. 输出 JSON 对象，key 为发票序号（从 1 开始的字符串，仅指本次说明覆盖的发票），"
+            "value 为该张发票的用途描述（字符串）。\n"
+            "2. 若说明只描述一种用途且适用于多张发票（如'这两张都是办公用品'），"
+            "则为涉及的每张都填入该用途。\n"
+            "3. 若说明只针对部分发票，仅填入能确定的序号；其余不要出现。\n"
+            "4. 用途描述要简洁（保留用户原话），不要添加额外解释。\n"
+            "5. 若说明与发票用途无关或无法理解，返回空对象 {{}}。\n"
+            "6. 若说明只描述单一用途且无'第N张/这两张/前N张'等批量指代，返回空对象 {{}}。\n"
+            "{offset_hint}\n\n"
+            "示例：\n"
+            "输入: text='第一张是餐饮费、第二张是打车费', 已有=0\n"
+            "输出: {{\"1\": \"餐饮费\", \"2\": \"打车费\"}}\n\n"
+            "输入: text='这两张都是 办公用品采购', 已有=0\n"
+            "输出: {{\"1\": \"办公用品采购\", \"2\": \"办公用品采购\"}}\n\n"
+            "输入: text='这两张都是 办公用品采购', 已有=2\n"
+            "输出: {{\"1\": \"办公用品采购\", \"2\": \"办公用品采购\"}}\n"
+            "（'这两张'指本次新上传的两张，序号仍从1开始）\n\n"
+            "输入: text='前两张是交通费，第三张是餐费', 已有=0\n"
+            "输出: {{\"1\": \"交通费\", \"2\": \"交通费\", \"3\": \"餐费\"}}\n\n"
+            "输入: text='打车费, 快递费', 已有=0\n"
+            "输出: {{\"1\": \"打车费\", \"2\": \"快递费\"}}\n\n"
+            "输入: text='去机场打车', 已有=0\n"
+            "输出: {{}}\n\n"
+            "现在处理：\n"
+            "text: {text}\n"
+            "已有: {existing}\n"
+            "请直接输出 JSON，不要任何额外文字。"
+        ).format(text=text, offset_hint=offset_hint, existing=existing_count)
+
+        try:
+            response = await llm.client.chat.completions.create(
+                model=settings.get_model_for_task("fee_classify"),  # 短文本理解，路由到快模型
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0,
+                max_tokens=300,
+            )
+            content = response.choices[0].message.content.strip()
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+
+            import json as _json
+            parsed = _json.loads(content)
+            result: dict[int, str] = {}
+            for k, v in parsed.items():
+                try:
+                    idx = int(k)
+                except (ValueError, TypeError):
+                    continue
+                # LLM 返回的 idx 是本次批次的局部序号（从1开始）
+                # 转换为全局索引：existing_count + (idx - 1)
+                if idx >= 1 and isinstance(v, str) and v.strip():
+                    global_idx = existing_count + (idx - 1)
+                    result[global_idx] = v.strip()
+
+
+
+            # 仅当解析出至少 2 张发票的描述时，才视为批量描述
+            # （单张描述不能构成"批量"，应让上层走普通用途流程）
+            if len(result) >= 2:
+                logger.info(f"LLM parsed batch description: {result}")
+                return result
+            logger.info(f"LLM batch parse result too small ({len(result)}), treating as non-batch: {result}")
+            return {}
+        except Exception as e:
+            logger.error(f"LLM batch description parse failed: {e}")
+            return {}
+
+
+    async def _build_batch_invoice_summaries(
+        self, ctx: DialogContext, db: AsyncSession
+    ) -> list[dict]:
+        """构建当前批量发票的可识别摘要列表
+
+        返回每项包含：index（1-based）、id、seller_name、total_with_tax、
+        receipt_type、issue_date，供前端在追问用途时展示。
+        """
+        if not ctx.batch_invoice_ids:
+            return []
+
+        result = await db.execute(
+            select(Invoice).where(Invoice.id.in_(ctx.batch_invoice_ids))
+        )
+        invoice_map = {inv.id: inv for inv in result.scalars().all()}
+
+        summaries: list[dict] = []
+        for idx, inv_id in enumerate(ctx.batch_invoice_ids, start=1):
+            inv = invoice_map.get(inv_id)
+            if not inv:
+                continue
+            summaries.append({
+                "index": idx,
+                "id": inv.id,
+                "seller_name": inv.seller_name or "未知",
+                "total_with_tax": str(inv.total_with_tax or "—"),
+                "receipt_type": inv.receipt_type.value if inv.receipt_type else "未知",
+                "issue_date": inv.issue_date or "—",
+            })
+        return summaries
 
     async def _build_batch_summary_table(
         self, ctx: DialogContext, db: AsyncSession
@@ -799,38 +1302,158 @@ class ActionExecutor:
             return ""
 
         lines = [
-            "| # | 编号 | 类型 | 销售方 | 金额 | 用途 |",
-            "|---|------|------|--------|------|------|",
+            "| 序号 | 类型 | 销售方 | 金额 | 用途 | 出差日期 | 上传时间 |",
+            "|------|------|--------|------|------|----------|----------|",
         ]
         for idx, inv in enumerate(invoices, 1):
             rt = inv.receipt_type.value if inv.receipt_type else "未知"
             seller = (inv.seller_name or "未知")[:10]
             amount = f"¥{inv.total_with_tax or '—'}"
             desc = (inv.user_description or "待补充")[:12]
-            lines.append(f"| {idx} | #{inv.id} | {rt} | {seller} | {amount} | {desc} |")
+            expense_date = str(inv.expense_date) if inv.expense_date else "—"
+            created = inv.created_at.strftime("%Y-%m-%d %H:%M") if inv.created_at else "—"
+            lines.append(f"| {idx} | {rt} | {seller} | {amount} | {desc} | {expense_date} | {created} |")
 
         # 合计行
         total = 0.0
         for inv in invoices:
             try:
-                total += float(inv.total_with_tax or 0)
+                total += self._safe_amount(inv.total_with_tax)
             except (ValueError, TypeError):
                 pass
-        lines.append(f"| **合计** | | | | **¥{total:.2f}** | {len(invoices)}张 |")
+        lines.append(f"| **合计** | | | **¥{total:.2f}** | {len(invoices)}张 | | |")
 
+        return "\n".join(lines)
+
+    async def _build_user_pending_invoices_table(
+        self, db: AsyncSession, user_id: str
+    ) -> str:
+        """构建指定用户未提交发票的 Markdown 表格
+
+        用于发票修改/删除等操作后展示当前未提交票据列表。
+        未提交 = reimbursement_id 为空 且 状态在 uploaded/reviewing/confirmed。
+        返回空字符串表示无未提交发票。
+        """
+        result = await db.execute(
+            select(Invoice).where(
+                Invoice.user_id == user_id,
+                Invoice.reimbursement_id.is_(None),
+                Invoice.status.in_([
+                    InvoiceStatus.confirmed,
+                    InvoiceStatus.reviewing,
+                    InvoiceStatus.uploaded,
+                ]),
+            ).order_by(Invoice.created_at.asc())
+        )
+        invoices = list(result.scalars().all())
+        if not invoices:
+            return ""
+
+        lines = [
+            "| 序号 | 类型 | 销售方 | 金额 | 用途 | 出差日期 | 上传时间 |",
+            "|------|------|--------|------|------|----------|----------|",
+        ]
+        total = 0.0
+        for idx, inv in enumerate(invoices, 1):
+            rt = inv.receipt_type.value if inv.receipt_type else "未知"
+            seller = (inv.seller_name or "无票报销")[:10]
+            amount_str = inv.total_with_tax or "—"
+            try:
+                total += self._safe_amount(inv.total_with_tax)
+            except (ValueError, TypeError):
+                pass
+            desc = (inv.user_description or "待补充")[:12]
+            expense_date = str(inv.expense_date) if inv.expense_date else "—"
+            created = inv.created_at.strftime("%Y-%m-%d %H:%M") if inv.created_at else "—"
+            lines.append(f"| {idx} | {rt} | {seller} | ¥{amount_str} | {desc} | {expense_date} | {created} |")
+
+        lines.append(f"| **合计** | | | **¥{total:.2f}** | {len(invoices)}张 | | |")
+        return "\n".join(lines)
+
+    async def _build_user_invoices_table(
+        self, db: AsyncSession, user_id: str, limit: int = 20
+    ) -> str:
+        """构建指定用户全部发票的 Markdown 表格（含状态列）
+
+        用于查询发票场景。按创建时间倒序，最多展示 limit 条。
+        返回空字符串表示无发票。
+        """
+        result = await db.execute(
+            select(Invoice)
+            .where(Invoice.user_id == user_id)
+            .order_by(Invoice.created_at.desc())
+            .limit(limit)
+        )
+        invoices = list(result.scalars().all())
+        if not invoices:
+            return ""
+
+        lines = [
+            "| 序号 | 类型 | 销售方 | 金额 | 用途 | 出差日期 | 状态 | 上传时间 |",
+            "|------|------|--------|------|------|----------|------|----------|",
+        ]
+        total = 0.0
+        for idx, inv in enumerate(invoices, 1):
+            rt = inv.receipt_type.value if inv.receipt_type else "未知"
+            seller = (inv.seller_name or "无票报销")[:10]
+            amount_str = inv.total_with_tax or "—"
+            try:
+                total += self._safe_amount(inv.total_with_tax)
+            except (ValueError, TypeError):
+                pass
+            desc = (inv.user_description or "待补充")[:12]
+            expense_date = str(inv.expense_date) if inv.expense_date else "—"
+            status = self._status_text(inv)
+            created = inv.created_at.strftime("%Y-%m-%d %H:%M") if inv.created_at else "—"
+            lines.append(f"| {idx} | {rt} | {seller} | ¥{amount_str} | {desc} | {expense_date} | {status} | {created} |")
+
+        lines.append(f"| **合计** | | | **¥{total:.2f}** | {len(invoices)}张 | | | |")
+        return "\n".join(lines)
+
+    def _build_single_invoice_table(self, invoice: Invoice) -> str:
+        """构建单张发票详情的 Markdown 表格（纵向，项目|内容格式）
+
+        用于上传/修改等单次操作场景，仅展示本次操作的发票详情。
+        """
+        rows = [
+            ("发票编号", f"#{invoice.id}"),
+            ("发票类型", invoice.receipt_type.value if invoice.receipt_type else "未知"),
+            ("单号", invoice.invoice_number or "—"),
+            ("销售方", invoice.seller_name or "未知"),
+            ("金额（含税）", f"¥{invoice.total_with_tax or '—'}"),
+            ("税额", f"¥{invoice.tax_amount or '—'}"),
+            ("开票时间", invoice.issue_date or "—"),
+            ("出差日期", invoice.expense_date or "待补充"),
+            ("费用分类", invoice.fee_subcategory or "—"),
+            ("用途", invoice.user_description or "待补充"),
+            ("状态", f"{self._status_emoji(invoice)} {self._status_text(invoice)}"),
+            ("验真", f"{self._verify_emoji(invoice)} {self._verify_text(invoice)}"),
+        ]
+        lines = ["| 项目 | 内容 |", "|------|------|"]
+        for label, value in rows:
+            lines.append(f"| {label} | {value} |")
         return "\n".join(lines)
 
     # ============================================================
     # 查询类
     # ============================================================
 
+    async def _handle_permission_denied(
+        self, ctx: DialogContext, db: AsyncSession, _: Optional[dict]
+    ) -> dict:
+        """员工越权查询拦截 — 由 LLM 判定后调用，统一回复无权限"""
+        return {"text": "没有权限，只能看本人的信息。", "data": {"permission_denied": True}}
+
     async def _handle_query_invoices(
         self, ctx: DialogContext, db: AsyncSession, _: Optional[dict]
     ) -> dict:
-        """查询用户发票列表"""
+        """查询用户发票列表（仅展示识别完成的发票，排除 processing 脏数据）"""
         result = await db.execute(
             select(Invoice)
-            .where(Invoice.user_id == ctx.user_id)
+            .where(
+                Invoice.user_id == ctx.user_id,
+                Invoice.status != InvoiceStatus.processing,
+            )
             .order_by(Invoice.created_at.desc())
             .limit(20)
         )
@@ -842,21 +1465,15 @@ class ActionExecutor:
         total_amount = 0.0
         for inv in invoices:
             try:
-                total_amount += float(inv.total_with_tax or 0)
+                total_amount += self._safe_amount(inv.total_with_tax)
             except (ValueError, TypeError):
                 pass
 
-        lines = [f"📋 您的发票列表（共 {len(invoices)} 张，合计 ¥{total_amount:.2f}）\n"]
-        for inv in invoices[:10]:
-            seller = inv.seller_name or "未知"
-            amount = inv.total_with_tax or "—"
-            status = self._status_text(inv)
-            lines.append(f"  #{inv.id} | {seller} | ¥{amount} | {status}")
+        header = f"📋 您的发票列表（共 {len(invoices)} 张，合计 ¥{total_amount:.2f}）"
+        table = await self._build_user_invoices_table(db, ctx.user_id)
+        text = header + "\n\n" + table if table else header
 
-        if len(invoices) > 10:
-            lines.append(f"\n（仅显示前10条，共 {len(invoices)} 条）")
-
-        return {"text": "\n".join(lines), "data": {"count": len(invoices), "total": total_amount}}
+        return {"text": text, "data": {"count": len(invoices), "total": total_amount}}
 
     async def _handle_query_status(
         self, ctx: DialogContext, db: AsyncSession, _: Optional[dict]
@@ -914,7 +1531,7 @@ class ActionExecutor:
         total = 0.0
         for inv in invoices:
             try:
-                total += float(inv.total_with_tax or 0)
+                total += self._safe_amount(inv.total_with_tax)
             except (ValueError, TypeError):
                 pass
 
@@ -1452,6 +2069,18 @@ class ActionExecutor:
     # ============================================================
     # 辅助方法
     # ============================================================
+
+    @staticmethod
+    def _safe_amount(val) -> float:
+        """安全转换金额为 float（total_with_tax 可能是 "200元""¥500.00" 等脏数据）"""
+        if not val:
+            return 0.0
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            import re
+            m = re.search(r"\d+(?:\.\d+)?", str(val))
+            return float(m.group()) if m else 0.0
 
     def _status_text(self, invoice: Invoice) -> str:
         status_map = {

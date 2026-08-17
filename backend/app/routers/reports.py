@@ -1,5 +1,7 @@
 """报表生成路由"""
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy import select
@@ -7,9 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.reimbursement import Reimbursement
+from app.routers.admin_auth import get_current_admin
 from app.services.report_generator import ReportGenerator
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_admin)])
 
 
 @router.post("/generate/{reimbursement_id}")
@@ -49,6 +52,9 @@ async def download_report(
     file_path = path_map.get(file_type)
     if not file_path:
         raise HTTPException(status_code=404, detail=f"{file_type} file not generated")
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="报表文件不存在，请重新生成")
 
     return FileResponse(
         file_path,

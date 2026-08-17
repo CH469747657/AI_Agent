@@ -55,7 +55,7 @@ export function InvoiceDetailDrawer({ invoiceId, onClose }: DetailDrawerProps) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 z-40 bg-slate-900/30 backdrop-blur-sm"
+            className="fixed inset-0 z-40 bg-sidebar-bg/30 backdrop-blur-sm"
           />
 
           <motion.div
@@ -66,16 +66,16 @@ export function InvoiceDetailDrawer({ invoiceId, onClose }: DetailDrawerProps) {
             className="fixed right-0 top-0 z-50 flex h-[100dvh] w-full max-w-xl flex-col bg-white shadow-2xl"
           >
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-200/60 px-6 py-4">
+            <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
               <div className="flex items-center gap-2">
-                <Receipt size={20} className="text-brand-600" />
-                <h2 className="font-display text-base font-semibold text-slate-900">
+                <Receipt size={20} className="text-primary-600" />
+                <h2 className="font-display text-base font-semibold text-foreground">
                   发票详情
                 </h2>
               </div>
               <button
                 onClick={onClose}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground/70"
                 aria-label="关闭"
               >
                 <X size={18} />
@@ -87,8 +87,8 @@ export function InvoiceDetailDrawer({ invoiceId, onClose }: DetailDrawerProps) {
                 <div className="space-y-4">
                   {Array.from({ length: 6 }).map((_, i) => (
                     <div key={i} className="flex gap-4">
-                      <div className="h-4 w-20 animate-pulse rounded bg-slate-200" />
-                      <div className="h-4 flex-1 animate-pulse rounded bg-slate-100" />
+                      <div className="h-4 w-20 animate-pulse rounded bg-muted" />
+                      <div className="h-4 flex-1 animate-pulse rounded bg-muted" />
                     </div>
                   ))}
                 </div>
@@ -217,7 +217,7 @@ function DetailContent({
               setEditMode(true);
             }
           }}
-          className="ml-auto flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
+          className="ml-auto flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-foreground/70 transition-colors hover:bg-muted"
         >
           <PencilSimple size={14} />
           {editMode ? "取消" : "编辑"}
@@ -226,7 +226,7 @@ function DetailContent({
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-brand-700 disabled:opacity-50"
+            className="flex items-center gap-1 rounded-lg bg-primary-600 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-primary-700 disabled:opacity-50"
           >
             <Check size={14} />
             {saving ? "保存中..." : "保存"}
@@ -277,14 +277,14 @@ function DetailContent({
 
       {/* Confidence */}
       {(detail.diff_confidence !== null && detail.diff_confidence !== undefined) && !isNonstandard && (
-        <div className="rounded-xl border border-slate-200/60 bg-slate-50 p-4">
+        <div className="rounded-xl border border-border/60 bg-muted p-4">
           <div className="flex items-center justify-between">
-            <span className="text-sm text-slate-600">双源比对置信度</span>
-            <span className="font-display text-lg font-bold text-slate-900">
+            <span className="text-sm text-foreground/70">双源比对置信度</span>
+            <span className="font-display text-lg font-bold text-foreground">
               {(detail.diff_confidence * 100).toFixed(1)}%
             </span>
           </div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
             <motion.div
               initial={{ width: 0 }}
               animate={{ width: `${detail.diff_confidence * 100}%` }}
@@ -301,7 +301,7 @@ function DetailContent({
           {/* Diff conflicts */}
           {detail.diff_conflicts && detail.diff_conflicts.length > 0 && (
             <div className="mt-3 space-y-1.5">
-              <p className="text-xs font-medium text-slate-500">
+              <p className="text-xs font-medium text-muted-foreground">
                 OCR / LLM 比对差异（{detail.diff_conflicts.length} 项）
               </p>
               {detail.diff_conflicts.map((c, i) => (
@@ -312,18 +312,18 @@ function DetailContent({
                       ? "border-emerald-200 bg-emerald-50/50"
                       : c.status === "CONFLICT"
                         ? "border-amber-200 bg-amber-50/50"
-                        : "border-slate-200 bg-white"
+                        : "border-border bg-white"
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-medium text-slate-700">{c.field}</span>
+                    <span className="font-medium text-foreground/80">{c.field}</span>
                     <span
                       className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
                         c.status === "RESOLVED"
                           ? "bg-emerald-100 text-emerald-700"
                           : c.status === "CONFLICT"
                             ? "bg-amber-100 text-amber-700"
-                            : "bg-slate-100 text-slate-600"
+                            : "bg-muted text-foreground/70"
                       }`}
                     >
                       {c.status === "RESOLVED"
@@ -333,11 +333,11 @@ function DetailContent({
                           : c.status}
                     </span>
                   </div>
-                  <div className="mt-1 flex items-center gap-1 text-slate-500">
+                  <div className="mt-1 flex items-center gap-1 text-muted-foreground">
                     <span className="truncate" title={String(c.ocr_value || "")}>
                       OCR: {c.ocr_value || "—"}
                     </span>
-                    <span className="text-slate-300">/</span>
+                    <span className="text-muted-foreground">/</span>
                     <span className="truncate" title={String(c.llm_value || "")}>
                       LLM: {c.llm_value || "—"}
                     </span>
@@ -365,12 +365,12 @@ function DetailContent({
       {isNonstandard && detail.vlm_confidence !== null && detail.vlm_confidence !== undefined && (
         <div className="rounded-xl border border-amber-200/60 bg-amber-50/50 p-4">
           <div className="flex items-center justify-between">
-            <span className="text-sm text-slate-600">VLM 识别置信度</span>
-            <span className="font-display text-lg font-bold text-slate-900">
+            <span className="text-sm text-foreground/70">VLM 识别置信度</span>
+            <span className="font-display text-lg font-bold text-foreground">
               {(detail.vlm_confidence * 100).toFixed(1)}%
             </span>
           </div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
             <div
               className={`h-full rounded-full ${
                 detail.vlm_confidence >= 0.8
@@ -384,7 +384,7 @@ function DetailContent({
           </div>
           {detail.risk_level && (
             <div className="mt-3 flex items-center gap-2">
-              <span className="text-xs text-slate-500">风险等级:</span>
+              <span className="text-xs text-muted-foreground">风险等级:</span>
               <span
                 className={`rounded-md px-2 py-0.5 text-xs font-medium ${
                   detail.risk_level === "high"
@@ -400,14 +400,14 @@ function DetailContent({
           )}
           {detail.receipt_detail && Object.keys(detail.receipt_detail).length > 0 && (
             <div className="mt-3 space-y-1">
-              <p className="text-xs font-medium text-slate-500">VLM 提取详情</p>
+              <p className="text-xs font-medium text-muted-foreground">VLM 提取详情</p>
               <div className="grid grid-cols-2 gap-1.5">
                 {Object.entries(detail.receipt_detail)
                   .filter(([_, v]) => v !== null && v !== undefined && v !== "")
                   .map(([key, val]) => (
                     <div key={key} className="rounded-md bg-white px-2 py-1.5 text-xs">
-                      <dt className="text-slate-400">{key}</dt>
-                      <dd className="mt-0.5 truncate font-medium text-slate-700">{String(val)}</dd>
+                      <dt className="text-muted-foreground">{key}</dt>
+                      <dd className="mt-0.5 truncate font-medium text-foreground/80">{String(val)}</dd>
                     </div>
                   ))}
               </div>
@@ -436,16 +436,16 @@ function DetailContent({
 
       {/* Verify action (non-edit mode, standard invoices only) */}
       {!editMode && !isNonstandard && (
-        <div className="rounded-xl border border-slate-200/60 p-3">
+        <div className="rounded-xl border border-border/60 p-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <ShieldCheck size={16} className="text-slate-400" />
-              <span className="text-sm text-slate-600">发票验真</span>
+              <ShieldCheck size={16} className="text-muted-foreground" />
+              <span className="text-sm text-foreground/70">发票验真</span>
             </div>
             <button
               onClick={handleOnlineVerify}
               disabled={onlineVerifyLoading}
-              className="flex items-center gap-1 rounded-lg bg-brand-600 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-brand-700 disabled:opacity-50"
+              className="flex items-center gap-1 rounded-lg bg-primary-600 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-primary-700 disabled:opacity-50"
             >
               <Globe size={14} />
               {onlineVerifyLoading ? "验真中..." : "在线验真"}
@@ -469,11 +469,11 @@ function DetailContent({
           )}
 
           {/* Divider */}
-          <div className="my-2 border-t border-slate-100" />
+          <div className="my-2 border-t border-border" />
 
           {/* Manual verify buttons */}
           <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-400">手动标记:</span>
+            <span className="text-xs text-muted-foreground">手动标记:</span>
             <button
               onClick={() => handleVerify("VALID")}
               disabled={verifyLoading || detail.verify_status === "VALID"}
@@ -501,7 +501,7 @@ function DetailContent({
 
       {/* OCR Fields */}
       <div>
-        <h3 className="mb-3 font-display text-sm font-semibold text-slate-700">
+        <h3 className="mb-3 font-display text-sm font-semibold text-foreground/80">
           {isNonstandard ? "VLM 提取字段" : "OCR 提取字段"}
         </h3>
         <div className="grid grid-cols-2 gap-x-4 gap-y-3">
@@ -510,19 +510,19 @@ function DetailContent({
               key={field.label}
               className={`rounded-lg p-2.5 ${
                 field.highlight
-                  ? "bg-brand-50 ring-1 ring-brand-200"
-                  : "bg-slate-50"
+                  ? "bg-primary-50 ring-1 ring-primary-200"
+                  : "bg-muted"
               }`}
             >
-              <dt className="text-xs text-slate-400">{field.label}</dt>
+              <dt className="text-xs text-muted-foreground">{field.label}</dt>
               <dd
                 className={`mt-0.5 truncate text-sm font-medium ${
-                  field.highlight ? "text-brand-700" : "text-slate-800"
+                  field.highlight ? "text-primary-700" : "text-foreground"
                 }`}
                 title={field.value || ""}
               >
                 {field.value || (
-                  <span className="text-slate-300">未提取到</span>
+                  <span className="text-muted-foreground">未提取到</span>
                 )}
               </dd>
             </div>
@@ -532,14 +532,14 @@ function DetailContent({
 
       {/* Classification — editable */}
       <div>
-        <h3 className="mb-3 font-display text-sm font-semibold text-slate-700">
+        <h3 className="mb-3 font-display text-sm font-semibold text-foreground/80">
           费用分类 & 状态
         </h3>
         {editMode ? (
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-              <div className="rounded-lg bg-slate-50 p-2.5">
-                <label className="text-xs text-slate-400">费用大类</label>
+              <div className="rounded-lg bg-muted p-2.5">
+                <label className="text-xs text-muted-foreground">费用大类</label>
                 <select
                   value={editForm.fee_category || ""}
                   onChange={(e) =>
@@ -548,15 +548,15 @@ function DetailContent({
                       fee_category: e.target.value as InvoiceUpdate["fee_category"],
                     })
                   }
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 outline-none focus:border-brand-400"
+                  className="mt-1 w-full rounded-lg border border-border bg-white px-2 py-1.5 text-sm text-foreground/80 outline-none focus:border-primary-400"
                 >
                   <option value="">未分类</option>
                   <option value="company">公司</option>
                   <option value="personal">个人</option>
                 </select>
               </div>
-              <div className="rounded-lg bg-slate-50 p-2.5">
-                <label className="text-xs text-slate-400">费用子类</label>
+              <div className="rounded-lg bg-muted p-2.5">
+                <label className="text-xs text-muted-foreground">费用子类</label>
                 <input
                   type="text"
                   value={editForm.fee_subcategory || ""}
@@ -564,11 +564,11 @@ function DetailContent({
                     setEditForm({ ...editForm, fee_subcategory: e.target.value })
                   }
                   placeholder="如: 交通费"
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 outline-none focus:border-brand-400"
+                  className="mt-1 w-full rounded-lg border border-border bg-white px-2 py-1.5 text-sm text-foreground/80 outline-none focus:border-primary-400"
                 />
               </div>
-              <div className="rounded-lg bg-slate-50 p-2.5">
-                <label className="text-xs text-slate-400">发票状态</label>
+              <div className="rounded-lg bg-muted p-2.5">
+                <label className="text-xs text-muted-foreground">发票状态</label>
                 <select
                   value={editForm.status || ""}
                   onChange={(e) =>
@@ -577,7 +577,7 @@ function DetailContent({
                       status: e.target.value as InvoiceUpdate["status"],
                     })
                   }
-                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 outline-none focus:border-brand-400"
+                  className="mt-1 w-full rounded-lg border border-border bg-white px-2 py-1.5 text-sm text-foreground/80 outline-none focus:border-primary-400"
                 >
                   <option value="UPLOADED">已上传</option>
                   <option value="PROCESSING">处理中</option>
@@ -588,8 +588,8 @@ function DetailContent({
                 </select>
               </div>
             </div>
-            <div className="rounded-lg bg-slate-50 p-2.5">
-              <label className="text-xs text-slate-400">备注说明</label>
+            <div className="rounded-lg bg-muted p-2.5">
+              <label className="text-xs text-muted-foreground">备注说明</label>
               <textarea
                 value={editForm.user_description || ""}
                 onChange={(e) =>
@@ -597,15 +597,15 @@ function DetailContent({
                 }
                 rows={2}
                 placeholder="补充说明..."
-                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 outline-none focus:border-brand-400"
+                className="mt-1 w-full rounded-lg border border-border bg-white px-2 py-1.5 text-sm text-foreground/80 outline-none focus:border-primary-400"
               />
             </div>
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-            <div className="rounded-lg bg-slate-50 p-2.5">
-              <dt className="text-xs text-slate-400">费用大类</dt>
-              <dd className="mt-0.5 text-sm font-medium text-slate-800">
+            <div className="rounded-lg bg-muted p-2.5">
+              <dt className="text-xs text-muted-foreground">费用大类</dt>
+              <dd className="mt-0.5 text-sm font-medium text-foreground">
                 {detail.fee_category === "company"
                   ? "公司"
                   : detail.fee_category === "personal"
@@ -613,11 +613,11 @@ function DetailContent({
                     : "未分类"}
               </dd>
             </div>
-            <div className="rounded-lg bg-slate-50 p-2.5">
-              <dt className="text-xs text-slate-400">费用子类</dt>
-              <dd className="mt-0.5 text-sm font-medium text-slate-800">
+            <div className="rounded-lg bg-muted p-2.5">
+              <dt className="text-xs text-muted-foreground">费用子类</dt>
+              <dd className="mt-0.5 text-sm font-medium text-foreground">
                 {detail.fee_subcategory || (
-                  <span className="text-slate-300">未分类</span>
+                  <span className="text-muted-foreground">未分类</span>
                 )}
               </dd>
             </div>
@@ -628,33 +628,33 @@ function DetailContent({
       {/* User description (read mode) */}
       {!editMode && detail.user_description && (
         <div>
-          <h3 className="mb-2 font-display text-sm font-semibold text-slate-700">
+          <h3 className="mb-2 font-display text-sm font-semibold text-foreground/80">
             备注说明
           </h3>
-          <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+          <p className="rounded-lg bg-muted p-3 text-sm text-foreground/70">
             {detail.user_description}
           </p>
         </div>
       )}
 
       {/* Meta */}
-      <div className="border-t border-slate-200/60 pt-4">
+      <div className="border-t border-border/60 pt-4">
         <dl className="space-y-2 text-sm">
           {detail.reimbursement_id && (
             <div className="flex justify-between">
-              <dt className="text-slate-400">所属报销单</dt>
-              <dd className="font-mono text-brand-600">
+              <dt className="text-muted-foreground">所属报销单</dt>
+              <dd className="font-mono text-primary-600">
                 #{detail.reimbursement_id}
               </dd>
             </div>
           )}
           <div className="flex justify-between">
-            <dt className="text-slate-400">发票 ID</dt>
-            <dd className="font-mono text-slate-600">#{detail.id}</dd>
+            <dt className="text-muted-foreground">发票 ID</dt>
+            <dd className="font-mono text-foreground/70">#{detail.id}</dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-slate-400">提交时间</dt>
-            <dd className="text-slate-600">
+            <dt className="text-muted-foreground">提交时间</dt>
+            <dd className="text-foreground/70">
               {detail.created_at
                 ? new Date(detail.created_at).toLocaleString("zh-CN")
                 : "—"}

@@ -272,3 +272,12 @@ class PortalChangePasswordRequest(BaseModel):
     employee_no: str
     old_password: str
     new_password: str
+
+
+# ===== NLU 结果 Schema（Step 1.2.1）=====
+# re-export 自 nlu_schema.py，便于 `from app.schemas import NluResultSchema` 统一导入
+from app.schemas.nlu_schema import (  # noqa: E402
+    NluResultSchema,
+    BatchDescribeItemSchema,
+    BatchDescribeResultSchema,
+)

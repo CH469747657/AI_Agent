@@ -19,8 +19,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Optional
+import os
+from typing import Optional, Callable, Awaitable
 
 from .models import (
     DialogContext, DialogResponse, DialogState,
@@ -49,6 +51,15 @@ class DialogEngine:
         self._store: BaseContextStore = store or MemoryContextStore()
         # Action executor — 延迟初始化（避免循环导入）
         self._action_executor = None
+        # Per-user asyncio locks — 防止同一用户的并发请求竞态修改共享上下文
+        # key: user_id, value: asyncio.Lock
+        self._user_locks: dict[str, asyncio.Lock] = {}
+
+    def _get_user_lock(self, user_id: str) -> asyncio.Lock:
+        """获取或创建用户级锁（线程安全，进程内单例）"""
+        if user_id not in self._user_locks:
+            self._user_locks[user_id] = asyncio.Lock()
+        return self._user_locks[user_id]
 
     def _ensure_action_executor(self):
         """延迟初始化 Action Executor（避免启动时循环导入）"""
@@ -86,6 +97,7 @@ class DialogEngine:
         receipt_type: Optional[str] = None,
         user_description: Optional[str] = None,
         no_receipt_amount: Optional[str] = None,
+        on_progress: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> DialogResponse:
         """处理用户消息 — 对话引擎主入口
 
@@ -98,10 +110,61 @@ class DialogEngine:
             receipt_type: 前端传入的发票类型（弹窗选择）
             user_description: 前端传入的费用用途（弹窗输入）
             no_receipt_amount: 无凭证报销金额（前端"无凭证"弹窗传入）
+            on_progress: 进度回调（用于 SSE 流式响应，None 时无开销）
+                在 LLM NLU 前、Action 执行前各触发一次，
+                回调接收一个进度描述字符串，应快速返回。
 
         Returns:
             DialogResponse 对话响应
         """
+        # 获取用户级锁，防止并发请求竞态修改上下文
+        lock = self._get_user_lock(user_id)
+        async with lock:
+            return await self._process_message_locked(
+                user_id, text, role, has_attachment, attachment_data,
+                receipt_type, user_description, no_receipt_amount, on_progress
+            )
+
+    async def _process_message_locked(
+        self,
+        user_id: str,
+        text: str,
+        role: UserRole,
+        has_attachment: bool,
+        attachment_data: Optional[dict],
+        receipt_type: Optional[str],
+        user_description: Optional[str],
+        no_receipt_amount: Optional[str],
+        on_progress: Optional[Callable[[str], Awaitable[None]]],
+    ) -> DialogResponse:
+        """处理用户消息的实际逻辑（在锁内执行）"""
+        # Step 3.1.5/3.1.7：Agent mode 双轨机制 + 灰度发布
+        # AGENT_MODE_ENABLED=true 时启用 Agent 路径
+        # AGENT_MODE_GRAY_RATIO 控制灰度比例（按 user_id hash 取模）
+        import hashlib as _hashlib
+        agent_enabled = os.getenv("AGENT_MODE_ENABLED", "false").lower() == "true"
+        gray_ratio = float(os.getenv("AGENT_MODE_GRAY_RATIO", "0.0"))
+        # 按用户 ID hash 决定是否进入灰度
+        user_in_gray = False
+        if agent_enabled and gray_ratio > 0:
+            user_hash = int(_hashlib.md5(user_id.encode()).hexdigest(), 16) % 100
+            user_in_gray = (user_hash < gray_ratio * 100)
+
+        if agent_enabled and (gray_ratio == 0 or user_in_gray):
+            try:
+                agent_resp = await self._process_message_agent(
+                    user_id, text, role, receipt_type, user_description,
+                    no_receipt_amount, on_progress, attachment_data,
+                )
+                # legacy_fallback 标记：LLM 主动降级，继续走 legacy 路径
+                if agent_resp and agent_resp.error == "legacy_fallback":
+                    logger.info("Agent mode legacy_fallback, continuing to legacy path")
+                else:
+                    return agent_resp
+            except Exception as e:
+                logger.warning("Agent mode failed, falling back to legacy: %s", e)
+                # 失败时降级到 legacy 路径
+
         context = await self.get_context(user_id, role)
         context.current_text = text  # 供 Insight Engine 解析时间段/实体名
 
@@ -163,6 +226,8 @@ class DialogEngine:
 
         # ===== Step 2: LLM NLU 意图理解（快速正则 + fast-path 未命中时调用）=====
         if not nlu_result.intent_name and not has_attachment:
+            if on_progress:
+                await on_progress("正在理解您的需求…")
             llm_result = await self._try_llm_nlu(text, context)
             if llm_result and llm_result.intent_name:
                 # LLM 角色过滤兜底：LLM 可能返回该角色不可用的意图
@@ -190,42 +255,45 @@ class DialogEngine:
             nlu_result = resolve_context(nlu_result, context, text)
 
         # ===== Step 2: Role Gate 权限校验 =====
+        # 注：Agent 模式（默认开启）下 LLM 看不到非授权 Tool，不会触发此分支
+        # 此分支仅作为 Agent 失败降级到 legacy 时的兜底
         if nlu_result.intent_name:
             perm = self.role_gate.check(nlu_result.intent_name, role)
             if not perm.allowed:
-                # 员工被全局洞察拦截 → 智能降级为自我洞察
-                if role == UserRole.EMPLOYEE and nlu_result.intent_name.startswith("insight_"):
-                    degraded = self._degrade_insight_for_employee(nlu_result.intent_name)
-                    if degraded:
-                        logger.info(
-                            "Insight degraded for employee: user=%s %s→%s",
-                            user_id, nlu_result.intent_name, degraded,
-                        )
-                        nlu_result.intent_name = degraded
-                        nlu_result.confidence *= 0.85  # 降级后略降置信度
-                    else:
-                        logger.warning(
-                            "Permission denied: user=%s role=%s intent=%s reason=%s",
-                            user_id, role, nlu_result.intent_name, perm.reason,
-                        )
-                        return DialogResponse(
-                            text=f"您没有权限执行此操作：{perm.reason}",
-                            state=context.state,
-                            error="permission_denied",
-                        )
-                else:
-                    logger.warning(
-                        "Permission denied: user=%s role=%s intent=%s reason=%s",
-                        user_id, role, nlu_result.intent_name, perm.reason,
-                    )
+                logger.warning(
+                    "Permission denied: user=%s role=%s intent=%s reason=%s",
+                    user_id, role, nlu_result.intent_name, perm.reason,
+                )
+                # 员工越权查询统一回复"没有权限，只能看本人的信息。"
+                if role == UserRole.EMPLOYEE:
                     return DialogResponse(
-                        text=f"您没有权限执行此操作：{perm.reason}",
+                        text="没有权限，只能看本人的信息。",
                         state=context.state,
                         error="permission_denied",
                     )
+                return DialogResponse(
+                    text=f"您没有权限执行此操作：{perm.reason}",
+                    state=context.state,
+                    error="permission_denied",
+                )
 
         # ===== Step 3: Dialog FSM 状态机处理 =====
         response = self.fsm.process(nlu_result, context, text, has_attachment)
+
+        # ===== Step 3.6: 低置信度澄清追问（Step 1.2.7）=====
+        # 若 LLM NLU 返回了候选意图但置信度低于阈值（FSM 走 _handle_unrecognized），
+        # 用候选意图构造"您是想问 X 还是 Y？"式澄清，替代通用兜底。
+        if (
+            not response.intent_name
+            and not has_attachment
+            and nlu_result.candidates
+            and response.need_user_input  # FSM 已判定为未识别
+        ):
+            clarify_response = self._build_clarify_response(
+                nlu_result.candidates, text, context
+            )
+            if clarify_response:
+                response = clarify_response
 
         # ===== Step 3.5: 重新注入前端传入的发票类型 =====
         # FSM 的 set_intent 会清空所有槽位，Step 0 填入的 receipt_type 被清除
@@ -237,6 +305,8 @@ class DialogEngine:
         # common_cancel / common_help / common_greeting 由 FSM 或 SpecialIntents 处理，不需要 Action Executor
         _skip_exec = {"common_cancel", "common_help", "common_greeting"}
         if response.intent_name and not response.need_user_input and response.intent_name not in _skip_exec:
+            if on_progress:
+                await on_progress("正在查询数据…")
             response = await self._try_execute(response, context, attachment_data)
 
         # ===== Step 5: 特殊意图处理 =====
@@ -342,32 +412,6 @@ class DialogEngine:
 
         return response
 
-    # 全局洞察 → 员工自我洞察的降级映射
-    # 原则：有语义一致的自我洞察→降级；无对应意图→礼貌拒绝（None）
-    _INSIGHT_DEGRADE_MAP = {
-        "insight_total": "self_insight_total",               # ✅ 公司报销总额→本人报销总额
-        "insight_by_category": "self_insight_category",     # ✅ 公司分类分布→本人分类分布
-        "insight_category_amount": "self_insight_category_amount",  # ✅
-        "insight_trend": "self_insight_trend",               # ✅
-        "insight_compare": "self_insight_compare",           # ✅
-        "insight_invoice_total": "self_insight_invoice_total",  # ✅ 公司发票统计→本人发票统计
-        # 无对应自我洞察的意图→礼貌拒绝而非乱降级
-        "insight_anomaly": None,          # 员工无权查全公司异常
-        "insight_top": None,             # 员工无权查排行榜
-        "insight_person": None,          # 员工无权查他人费用
-        "insight_project": None,         # 员工无权查项目费用
-        "insight_by_dept": None,         # 员工无权查部门统计
-        "insight_invoice_filter": "self_insight_invoice_filter",  # ✅ 全公司发票筛选→本人发票筛选
-    }
-
-    def _degrade_insight_for_employee(self, intent_name: str) -> str | None:
-        """员工被全局洞察拦截后，降级为对应的自我洞察
-
-        例如：员工问"项目投标的报销"被匹配为 insight_project → 降级为 self_insight_total
-        这样员工看到的是自己的报销总额，而不是"权限不足"
-        """
-        return self._INSIGHT_DEGRADE_MAP.get(intent_name)
-
     async def _try_llm_nlu(
         self,
         text: str,
@@ -382,6 +426,183 @@ class DialogEngine:
         except Exception as e:
             logger.warning("LLM NLU error: %s", e)
             return None
+
+    # ============================================================
+    # Step 3.1.5：Agent mode 处理路径
+    # ============================================================
+
+    async def _process_message_agent(
+        self,
+        user_id: str,
+        text: str,
+        role: UserRole,
+        receipt_type: Optional[str],
+        user_description: Optional[str],
+        no_receipt_amount: Optional[str],
+        on_progress,
+        attachment_data: Optional[dict] = None,
+    ) -> DialogResponse:
+        """Agent mode 处理路径 — 走 Function-Calling Agent loop
+
+        与 legacy 路径的差异：
+        - 不走 NluRouter / DialogFSM / ActionExecutor 三段式
+        - 直接调用 AgentCore.run，让 LLM 通过 tool_calling 决策
+        - RoleGate 通过 Tool 可见性过滤实现权限控制
+        - DialogFSM 仅用于 WAITING 状态超时管理（本方法不触发 FSM）
+        """
+        from .agent_core import get_agent_core
+        from .tools import register_all_tools
+        from .role_gate import RoleGate
+
+        # 确保 Tool 已注册（幂等）
+        register_all_tools()
+
+        context = await self.get_context(user_id, role)
+        context.current_text = text
+        # 注入附件数据（仅 _handle_upload_invoice 通过 ctx.attachment_data 读取）
+        context.attachment_data = attachment_data
+
+        # 注入前端传入的槽位
+        if receipt_type:
+            context.fill_slot("receipt_type", receipt_type)
+        if user_description:
+            context.user_description = user_description
+
+        # 无凭证报销快捷通道（与 legacy 路径一致的快速路径）
+        if no_receipt_amount and not text:
+            text = f"无凭证报销 {no_receipt_amount} 元，原因：{user_description or ''}"
+
+        # 构造 user message（含历史摘要）
+        history_summary = context.get_history_summary(max_turns=3, max_tokens=500)
+        # 附件提示：让 LLM 知道用户上传了图片/文件，应调 emp_upload_invoice
+        attachment_hint = ""
+        if attachment_data:
+            file_type = attachment_data.get("file_type", "图片")
+            attachment_hint = f"\n【附件】用户上传了一张{file_type}发票，请调用 emp_upload_invoice 工具处理。"
+        if history_summary:
+            user_msg = f"用户角色: {role.value}\n{history_summary}\n用户输入: {text}{attachment_hint}"
+        else:
+            user_msg = f"用户角色: {role.value}\n用户输入: {text}{attachment_hint}"
+
+        # 获取角色可见的 Tool 列表
+        gate = RoleGate()
+        visible_tools = gate.get_visible_tools(role)
+
+        if not visible_tools:
+            return DialogResponse(
+                text="当前角色无可用工具，无法处理您的请求。",
+                state=context.state,
+                error="no_tools",
+            )
+
+        # 调用 AgentCore
+        core = get_agent_core()
+        agent_resp = await core.run(
+            user_msg=user_msg,
+            context=context,
+            visible_tools=visible_tools,
+            on_progress=on_progress,
+        )
+
+        # legacy_fallback 降级：LLM 主动调用 legacy_fallback meta-tool
+        # 返回特殊标记，让 _process_message_locked 继续走 legacy 路径
+        if agent_resp.error == "legacy_fallback":
+            logger.info(
+                "Agent mode legacy_fallback: user=%s, delegating to legacy path",
+                user_id,
+            )
+            return DialogResponse(
+                text="",
+                state=context.state,
+                error="legacy_fallback",
+            )
+
+        # 转换为 DialogResponse
+        response = DialogResponse(
+            text=agent_resp.text or "(无响应)",
+            state=context.state,
+            intent_name=agent_resp.tool_calls[0]["name"] if agent_resp.tool_calls else None,
+            action_taken=bool(agent_resp.tool_calls),
+            need_user_input=False,
+            error=agent_resp.error,
+        )
+
+        # 记录对话历史（仅查询类）
+        if response.intent_name and is_query_intent(response.intent_name):
+            context.add_history(
+                intent=response.intent_name,
+                slots={},
+                text=text,
+            )
+
+        # 持久化上下文
+        await self._store.set(context)
+
+        logger.info(
+            "Agent mode processed: user=%s steps=%d tool_calls=%s",
+            user_id, agent_resp.steps_taken,
+            [tc["name"] for tc in agent_resp.tool_calls],
+        )
+
+        return response
+
+    def _build_clarify_response(
+        self,
+        candidates: list[tuple[str, float]],
+        user_text: str,
+        context: DialogContext,
+    ) -> Optional[DialogResponse]:
+        """Step 1.2.7：根据 LLM 候选意图构造澄清追问
+
+        策略：
+        - 取候选中置信度最高的意图作为"猜测"
+        - 用意图 description 作为澄清选项文案
+        - 若候选意图名无法在 registry 找到（LLM 幻觉），返回 None 走原兜底
+        """
+        if not candidates:
+            return None
+
+        # 按置信度排序，取最高
+        sorted_cands = sorted(candidates, key=lambda x: x[1], reverse=True)
+        top_intent_name, top_conf = sorted_cands[0]
+
+        top_intent = get_intent(top_intent_name)
+        if not top_intent:
+            # LLM 返回的意图名不在 registry，无法构造有意义的澄清
+            return None
+
+        # 构造澄清选项：最高置信意图 + 1-2 个相关意图
+        clarify_options: list[str] = [top_intent.description or top_intent.name]
+        for cand_name, _ in sorted_cands[1:3]:  # 最多再取 2 个
+            cand_intent = get_intent(cand_name)
+            if cand_intent and cand_name != top_intent_name:
+                clarify_options.append(cand_intent.description or cand_intent.name)
+
+        # 去重
+        seen = set()
+        unique_options: list[str] = []
+        for opt in clarify_options:
+            if opt not in seen:
+                seen.add(opt)
+                unique_options.append(opt)
+
+        text = (
+            f"我不太确定您想问的是不是「{top_intent.description}」。\n"
+            f"请选择或直接补充说明："
+        )
+
+        logger.info(
+            "Clarify triggered: user=%s text=%r top=%s conf=%.2f options=%s",
+            context.user_id, user_text[:30], top_intent_name, top_conf, unique_options,
+        )
+
+        return DialogResponse(
+            text=text,
+            state=DialogState.IDLE,
+            intent_name=None,  # 未触发实际意图
+            need_user_input=True,
+            quick_replies=unique_options[:4],  # 最多 4 个快捷回复
+        )
 
     def _handle_special_intents(
         self,

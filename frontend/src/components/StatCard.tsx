@@ -22,21 +22,21 @@ export function StatCard({
 }: StatCardProps) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ type: "spring", stiffness: 120, damping: 20, delay }}
-      className="rounded-2xl border border-slate-200/60 bg-white p-5"
+      className="rounded-xl border border-border bg-background p-4"
     >
       <div className="flex items-center justify-between">
         <div
-          className={`flex h-10 w-10 items-center justify-center rounded-xl ${iconBg}`}
+          className={`flex h-9 w-9 items-center justify-center rounded-lg ${iconBg}`}
         >
           {icon}
         </div>
       </div>
-      <div className="mt-4">
+      <div className="mt-3">
         <CountUp value={value} prefix={prefix} suffix={suffix} />
-        <p className="mt-1 text-sm text-slate-500">{label}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{label}</p>
       </div>
     </motion.div>
   );
@@ -75,7 +75,7 @@ function CountUp({
   return (
     <span
       ref={ref}
-      className="font-display text-2xl font-bold tracking-tight text-slate-900"
+      className="font-display font-mono text-xl font-bold tracking-tight text-foreground"
     >
       {prefix}
       {isFloat

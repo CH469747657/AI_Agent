@@ -6,9 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.project import Project, ProjectStatus
+from app.routers.admin_auth import get_current_admin
 from app.schemas import ProjectCreateRequest, ProjectResponse
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_admin)])
 
 
 @router.post("", response_model=ProjectResponse)

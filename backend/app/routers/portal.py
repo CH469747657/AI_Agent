@@ -6,10 +6,12 @@
 
 import logging
 import os
+import json
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, Form
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from app.database import get_db
 from app.models.invoice import Invoice, InvoiceStatus
@@ -33,7 +35,7 @@ router = APIRouter()
 @router.post("/invoices/upload", response_model=InvoiceResponse)
 async def portal_upload_invoice(
     file: UploadFile = File(...),
-    receipt_type: str = Form("增值税普通发票"),
+    receipt_type: str = Form(""),  # 留空 → LLM Vision 自动识别
     user_description: str = Form("", min_length=0),
     employee: Employee = Depends(get_current_employee_async),
     db: AsyncSession = Depends(get_db),
@@ -42,6 +44,10 @@ async def portal_upload_invoice(
 
     - 不接受客户端传入 user_id，服务端从 JWT token 获取 employee_no
     - 调用与管理端相同的 InvoiceService.process_upload 处理链路
+
+    无感上传模式：
+    - receipt_type 留空时，由 LLM Vision 自动判断票据类型
+    - user_description 留空时，识别完成后由前端引导用户补充用途
     """
     file_data = await file.read()
     file_ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename else "jpg"
@@ -58,7 +64,7 @@ async def portal_upload_invoice(
     invoice = await service.process_upload(
         file_data=file_data,
         file_type=file_ext,
-        receipt_type=receipt_type,
+        receipt_type=receipt_type or "",
         user_id=employee.employee_no,
         user_description=user_description,
     )
@@ -70,10 +76,13 @@ async def list_my_invoices(
     employee: Employee = Depends(get_current_employee_async),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取我的发票列表（字段过滤，不泄漏 file_path 等内部字段）"""
+    """获取我的发票列表（仅展示识别完成的发票，排除 processing 脏数据）"""
     result = await db.execute(
         select(Invoice)
-        .where(Invoice.user_id == employee.employee_no)
+        .where(
+            Invoice.user_id == employee.employee_no,
+            Invoice.status != InvoiceStatus.processing,
+        )
         .order_by(Invoice.created_at.desc())
     )
     invoices = list(result.scalars().all())
@@ -498,25 +507,51 @@ async def get_my_dashboard(
     employee: Employee = Depends(get_current_employee_async),
     db: AsyncSession = Depends(get_db),
 ):
-    """员工端首页统计数据"""
-    # 我的发票统计
+    """员工端首页统计数据
+
+    发票统计按当前报销周期（上月21日至本月20日）过滤。
+    报销单统计已移除（员工端首页不再展示）。
+    """
+    from datetime import datetime, time, timezone
+    from app.services.cycle_engine import current_cycle_key, billing_cycle
+
+    # 当前报销周期：上月21日 ~ 本月20日
+    today = datetime.utcnow().date()
+    ck = current_cycle_key(today)
+    cycle_start, cycle_end = billing_cycle(ck)
+    # 转为带时区的 datetime 边界（UTC），与 Invoice.created_at (timestamptz) 对齐
+    start_dt = datetime.combine(cycle_start, time.min, tzinfo=timezone.utc)
+    end_dt = datetime.combine(cycle_end, time.max, tzinfo=timezone.utc)
+
+    # 本周期发票统计（排除 processing 脏数据）
     inv_result = await db.execute(
-        select(Invoice).where(Invoice.user_id == employee.employee_no)
+        select(Invoice).where(
+            Invoice.user_id == employee.employee_no,
+            Invoice.status != InvoiceStatus.processing,
+            Invoice.created_at >= start_dt,
+            Invoice.created_at <= end_dt,
+        )
     )
     invoices = list(inv_result.scalars().all())
 
-    # 我的报销单统计
-    reimb_result = await db.execute(
-        select(Reimbursement).where(Reimbursement.applicant_id == employee.employee_no)
-    )
-    reimbursements = list(reimb_result.scalars().all())
+    # 金额求和（容错：total_with_tax 可能是 "200元" 等带非数字字符的脏数据）
+    import re
+    def _safe_amount(val) -> float:
+        if not val:
+            return 0.0
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            # 提取首个数字部分
+            m = re.search(r"\d+(?:\.\d+)?", str(val))
+            return float(m.group()) if m else 0.0
 
     return {
         "invoice_count": len(invoices),
-        "invoice_total": sum(float(i.total_with_tax) for i in invoices if i.total_with_tax),
-        "reimbursement_count": len(reimbursements),
-        "draft_count": sum(1 for r in reimbursements if r.status == ReimbursementStatus.draft),
-        "submitted_count": sum(1 for r in reimbursements if r.status == ReimbursementStatus.submitted),
+        "invoice_total": sum(_safe_amount(i.total_with_tax) for i in invoices),
+        "cycle_key": ck,
+        "cycle_start": cycle_start.isoformat(),
+        "cycle_end": cycle_end.isoformat(),
         "recent_invoices": [
             {
                 "id": i.id,
@@ -527,15 +562,6 @@ async def get_my_dashboard(
                 "created_at": i.created_at.isoformat() if i.created_at else None,
             }
             for i in invoices[:5]
-        ],
-        "recent_reimbursements": [
-            {
-                "id": r.id,
-                "total_amount": r.total_amount,
-                "status": r.status.value,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-            }
-            for r in reimbursements[:5]
         ],
     }
 
@@ -586,6 +612,82 @@ async def portal_send_message(
         quick_replies=response.quick_replies,
         error=response.error,
         data=action_data,
+    )
+
+
+@router.post("/dialog/message/stream")
+async def portal_stream_message(
+    req: DialogRequest,
+    employee: Employee = Depends(get_current_employee_async),
+):
+    """员工端流式对话入口（JWT 鉴权，SSE）
+
+    与管理端 /api/dialog/message/stream 的区别：
+    - user_id 强制为 employee.employee_no（客户端传入的被忽略）
+    - role 强制为 employee
+    - 须携带有效 JWT
+
+    事件流格式（每行 `data: <json>\\n\\n`）：
+    1. {"phase": "progress", "text": "正在理解您的需求…"}  — LLM NLU 前 / Action 执行前
+    2. {"phase": "done", "response": <DialogAPIResponse>}  — 最终响应
+    3. {"phase": "error", "message": "..."}                  — 异常
+    """
+    engine = get_dialog_engine()
+
+    attachment_data = {"base64": req.attachment_base64} if req.attachment_base64 else None
+    if attachment_data and req.attachment_file_type:
+        attachment_data["file_type"] = req.attachment_file_type
+
+    progress_queue: list[dict] = []
+
+    async def on_progress(text: str) -> None:
+        progress_queue.append({"text": text})
+
+    async def event_gen():
+        try:
+            response = await engine.process_message(
+                user_id=employee.employee_no,   # 强制覆盖
+                text=req.text,
+                role=UserRole.EMPLOYEE,         # 强制覆盖
+                has_attachment=req.has_attachment,
+                attachment_data=attachment_data,
+                receipt_type=req.receipt_type,
+                user_description=req.user_description,
+                no_receipt_amount=req.no_receipt_amount,
+                on_progress=on_progress,
+            )
+            for ev in progress_queue:
+                yield f"data: {json.dumps({'phase': 'progress', 'text': ev['text']}, ensure_ascii=False)}\n\n"
+
+            action_data: Optional[dict] = None
+            if isinstance(response.action_result, dict):
+                d = response.action_result.get("data")
+                if d:
+                    action_data = d
+
+            final = DialogAPIResponse(
+                text=response.text,
+                state=response.state.value,
+                intent=response.intent_name,
+                action_taken=response.action_taken,
+                need_user_input=response.need_user_input,
+                quick_replies=response.quick_replies,
+                error=response.error,
+                data=action_data,
+            )
+            yield f"data: {json.dumps({'phase': 'done', 'response': final.model_dump()}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.exception("Portal SSE stream error: %s", e)
+            yield f"data: {json.dumps({'phase': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

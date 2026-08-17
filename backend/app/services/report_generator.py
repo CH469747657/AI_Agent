@@ -381,15 +381,12 @@ class ReportGenerator:
         invoice_contexts = []
         for idx, inv in enumerate(invoices, 1):
             ctx = self._invoice_to_pdf_context(inv, idx)
-            if ctx["is_pdf"]:
-                png_path = self._pdf_page_to_image(inv.file_path)
-                if png_path:
-                    ctx["embed_image_path"] = png_path
-                    ctx["is_image"] = True
-                    ctx["is_pdf"] = False
-                    tmp_files.append(png_path)
-                else:
-                    ctx["placeholder"] = "PDF 转换失败，请下载 ZIP 包查看原文件"
+            # 所有转出的临时图片都加入 tmp_files 等待清理（OFD/PDF 转换产物）
+            if ctx.get("embed_image_path"):
+                ext = os.path.splitext(ctx["embed_image_path"])[1].lower()
+                # 仅清理临时目录下的转换产物，原始 jpg/png 不动
+                if ctx["embed_image_path"].startswith(os.path.join(settings.report_dir, ".tmp")):
+                    tmp_files.append(ctx["embed_image_path"])
             invoice_contexts.append(ctx)
 
         expense_total = float(reimbursement.expense_total or 0)
@@ -501,9 +498,25 @@ body { font-family: "Noto Sans CJK SC", "SimHei", sans-serif; font-size: 11pt; }
             return ctx
 
         ext = os.path.splitext(file_path)[1].lower()
+
+        if ext == ".ofd":
+            # OFD → 内嵌图片（数电票 OFD 通常含版式图）
+            png_path = self._ofd_to_image(file_path)
+            if png_path:
+                ctx["is_image"] = True
+                ctx["embed_image_path"] = png_path
+                return ctx
+            ctx["placeholder"] = "OFD 内嵌图片提取失败，请下载 ZIP 包查看原文件"
+            return ctx
+
         if ext == ".pdf":
-            ctx["is_pdf"] = True
-            ctx["placeholder"] = "原始文件为 PDF，请下载 ZIP 包查看"
+            # PDF → pdf2image (poppler) 转首页
+            png_path = self._pdf_page_to_image(file_path)
+            if png_path:
+                ctx["is_image"] = True
+                ctx["embed_image_path"] = png_path
+                return ctx
+            ctx["placeholder"] = "PDF 转图片失败，请下载 ZIP 包查看原文件"
             return ctx
 
         if ext in (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"):
@@ -529,20 +542,92 @@ body { font-family: "Noto Sans CJK SC", "SimHei", sans-serif; font-size: 11pt; }
             return False
 
     def _pdf_page_to_image(self, file_path: str | None) -> str | None:
+        """PDF 首页 → PNG 文件路径
+
+        优先用 pdf2image（依赖 poppler）；失败时回落到 pdftoppm 命令行
+        """
+        if not file_path or not os.path.exists(file_path):
+            return None
+        tmp_dir = os.path.join(settings.report_dir, ".tmp")
+        os.makedirs(tmp_dir, exist_ok=True)
+        out_path = os.path.join(tmp_dir, f"invoice_pdf_{os.path.basename(file_path)}.png")
+
+        # 1. 优先 pdf2image（封装 poppler）
+        try:
+            from pdf2image import convert_from_path
+            pages = convert_from_path(file_path, first_page=1, last_page=1, dpi=150)
+            if pages:
+                pages[0].save(out_path, "PNG")
+                return out_path
+        except Exception as e:
+            logger.warning(f"pdf2image failed for {file_path}: {e}, trying pdftoppm fallback")
+
+        # 2. 回落到 pdftoppm 命令行
+        try:
+            import subprocess
+            import shutil as _sh
+            pdftoppm = _sh.which("pdftoppm")
+            if not pdftoppm:
+                logger.warning("pdftoppm not found in PATH")
+                return None
+            # pdftoppm -png -r 150 -f 1 -l 1 input.pdf prefix
+            prefix = out_path.rsplit(".", 1)[0]  # 去掉 .png
+            subprocess.run(
+                [pdftoppm, "-png", "-r", "150", "-f", "1", "-l", "1",
+                 file_path, prefix],
+                timeout=30,
+                capture_output=True,
+                check=False,
+            )
+            # pdftoppm 输出 prefix-1.png
+            actual = f"{prefix}-1.png"
+            if os.path.exists(actual):
+                os.rename(actual, out_path)
+                return out_path
+            # 兜底查找 prefix-*.png
+            import glob
+            candidates = sorted(glob.glob(f"{prefix}*.png"))
+            if candidates:
+                if candidates[0] != out_path:
+                    os.rename(candidates[0], out_path)
+                return out_path
+        except Exception as e:
+            logger.warning(f"pdftoppm fallback failed for {file_path}: {e}")
+
+        return None
+
+    def _ofd_to_image(self, file_path: str | None) -> str | None:
+        """OFD → PNG 文件路径
+
+        调用 ofd_service（ofd2img.jar + pdftoppm）渲染 OFD 为 PNG。
+        jar 不可用时返回 None，由调用方决定降级处理。
+        """
         if not file_path or not os.path.exists(file_path):
             return None
         try:
-            from pdf2image import convert_from_path
+            from app.services.ofd_service import get_ofd_converter
+            converter = get_ofd_converter()
+            if not converter.is_available():
+                logger.error(f"OFD 转换器不可用（jar/java/pdftoppm 缺失），无法渲染 {file_path}")
+                return None
+
+            with open(file_path, "rb") as f:
+                file_data = f.read()
+            png_bytes = converter.convert_to_png(file_data)
+            if not png_bytes or len(png_bytes) < 1000:
+                logger.error(f"OFD 转换失败: {file_path}")
+                return None
+
             tmp_dir = os.path.join(settings.report_dir, ".tmp")
             os.makedirs(tmp_dir, exist_ok=True)
-            pages = convert_from_path(file_path, first_page=1, last_page=1, dpi=150)
-            if not pages:
-                return None
-            out_path = os.path.join(tmp_dir, f"invoice_pdf_{os.path.basename(file_path)}.png")
-            pages[0].save(out_path, "PNG")
+            base = os.path.splitext(os.path.basename(file_path))[0]
+            out_path = os.path.join(tmp_dir, f"invoice_ofd_{base}.png")
+            with open(out_path, "wb") as f:
+                f.write(png_bytes)
+            logger.info(f"OFD via ofdrw jar: {file_path} → {len(png_bytes)} bytes")
             return out_path
         except Exception as e:
-            logger.warning(f"PDF to image conversion failed for {file_path}: {e}")
+            logger.error(f"OFD to image failed for {file_path}: {e}")
             return None
 
     # ===== ZIP：完整报销包 =====

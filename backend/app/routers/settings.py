@@ -12,10 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings, LLM_PROVIDERS
 from app.database import get_db
 from app.models.settings import SystemSettings
+from app.routers.admin_auth import get_current_admin
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_admin)])
 
 
 # ── 请求/响应模型 ──────────────────────────────────────────
@@ -224,3 +225,106 @@ async def get_llm_providers():
         )
         for key, info in LLM_PROVIDERS.items()
     }
+
+
+# ── 发票验真 API 配置 ───────────────────────────────────────
+
+class VerifySettingsRead(BaseModel):
+    verify_provider: str
+    verify_api_key: str  # 掩码后返回
+    verify_secret_key: str  # 掩码后返回
+    aliyun_verify_appcode: str  # 掩码后返回
+    aliyun_verify_appsecret: str  # 掩码后返回
+
+
+class VerifySettingsUpdate(BaseModel):
+    verify_provider: str | None = None
+    verify_api_key: str | None = None
+    verify_secret_key: str | None = None
+    aliyun_verify_appcode: str | None = None
+    aliyun_verify_appsecret: str | None = None
+
+
+def _apply_verify_settings_to_config(row: SystemSettings) -> None:
+    """将数据库验真配置覆写到运行时 settings 单例"""
+    if row.verify_provider and row.verify_provider != settings.verify_provider:
+        settings.verify_provider = row.verify_provider
+    if row.verify_api_key and row.verify_api_key != settings.verify_api_key:
+        settings.verify_api_key = row.verify_api_key
+    if row.verify_secret_key and row.verify_secret_key != settings.verify_secret_key:
+        settings.verify_secret_key = row.verify_secret_key
+    if row.aliyun_verify_appcode and row.aliyun_verify_appcode != settings.aliyun_verify_appcode:
+        settings.aliyun_verify_appcode = row.aliyun_verify_appcode
+    if row.aliyun_verify_appsecret and row.aliyun_verify_appsecret != settings.aliyun_verify_appsecret:
+        settings.aliyun_verify_appsecret = row.aliyun_verify_appsecret
+
+
+@router.get("/verify", response_model=VerifySettingsRead)
+async def get_verify_settings(db: AsyncSession = Depends(get_db)):
+    """读取当前验真 API 配置（敏感字段掩码后返回）"""
+    row = (await db.execute(select(SystemSettings).where(SystemSettings.id == 1))).scalar_one_or_none()
+
+    if row:
+        return VerifySettingsRead(
+            verify_provider=row.verify_provider,
+            verify_api_key=_mask_api_key(row.verify_api_key),
+            verify_secret_key=_mask_api_key(row.verify_secret_key),
+            aliyun_verify_appcode=_mask_api_key(row.aliyun_verify_appcode),
+            aliyun_verify_appsecret=_mask_api_key(row.aliyun_verify_appsecret),
+        )
+    else:
+        # 数据库无记录 → 返回 .env 默认值
+        return VerifySettingsRead(
+            verify_provider=settings.verify_provider,
+            verify_api_key=_mask_api_key(settings.verify_api_key),
+            verify_secret_key=_mask_api_key(settings.verify_secret_key),
+            aliyun_verify_appcode=_mask_api_key(settings.aliyun_verify_appcode),
+            aliyun_verify_appsecret=_mask_api_key(settings.aliyun_verify_appsecret),
+        )
+
+
+@router.put("/verify", response_model=VerifySettingsRead)
+async def update_verify_settings(
+    data: VerifySettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """保存验真 API 配置到数据库，并热更新到运行时"""
+    row = (await db.execute(select(SystemSettings).where(SystemSettings.id == 1))).scalar_one_or_none()
+
+    if row is None:
+        # 数据库无记录 → 创建行（保留 .env 默认值给未传字段）
+        row = SystemSettings(
+            id=1,
+            verify_provider=data.verify_provider or settings.verify_provider,
+            verify_api_key=data.verify_api_key or settings.verify_api_key,
+            verify_secret_key=data.verify_secret_key or settings.verify_secret_key,
+            aliyun_verify_appcode=data.aliyun_verify_appcode or settings.aliyun_verify_appcode,
+            aliyun_verify_appsecret=data.aliyun_verify_appsecret or settings.aliyun_verify_appsecret,
+        )
+        db.add(row)
+    else:
+        # 只更新非 None 字段
+        if data.verify_provider is not None:
+            row.verify_provider = data.verify_provider
+        if data.verify_api_key is not None:
+            row.verify_api_key = data.verify_api_key
+        if data.verify_secret_key is not None:
+            row.verify_secret_key = data.verify_secret_key
+        if data.aliyun_verify_appcode is not None:
+            row.aliyun_verify_appcode = data.aliyun_verify_appcode
+        if data.aliyun_verify_appsecret is not None:
+            row.aliyun_verify_appsecret = data.aliyun_verify_appsecret
+
+    await db.commit()
+    await db.refresh(row)
+
+    # 热更新运行时配置
+    _apply_verify_settings_to_config(row)
+
+    return VerifySettingsRead(
+        verify_provider=row.verify_provider,
+        verify_api_key=_mask_api_key(row.verify_api_key),
+        verify_secret_key=_mask_api_key(row.verify_secret_key),
+        aliyun_verify_appcode=_mask_api_key(row.aliyun_verify_appcode),
+        aliyun_verify_appsecret=_mask_api_key(row.aliyun_verify_appsecret),
+    )

@@ -30,28 +30,36 @@ class FieldExtractor:
 
     def extract_fields(self, raw_text: str, ocr_lines: list = None) -> dict:
         """提取12个结构化字段"""
+        # 先提取 buyer_name/tax_id，再提取 seller_name/tax_id（需排除 buyer 防止误识别）
+        buyer_name = self._extract_buyer_name(raw_text)
+        buyer_tax_id = self._extract_tax_id(raw_text, is_buyer=True)
+        seller_name = self._extract_seller_name(raw_text, buyer_name=buyer_name)
+        seller_tax_id = self._extract_tax_id(raw_text, is_buyer=False, exclude_id=buyer_tax_id)
+
         amount = self._extract_amount(raw_text, r"金额[:：\s]*(\d+\.?\d*)")
         tax_amount = self._extract_amount(raw_text, r"税额[:：\s]*(\d+\.?\d*)")
-        total = self._extract_amount(raw_text, r"(?:价税合计|小写)[））：:¥￥\s]*(\d+\.?\d*)")
+        total = self._extract_amount(raw_text, r"价税合计[^a-zA-Z\d]*?[¥￥Y]?\s*(\d+\.?\d*)")
 
         # 兜底：表格列头与数值分行时，用 ￥/¥/Y 前缀匹配
         if amount is None or tax_amount is None or total is None:
-            yen_amounts = re.findall(r"[¥￥Y](\d+\.?\d*)", raw_text)
+            yen_amounts = re.findall(r"[¥￥Y]\s*(\d+\.?\d*)", raw_text)
             # 通常前两个是金额和税额，最后一个是价税合计
             if amount is None and len(yen_amounts) >= 1:
                 amount = yen_amounts[0]
             if tax_amount is None and len(yen_amounts) >= 2:
                 tax_amount = yen_amounts[1]
+            if total is None and len(yen_amounts) >= 3:
+                total = yen_amounts[-1]
 
         return {
             "invoice_number": self._extract_invoice_number(raw_text),
             "invoice_code": self._extract_invoice_code(raw_text),
             "check_code": self._extract_check_code(raw_text),
             "issue_date": self._extract_date(raw_text),
-            "buyer_name": self._extract_buyer_name(raw_text),
-            "buyer_tax_id": self._extract_tax_id(raw_text, is_buyer=True),
-            "seller_name": self._extract_seller_name(raw_text),
-            "seller_tax_id": self._extract_tax_id(raw_text, is_buyer=False),
+            "buyer_name": buyer_name,
+            "buyer_tax_id": buyer_tax_id,
+            "seller_name": seller_name,
+            "seller_tax_id": seller_tax_id,
             "item_name": self._extract_item_name(raw_text),
             "total_with_tax": total,
             "amount": amount,
@@ -102,12 +110,15 @@ class FieldExtractor:
             return name if name else None
         return None
 
-    def _extract_seller_name(self, text: str) -> str | None:
+    def _extract_seller_name(self, text: str, buyer_name: str = None) -> str | None:
         """提取销售方名称
 
         改进: 增值税发票中"销售方"出现在文本后半部分，
         其"名称:"标签后的公司名才是销售方。
         使用非贪婪匹配，并排除括号内的提示文字。
+
+        参数 buyer_name: 已提取的购买方名称，策略2 兜底匹配时显式排除，
+        避免把 buyer 当 seller（数电票无"销售方"标签时常见误识别）。
         """
         # 策略1: 匹配"销售方"后的"名称:"标签
         m = re.search(r"销售方.*?名称[:：\s]*([^\n]+)", text, re.DOTALL)
@@ -118,31 +129,44 @@ class FieldExtractor:
             name = re.sub(r"（.*?）", "", name)
             # 过滤: 如果拿到的是"名称:"说明没匹配到实际公司名
             if name and not name.startswith("名称") and len(name) >= 4:
-                return name
+                # 与 buyer 一致则丢弃，继续策略2
+                if not buyer_name or name != buyer_name:
+                    return name
 
-        # 策略2: 如果上面失败, 尝试匹配所有"名称:"标签, 取最后一个（销售方通常在最后）
+        # 策略2: 兜底匹配所有"名称:"标签，排除 buyer_name 后取最后一个
+        # 过滤掉表格列头误识别（OCR 把"名称"标签行误识别为表格列名）
+        _TABLE_HEADER_KEYWORDS = ("规格", "型号", "单位", "数量", "单价", "金额", "税率", "税额",
+                                   "项目", "货物", "服务", "商品")
         all_names = re.findall(r"名称[:：\s]*([^\n]+)", text)
         if all_names:
-            # 过滤掉太短的或明显的噪音
+            # 过滤掉太短的或明显的噪音 + 排除已识别的 buyer_name
             candidates = []
             for n in all_names:
                 clean = re.sub(r"\s+", "", n.strip())
                 clean = re.sub(r"（.*?）", "", clean)
-                if clean and len(clean) >= 4 and not clean.startswith("名称"):
+                if not clean or len(clean) < 4 or clean.startswith("名称"):
+                    continue
+                # 排除表格列头误识别（如"规格型号"被当成"名称:规格型号"）
+                if any(kw in clean for kw in _TABLE_HEADER_KEYWORDS) and len(clean) <= 8:
+                    continue
+                # 显式排除 buyer_name（已提取过的不应再当 seller）
+                if buyer_name and clean == buyer_name:
+                    continue
+                # 去重（OCR 可能重复输出同一字符串）
+                if clean not in candidates:
                     candidates.append(clean)
-            if len(candidates) >= 2:
-                # 购买方是第一个, 销售方是最后一个
+            # 销售方通常在最后
+            if candidates:
                 return candidates[-1]
-            elif candidates:
-                return candidates[0]
 
         return None
 
-    def _extract_tax_id(self, text: str, is_buyer: bool = True) -> str | None:
+    def _extract_tax_id(self, text: str, is_buyer: bool = True, exclude_id: str = None) -> str | None:
         """提取纳税人识别号
-        
+
         OCR 文本通常将买卖双方税号连续排列，需取不同位置的匹配。
         买方取第一个，卖方取最后一个。
+        exclude_id: 已识别的 buyer_tax_id，提取 seller_tax_id 时排除（防误识别同一税号）。
         """
         ids = re.findall(r"([A-Z0-9]{15,20})", text)
         if not ids:
@@ -151,6 +175,11 @@ class FieldExtractor:
         tax_ids = [i for i in ids if any(c.isalpha() for c in i)]
         if not tax_ids:
             tax_ids = ids
+        # 排除已识别的另一边税号（去重）
+        if exclude_id:
+            tax_ids = [t for t in tax_ids if t != exclude_id]
+            if not tax_ids:
+                return exclude_id  # 兜底：只有 1 个税号（买卖方共用，极少见）
         if is_buyer:
             return tax_ids[0]
         else:

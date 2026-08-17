@@ -125,6 +125,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Failed to start scheduler: %s", e)
 
+    # Step 2.1.3：构建意图 embedding 索引（用于 RAG 检索）
+    # 失败时不阻塞启动，retrieve 会自动降级到空列表
+    try:
+        from app.dialog.intent_retriever import get_intent_retriever
+        retriever = get_intent_retriever()
+        count = await retriever.build_index()
+        logger.info("Intent retriever index built: %d intents", count)
+    except Exception as e:
+        logger.warning("Failed to build intent retriever index: %s", e)
+
     yield
 
     # 停止调度器
@@ -158,6 +168,10 @@ app.include_router(wecom.router, prefix="/api/wecom", tags=["企业微信"])
 app.include_router(reimbursements.router, prefix="/api/reimbursements", tags=["报销单管理"])
 app.include_router(employees.router, prefix="/api/employees", tags=["员工管理"])
 app.include_router(holidays.router, prefix="/api/holidays", tags=["节假日管理"])
+
+# 管理端认证路由（admin 账户，与员工端 portal_auth 完全独立）
+from app.routers.admin_auth import router as admin_auth_router
+app.include_router(admin_auth_router, prefix="/api/admin/auth", tags=["管理端-认证"])
 
 # 员工端路由（portal）
 app.include_router(portal_auth.router, prefix="/api/portal/auth", tags=["员工端-认证"])

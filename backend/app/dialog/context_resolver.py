@@ -138,9 +138,18 @@ def resolve(
     is_ellipsis = detect_ellipsis(text)
 
     # ===== 场景A：省略意图且当前轮未识别 → 强制继承上轮意图 + 可继承槽位 =====
-    # 仅当 LLM 未识别出意图时才强制继承，避免与当前轮明确意图冲突
-    # （如 "重复的发票呢" LLM 已识别 invoice_filter，不应强制继承上轮 total）
-    if is_ellipsis and not nlu_result.intent_name:
+    # 仅当 LLM 完全未识别意图、文本简短、且无候选意图时才强制继承。
+    # 若 LLM 已返回候选意图（低置信度），优先让 DialogEngine 做澄清追问，
+    # 避免正则过度覆盖 LLM 已能处理的语义。
+    # （当前 detect_ellipsis 已限制文本长度 <20，这里再次显式约束以明确语义。）
+    should_force_inherit = (
+        is_ellipsis
+        and not nlu_result.intent_name
+        and len(text.strip()) <= 20
+        and not nlu_result.candidates
+    )
+
+    if should_force_inherit:
         # 继承上轮所有可覆盖槽位
         inherited: dict = {}
         for slot_name in OVERRIDABLE_SLOT_NAMES:
@@ -159,7 +168,7 @@ def resolve(
             inherited.update(nlu_result.extracted_slots)
 
         logger.info(
-            "Context ellipsis inherit (no intent): text=%r last_intent=%s slots=%s",
+            "Context ellipsis inherit (LLM no intent, regex fallback): text=%r last_intent=%s slots=%s",
             text[:40], last_intent, list(inherited.keys()),
         )
         return NluResult(
@@ -170,50 +179,14 @@ def resolve(
             extracted_slots=inherited,
         )
 
-    # ===== 场景B：当前轮识别了查询意图 → 补全可继承槽位 =====
-    current_intent = nlu_result.intent_name
-    if current_intent and is_query_intent(current_intent):
-        merged_slots = dict(nlu_result.extracted_slots)
-        same_intent = (current_intent == last_intent)
-        # 省略句式（"交通费呢"）是强延续信号，强实体也跨意图补全
-        allow_strong_cross = is_ellipsis
+    if is_ellipsis and nlu_result.candidates:
+        logger.info(
+            "Context ellipsis detected but LLM returned candidates; skipping regex inheritance to allow clarification: text=%r candidates=%s",
+            text[:40], [c[0] for c in nlu_result.candidates],
+        )
 
-        for slot_name in OVERRIDABLE_SLOT_NAMES:
-            if slot_name in merged_slots:
-                continue
-            val = _history_value(slot_name)
-            if val is None:
-                continue
-            # 强实体继承策略：
-            # - person：换人查询是高频显式操作，同意图下不应默默继承，
-            #   否则"陈辉有多少发票→全公司有多少发票"会被旧 person 污染。
-            #   仅省略延续（"本月呢"等场景A）才补全 person。
-            # - 其他强实体：仅"同意图"或"省略延续"时补全，避免跨意图污染
-            if slot_name == "person":
-                if not allow_strong_cross:
-                    continue
-            elif slot_name in _STRONG_ENTITY_SLOTS and not (same_intent or allow_strong_cross):
-                continue
-            # fee_category_keyword 跨意图补全需当前意图能消费
-            if slot_name in ("fee_category_keyword", "fee_category_aliases"):
-                if not _intent_accepts_slot(current_intent, slot_name):
-                    continue
-            merged_slots[slot_name] = val
-
-        added = [k for k in merged_slots if k not in nlu_result.extracted_slots]
-        if added:
-            logger.info(
-                "Context slot inherit: text=%r intent=%s same=%s ellipsis=%s inherited=[%s]",
-                text[:40], current_intent, same_intent, is_ellipsis, ",".join(added),
-            )
-            return NluResult(
-                intent_name=current_intent,
-                confidence=nlu_result.confidence,
-                level=nlu_result.level,
-                raw_text=text,
-                extracted_slots=merged_slots,
-            )
-
+    # Step 2.2.4：场景B（同意图槽位补全）已删除，交给 LLM 通过历史摘要自行处理
+    # 仅保留场景A（LLM 未识别意图时的强兜底）作为 LLM 失败时的安全网
     return nlu_result
 
 

@@ -1,0 +1,14 @@
+FROM ai-reimbursement-agent-backend:latest
+
+# 安装/升级 MCP 运行所需的依赖（与主服务镜像隔离，避免影响后端 API）
+RUN pip install --no-cache-dir \
+    -i https://mirrors.aliyun.com/pypi/simple/ \
+    --trusted-host mirrors.aliyun.com \
+    "fastmcp==2.0.0" \
+    "fastapi>=0.115.12" \
+    "uvicorn[standard]>=0.27.1" \
+    "httpx>=0.26.0"
+
+EXPOSE 9000
+
+CMD ["uvicorn", "app.mcp.server_sse:app", "--host", "0.0.0.0", "--port", "9000"]

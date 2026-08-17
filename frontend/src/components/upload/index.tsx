@@ -84,12 +84,15 @@ export function FileDropZone({
         const f = e.dataTransfer.files[0];
         if (f) onFile(f);
       }}
-      className={`flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed py-16 transition-colors ${
+      className={`flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed py-12 transition-colors sm:py-16 ${
         dragOver
-          ? "border-brand-500 bg-brand-50"
-          : "border-slate-300 bg-white hover:border-brand-400 hover:bg-slate-50"
+          ? "border-primary-500 bg-primary-50"
+          : "border-border bg-background hover:border-primary-400 hover:bg-muted"
       }`}
     >
+      {/* 单一 file input：accept 含图片+PDF+OFD
+          手机端点击弹出系统菜单（拍照/相册/文件），桌面端打开文件选择器
+          不用 capture 属性——它会强制只调相机，丢失 PDF/OFD 上传能力 */}
       <input
         ref={inputRef as React.RefObject<HTMLInputElement>}
         type="file"
@@ -103,14 +106,14 @@ export function FileDropZone({
       />
       <motion.div
         animate={{ y: dragOver ? -4 : 0 }}
-        className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50"
+        className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50"
       >
-        <UploadSimple size={28} className="text-brand-600" />
+        <UploadSimple size={28} className="text-primary-600" />
       </motion.div>
-      <p className="mt-4 font-display text-base font-semibold text-slate-700">
-        拖拽发票到此处，或点击选择文件
+      <p className="mt-4 font-display text-base font-semibold text-foreground">
+        点击拍照或选择文件
       </p>
-      <p className="mt-1 text-sm text-slate-400">
+      <p className="mt-1 text-sm text-muted-foreground">
         支持 PNG / JPG / GIF / BMP / WEBP / PDF / OFD 格式，单文件最大 20MB
       </p>
     </label>
@@ -127,21 +130,21 @@ export function FilePreviewCard({
   onRemove: () => void;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-slate-200/60 bg-white p-4">
-      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100">
+    <div className="flex items-center gap-3 rounded-xl border border-border bg-background p-4">
+      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
         {getFileIcon(file)}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-slate-800">
+        <p className="truncate text-sm font-medium text-foreground">
           {file.name}
         </p>
-        <p className="text-xs text-slate-400">
+        <p className="text-xs text-muted-foreground">
           {formatFileSize(file.size)} · {file.type || "未知类型"}
         </p>
       </div>
       <button
         onClick={onRemove}
-        className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100"
+        className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted"
         aria-label="移除文件"
       >
         <X size={16} />
@@ -239,18 +242,18 @@ export function ProcessingTimeline({
                 />
               </div>
             ) : step.processing ? (
-              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-100">
-                <Spinner size={14} className="animate-spin text-brand-600" />
+              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary-100">
+                <Spinner size={14} className="animate-spin text-primary-600" />
               </div>
             ) : (
-              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-100">
-                <span className="h-2 w-2 rounded-full bg-slate-300" />
+              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-muted">
+                <span className="h-2 w-2 rounded-full bg-muted" />
               </div>
             )}
             {index < steps.length - 1 && (
               <div
                 className={`my-0.5 h-6 w-0.5 ${
-                  step.done ? "bg-emerald-300" : "bg-slate-200"
+                  step.done ? "bg-emerald-300" : "bg-muted"
                 }`}
               />
             )}
@@ -258,7 +261,7 @@ export function ProcessingTimeline({
           <div className="pb-3">
             <p
               className={`text-sm font-medium ${
-                step.done ? "text-slate-700" : "text-slate-400"
+                step.done ? "text-foreground" : "text-muted-foreground"
               }`}
             >
               {step.label}
@@ -268,8 +271,8 @@ export function ProcessingTimeline({
                 step.warning
                   ? "text-rose-500"
                   : step.done
-                    ? "text-slate-500"
-                    : "text-slate-400"
+                    ? "text-muted-foreground"
+                    : "text-muted-foreground"
               }`}
             >
               {step.detail}
@@ -295,8 +298,8 @@ export function ResultField({
   return (
     <div className={span ? "col-span-2" : ""}>
       <dt className="text-xs text-emerald-600/70">{label}</dt>
-      <dd className="mt-0.5 truncate text-sm font-medium text-slate-800">
-        {value || <span className="text-slate-300">未提取到</span>}
+      <dd className="mt-0.5 truncate text-sm font-medium text-foreground">
+        {value || <span className="text-muted-foreground">未提取到</span>}
       </dd>
     </div>
   );
@@ -403,14 +406,14 @@ export function UploadResult({
       <div className="mt-4 flex gap-3">
         <button
           onClick={onViewDetail}
-          className="flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-sm font-medium text-brand-600 ring-1 ring-brand-200 transition-colors hover:bg-brand-50"
+          className="flex items-center gap-1.5 rounded-lg bg-background px-4 py-2 text-sm font-medium text-primary-600 ring-1 ring-primary-200 transition-colors hover:bg-primary-50"
         >
           {viewDetailText}
           <ArrowRight size={14} />
         </button>
         <button
           onClick={onReset}
-          className="flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-600 ring-1 ring-slate-200 transition-colors hover:bg-slate-50"
+          className="flex items-center gap-1.5 rounded-lg bg-background px-4 py-2 text-sm font-medium text-foreground ring-1 ring-border transition-colors hover:bg-muted"
         >
           <UploadSimple size={14} />
           继续上传

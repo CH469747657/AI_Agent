@@ -59,34 +59,34 @@ export function PortalMyInvoices() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Spinner size={24} className="animate-spin text-brand-600" />
+        <Spinner size={24} className="animate-spin text-primary-700" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="font-display text-xl font-bold text-slate-900">
+    <div className="space-y-4 sm:space-y-6">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h1 className="font-display text-lg font-bold text-foreground sm:text-xl">
             我的发票
           </h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
             查看您上传的所有发票，管理员审核通过后可关联至报销单
           </p>
         </div>
-        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+        <span className="shrink-0 rounded-full bg-muted px-3 py-1 text-xs font-medium text-foreground/70">
           共 {invoices.length} 张
         </span>
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
+        <div className="flex items-center gap-2 rounded-lg bg-error-50 px-4 py-3 text-sm text-error-700">
           <WarningCircle size={18} weight="fill" />
           {error}
           <button
             onClick={() => setError("")}
-            className="ml-auto text-red-400 hover:text-red-600"
+            className="ml-auto text-error-400 hover:text-error-600"
           >
             <X size={16} />
           </button>
@@ -94,12 +94,12 @@ export function PortalMyInvoices() {
       )}
 
       {invoices.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-200/60 bg-white py-16 text-center">
-          <Receipt size={48} className="text-slate-200" />
-          <p className="mt-3 text-sm text-slate-400">暂无发票</p>
+        <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-background py-16 text-center">
+          <Receipt size={48} className="text-muted" />
+          <p className="mt-3 text-sm text-muted-foreground">暂无发票</p>
           <a
             href="/portal/upload"
-            className="mt-3 text-sm font-medium text-brand-600 hover:text-brand-700"
+            className="mt-3 text-sm font-medium text-primary-700 hover:text-primary-800"
           >
             去上传
           </a>
@@ -109,82 +109,85 @@ export function PortalMyInvoices() {
           {invoices.map((inv) => (
             <div
               key={inv.id}
-              className="flex items-center justify-between rounded-2xl border border-slate-200/60 bg-white p-5 shadow-sm transition-all hover:shadow-md"
+              className="rounded-xl border border-border bg-background p-3 shadow-sm transition-all hover:shadow-md sm:p-5"
             >
-              <div className="flex-1 space-y-1">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-semibold text-slate-900">
+              {/* 第一行：销售方名 + 金额（手机端上下排，桌面端左右排） */}
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p className="truncate text-sm font-semibold text-foreground">
                     {inv.seller_name || "未识别"}
                   </p>
-                  {inv.receipt_type && (
-                    <span
-                      className={`inline-block whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-medium ${
-                        inv.is_nonstandard
-                          ? "bg-violet-100 text-violet-700"
-                          : "bg-slate-100 text-slate-600"
-                      }`}
-                    >
-                      {inv.receipt_type}
-                    </span>
-                  )}
-                  <StatusBadge status={inv.status} linked={!!inv.reimbursement_id} />
-                  {inv.duplicate_status === "DUPLICATE" && (
-                    <span className="flex items-center gap-0.5 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-600">
-                      <Warning size={11} weight="fill" />
-                      重复
-                    </span>
-                  )}
-                  </div>
-                  <div className="flex items-center gap-4 text-xs text-slate-400">
-                    <span>
-                      {inv.fee_subcategory || inv.fee_category || "未分类"}
-                    </span>
-                    {inv.invoice_number && <span>{inv.invoice_number}</span>}
-                    {inv.issue_date && <span>{inv.issue_date}</span>}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <p className="font-display text-base font-bold text-slate-900">
-                    ¥{inv.total_with_tax || "-"}
-                  </p>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => setDetailId(inv.id)}
-                      className="flex items-center gap-1 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100"
-                    >
-                      <Eye size={14} />
-                      详情
-                    </button>
-                    <button
-                      onClick={() => portalApi.downloadInvoiceFile(inv.id)}
-                      className="flex items-center gap-1 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100"
-                    >
-                      <DownloadSimple size={14} />
-                      下载
-                    </button>
-
-                    {inv.reimbursement_id ? (
-                      <span className="flex items-center gap-1 rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-medium text-brand-600">
-                        <Eye size={14} />
-                        已关联
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          setDeleteTarget(inv);
-                          setDeleteError("");
-                        }}
-                        className="flex items-center gap-1 rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-100"
+                  {/* 徽章行：手机端允许换行 */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {inv.receipt_type && (
+                      <span
+                        className={`inline-block whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11px] font-medium ${
+                          inv.is_nonstandard
+                            ? "bg-violet-100 text-violet-700"
+                            : "bg-muted text-foreground/70"
+                        }`}
                       >
-                        <Trash size={14} />
-                        删除
-                      </button>
+                        {inv.receipt_type}
+                      </span>
+                    )}
+                    <StatusBadge status={inv.status} linked={!!inv.reimbursement_id} />
+                    {inv.duplicate_status === "DUPLICATE" && (
+                      <span className="flex items-center gap-0.5 rounded-full bg-error-100 px-1.5 py-0.5 text-[11px] font-medium text-error-600">
+                        <Warning size={10} weight="fill" />
+                        重复
+                      </span>
                     )}
                   </div>
                 </div>
+                {/* 金额右对齐，手机端稍小 */}
+                <p className="shrink-0 font-display text-sm font-bold text-foreground sm:text-base">
+                  ¥{inv.total_with_tax || "-"}
+                </p>
               </div>
-            ))}
+
+              {/* 第二行：分类/发票号/日期（手机端收紧 gap，允许换行） */}
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground sm:gap-4 sm:text-xs">
+                <span>{inv.fee_subcategory || inv.fee_category || "未分类"}</span>
+                {inv.invoice_number && <span className="truncate">#{inv.invoice_number}</span>}
+                {inv.issue_date && <span>{inv.issue_date}</span>}
+              </div>
+
+              {/* 第三行：操作按钮（手机端全宽 flex-wrap，桌面端右对齐） */}
+              <div className="mt-2.5 flex flex-wrap items-center justify-end gap-1.5 border-t border-border pt-2.5 sm:mt-0 sm:border-0 sm:pt-0">
+                <button
+                  onClick={() => setDetailId(inv.id)}
+                  className="flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-[11px] font-medium text-foreground/70 transition-colors hover:bg-muted/50 sm:px-2.5 sm:py-1.5 sm:text-xs"
+                >
+                  <Eye size={13} />
+                  详情
+                </button>
+                <button
+                  onClick={() => portalApi.downloadInvoiceFile(inv.id)}
+                  className="flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-[11px] font-medium text-foreground/70 transition-colors hover:bg-muted/50 sm:px-2.5 sm:py-1.5 sm:text-xs"
+                >
+                  <DownloadSimple size={13} />
+                  下载
+                </button>
+                {inv.reimbursement_id ? (
+                  <span className="flex items-center gap-1 rounded-md bg-primary-50 px-2 py-1 text-[11px] font-medium text-primary-600 sm:px-2.5 sm:py-1.5 sm:text-xs">
+                    <Eye size={13} />
+                    已关联
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setDeleteTarget(inv);
+                      setDeleteError("");
+                    }}
+                    className="flex items-center gap-1 rounded-md bg-error-100 px-2 py-1 text-[11px] font-medium text-error-700 transition-colors hover:bg-error-200 sm:px-2.5 sm:py-1.5 sm:text-xs"
+                  >
+                    <Trash size={13} />
+                    删除
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -197,33 +200,33 @@ export function PortalMyInvoices() {
       {/* 删除确认弹窗 */}
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+          <div className="w-full max-w-md rounded-xl bg-background p-6 shadow-xl">
             <div className="mb-4 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-50">
-                <Warning size={20} className="text-red-600" weight="fill" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-error-100">
+                <Warning size={20} className="text-error-700" weight="fill" />
               </div>
               <div>
-                <h3 className="font-display text-base font-semibold text-slate-900">
+                <h3 className="font-display text-base font-semibold text-foreground">
                   删除发票
                 </h3>
-                <p className="text-sm text-slate-500">此操作不可撤销</p>
+                <p className="text-sm text-muted-foreground">此操作不可撤销</p>
               </div>
               <button
                 onClick={() => setDeleteTarget(null)}
-                className="ml-auto rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                className="ml-auto rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <p className="mb-2 text-sm text-slate-600">
+            <p className="mb-2 text-sm text-foreground/70">
               确定要删除以下发票吗？发票数据及原始文件将被永久删除。
             </p>
-            <div className="mb-4 rounded-xl bg-slate-50 p-3">
-              <div className="text-sm font-medium text-slate-800">
+            <div className="mb-4 rounded-xl bg-muted p-3">
+              <div className="text-sm font-medium text-foreground">
                 {deleteTarget.seller_name || "未识别"}
               </div>
-              <div className="mt-0.5 text-xs text-slate-400">
+              <div className="mt-0.5 text-xs text-muted-foreground">
                 {deleteTarget.fee_subcategory ||
                   deleteTarget.fee_category ||
                   "未分类"}
@@ -235,7 +238,7 @@ export function PortalMyInvoices() {
             </div>
 
             {deleteError && (
-              <div className="mb-3 flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+              <div className="mb-3 flex items-center gap-2 rounded-lg bg-error-50 px-3 py-2 text-xs text-error-600">
                 <WarningCircle size={14} weight="fill" />
                 {deleteError}
               </div>
@@ -245,14 +248,14 @@ export function PortalMyInvoices() {
               <button
                 onClick={() => setDeleteTarget(null)}
                 disabled={deleting}
-                className="rounded-xl px-4 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50"
+                className="rounded-md px-4 py-2 text-sm font-medium text-foreground/70 transition-colors hover:bg-muted disabled:opacity-50"
               >
                 取消
               </button>
               <button
                 onClick={handleDelete}
                 disabled={deleting}
-                className="flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-md bg-error-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-error-800 disabled:opacity-50"
               >
                 {deleting && <Spinner size={14} className="animate-spin" />}
                 确认删除
@@ -301,46 +304,46 @@ function MyInvoiceDetailDrawer({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 z-40 bg-slate-900/30 backdrop-blur-sm"
+            className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
           />
           <motion.div
             initial={{ x: "100%" }}
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
-            className="fixed right-0 top-0 z-50 flex h-[100dvh] w-full max-w-xl flex-col bg-white shadow-2xl"
+            className="fixed right-0 top-0 z-50 flex h-[100dvh] w-full flex-col bg-background shadow-2xl sm:max-w-xl"
           >
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-200/60 px-6 py-4">
+            <div className="flex items-center justify-between border-b border-border px-3 py-3 sm:px-6 sm:py-4">
               <div className="flex items-center gap-2">
-                <Receipt size={20} className="text-brand-600" />
-                <h2 className="font-display text-base font-semibold text-slate-900">
+                <Receipt size={20} className="text-primary-700" />
+                <h2 className="font-display text-sm font-semibold text-foreground sm:text-base">
                   发票详情
                 </h2>
               </div>
               <button
                 onClick={onClose}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
                 aria-label="关闭"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-5">
+            <div className="flex-1 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">
               {loading && (
                 <div className="space-y-4">
                   {Array.from({ length: 6 }).map((_, i) => (
                     <div key={i} className="flex gap-4">
-                      <div className="h-4 w-20 animate-pulse rounded bg-slate-200" />
-                      <div className="h-4 flex-1 animate-pulse rounded bg-slate-100" />
+                      <div className="h-4 w-20 animate-pulse rounded bg-muted" />
+                      <div className="h-4 flex-1 animate-pulse rounded bg-muted/50" />
                     </div>
                   ))}
                 </div>
               )}
 
               {error && (
-                <div className="flex items-center gap-2 rounded-xl bg-rose-50 p-4 text-sm text-rose-700">
+                <div className="flex items-center gap-2 rounded-xl bg-error-50 p-4 text-sm text-error-700">
                   <Warning size={18} />
                   {error}
                 </div>
@@ -389,31 +392,31 @@ function DetailContent({ detail }: { detail: InvoiceDetail }) {
 
       {/* 双源比对置信度 */}
       {detail.diff_confidence !== null && detail.diff_confidence !== undefined && (
-        <div className="rounded-xl border border-slate-200/60 bg-slate-50 p-4">
+        <div className="rounded-xl border border-border bg-muted p-4">
           <div className="flex items-center justify-between">
-            <span className="text-sm text-slate-600">双源比对置信度</span>
-            <span className="font-display text-lg font-bold text-slate-900">
+            <span className="text-sm text-muted-foreground">双源比对置信度</span>
+            <span className="font-display text-lg font-bold text-foreground">
               {(detail.diff_confidence * 100).toFixed(1)}%
             </span>
           </div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-border">
             <motion.div
               initial={{ width: 0 }}
               animate={{ width: `${detail.diff_confidence * 100}%` }}
               transition={{ type: "spring", stiffness: 60, damping: 15 }}
               className={`h-full rounded-full ${
                 detail.diff_confidence >= 0.9
-                  ? "bg-emerald-500"
+                  ? "bg-success-500"
                   : detail.diff_confidence >= 0.7
-                    ? "bg-amber-400"
-                    : "bg-rose-500"
+                    ? "bg-warning-400"
+                    : "bg-error-500"
               }`}
             />
           </div>
           {/* 比对差异 */}
           {detail.diff_conflicts && detail.diff_conflicts.length > 0 && (
             <div className="mt-3 space-y-1.5">
-              <p className="text-xs font-medium text-slate-500">
+              <p className="text-xs font-medium text-muted-foreground">
                 OCR / LLM 比对差异（{detail.diff_conflicts.length} 项）
               </p>
               {detail.diff_conflicts.map((c, i) => (
@@ -421,23 +424,23 @@ function DetailContent({ detail }: { detail: InvoiceDetail }) {
                   key={i}
                   className={`rounded-lg border p-2.5 text-xs ${
                     c.status === "RESOLVED"
-                      ? "border-emerald-200 bg-emerald-50/50"
+                      ? "border-success-200 bg-success-50/50"
                       : c.status === "CONFLICT"
-                        ? "border-amber-200 bg-amber-50/50"
-                        : "border-slate-200 bg-white"
+                        ? "border-warning-200 bg-warning-50/50"
+                        : "border-border bg-background"
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-medium text-slate-700">
+                    <span className="font-medium text-foreground">
                       {c.field || "—"}
                     </span>
                     <span
                       className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
                         c.status === "RESOLVED"
-                          ? "bg-emerald-100 text-emerald-700"
+                          ? "bg-success-100 text-success-700"
                           : c.status === "CONFLICT"
-                            ? "bg-amber-100 text-amber-700"
-                            : "bg-slate-100 text-slate-600"
+                            ? "bg-warning-100 text-warning-700"
+                            : "bg-muted text-foreground/70"
                       }`}
                     >
                       {c.status === "RESOLVED"
@@ -451,11 +454,11 @@ function DetailContent({ detail }: { detail: InvoiceDetail }) {
                           : c.status}
                     </span>
                   </div>
-                  <div className="mt-1 flex items-center gap-1 text-slate-500">
+                  <div className="mt-1 flex items-center gap-1 text-muted-foreground">
                     <span className="truncate" title={c.ocr_value || ""}>
                       OCR: {c.ocr_value || "—"}
                     </span>
-                    <span className="text-slate-300">/</span>
+                    <span className="text-muted">/</span>
                     <span className="truncate" title={c.llm_value || ""}>
                       LLM: {c.llm_value || "—"}
                     </span>
@@ -469,7 +472,7 @@ function DetailContent({ detail }: { detail: InvoiceDetail }) {
 
       {/* 重复预警 */}
       {detail.duplicate_status === "DUPLICATE" && (
-        <div className="flex items-start gap-2 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">
+        <div className="flex items-start gap-2 rounded-xl bg-error-50 p-3 text-sm text-error-700">
           <Warning size={18} className="mt-0.5 shrink-0" />
           <span>该发票与已有记录重复，请确认是否为重复提交。</span>
         </div>
@@ -477,14 +480,14 @@ function DetailContent({ detail }: { detail: InvoiceDetail }) {
 
       {/* 验真失败预警 */}
       {detail.verify_status === "INVALID" && (
-        <div className="flex items-start gap-2 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">
+        <div className="flex items-start gap-2 rounded-xl bg-error-50 p-3 text-sm text-error-700">
           <Warning size={18} className="mt-0.5 shrink-0" />
           <span>{detail.verify_message || "该发票在线验真未通过，请核实发票信息。"}</span>
         </div>
       )}
       {/* 验真通过提示 */}
       {detail.verify_status === "VALID" && detail.verify_message && (
-        <div className="flex items-start gap-2 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-700">
+        <div className="flex items-start gap-2 rounded-xl bg-success-50 p-3 text-sm text-success-700">
           <ShieldCheck size={18} className="mt-0.5 shrink-0" />
           <span>{detail.verify_message}</span>
         </div>
@@ -492,30 +495,22 @@ function DetailContent({ detail }: { detail: InvoiceDetail }) {
 
       {/* OCR 提取字段 */}
       <div>
-        <h3 className="mb-3 flex items-center gap-1.5 font-display text-sm font-semibold text-slate-700">
-          <CopySimple size={16} className="text-slate-400" />
+        <h3 className="mb-3 flex items-center gap-1.5 font-display text-sm font-semibold text-foreground/70">
+          <CopySimple size={16} className="text-muted" />
           票面信息
         </h3>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-x-4 sm:gap-y-3">
           {fields.map((field) => (
             <div
               key={field.label}
-              className={`rounded-lg p-2.5 ${
-                field.highlight
-                  ? "bg-brand-50 ring-1 ring-brand-200"
-                  : "bg-slate-50"
-              }`}
+              className={`rounded-lg p-2.5 ${field.highlight ? "bg-primary-50 ring-1 ring-primary-200" : "bg-muted"}`}
             >
-              <dt className="text-xs text-slate-400">{field.label}</dt>
+              <dt className="text-xs text-muted-foreground">{field.label}</dt>
               <dd
-                className={`mt-0.5 truncate text-sm font-medium ${
-                  field.highlight ? "text-brand-700" : "text-slate-800"
-                }`}
+                className={`mt-0.5 truncate text-sm font-medium ${field.highlight ? "text-primary-700" : "text-foreground"}`}
                 title={field.value || ""}
               >
-                {field.value || (
-                  <span className="text-slate-300">未提取到</span>
-                )}
+                {field.value || <span className="text-muted">未提取到</span>}
               </dd>
             </div>
           ))}
@@ -524,13 +519,13 @@ function DetailContent({ detail }: { detail: InvoiceDetail }) {
 
       {/* 费用分类 */}
       <div>
-        <h3 className="mb-3 font-display text-sm font-semibold text-slate-700">
+        <h3 className="mb-3 font-display text-sm font-semibold text-foreground/70">
           费用分类
         </h3>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-          <div className="rounded-lg bg-slate-50 p-2.5">
-            <dt className="text-xs text-slate-400">费用大类</dt>
-            <dd className="mt-0.5 text-sm font-medium text-slate-800">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-x-4 sm:gap-y-3">
+          <div className="rounded-lg bg-muted p-2.5">
+            <dt className="text-xs text-muted-foreground">费用大类</dt>
+            <dd className="mt-0.5 text-sm font-medium text-foreground">
               {detail.fee_category === "company"
                 ? "公司"
                 : detail.fee_category === "personal"
@@ -538,11 +533,11 @@ function DetailContent({ detail }: { detail: InvoiceDetail }) {
                   : "未分类"}
             </dd>
           </div>
-          <div className="rounded-lg bg-slate-50 p-2.5">
-            <dt className="text-xs text-slate-400">费用子类</dt>
-            <dd className="mt-0.5 text-sm font-medium text-slate-800">
+          <div className="rounded-lg bg-muted p-2.5">
+            <dt className="text-xs text-muted-foreground">费用子类</dt>
+            <dd className="mt-0.5 text-sm font-medium text-foreground">
               {detail.fee_subcategory || (
-                <span className="text-slate-300">未分类</span>
+                <span className="text-muted">未分类</span>
               )}
             </dd>
           </div>
@@ -552,33 +547,33 @@ function DetailContent({ detail }: { detail: InvoiceDetail }) {
       {/* 用户描述 */}
       {detail.user_description && (
         <div>
-          <h3 className="mb-2 font-display text-sm font-semibold text-slate-700">
+          <h3 className="mb-2 font-display text-sm font-semibold text-foreground/70">
             用户描述
           </h3>
-          <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+          <p className="rounded-lg bg-muted p-3 text-sm text-foreground/70">
             {detail.user_description}
           </p>
         </div>
       )}
 
       {/* 元信息 */}
-      <div className="border-t border-slate-200/60 pt-4">
+      <div className="border-t border-border pt-4">
         <dl className="space-y-2 text-sm">
           {detail.reimbursement_id && (
             <div className="flex justify-between">
-              <dt className="text-slate-400">所属报销单</dt>
-              <dd className="font-mono text-brand-600">
+              <dt className="text-muted-foreground">所属报销单</dt>
+              <dd className="font-mono text-primary-600">
                 #{detail.reimbursement_id}
               </dd>
             </div>
           )}
           <div className="flex justify-between">
-            <dt className="text-slate-400">发票 ID</dt>
-            <dd className="font-mono text-slate-600">#{detail.id}</dd>
+            <dt className="text-muted-foreground">发票 ID</dt>
+            <dd className="font-mono text-foreground/70">#{detail.id}</dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-slate-400">提交时间</dt>
-            <dd className="text-slate-600">
+            <dt className="text-muted-foreground">提交时间</dt>
+            <dd className="text-foreground/70">
               {detail.created_at
                 ? new Date(detail.created_at).toLocaleString("zh-CN")
                 : "—"}

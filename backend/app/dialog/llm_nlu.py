@@ -24,7 +24,10 @@ import hashlib
 import time
 from typing import Any, Optional
 
+from pydantic import ValidationError
+
 from .models import NluResult, NluLevel, UserRole, DialogContext
+from app.schemas.nlu_schema import NluResultSchema
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +36,9 @@ logger = logging.getLogger(__name__)
 # LLM NLU System Prompt — 完整意图定义 + 槽位格式
 # ============================================================
 
-_SYSTEM_PROMPT = """你是AI报销智能体的意图识别引擎。根据用户输入和角色，识别意图并提取槽位。
+# 全量意图 prompt — 作为 RAG 检索不可用时的 fallback
+# Step 2.1.5：新增 _build_prompt(candidates) 动态拼接候选意图，优先使用
+_FALLBACK_PROMPT = """你是AI报销智能体的意图识别引擎。根据用户输入和角色，识别意图并提取槽位。
 
 ## 角色与可用意图
 
@@ -46,6 +51,7 @@ _SYSTEM_PROMPT = """你是AI报销智能体的意图识别引擎。根据用户�
 - **emp_delete_invoice**: 删除/撤销已上传但未提交的发票，如"删除上一张""撤销上传""删掉第2张""删除那张机票"。注意：只能删除未关联报销单的发票，已提交的不能删
 - **emp_batch_describe**: 批量用途描述——用户一条说明为多张发票分配用途，如"前两张是差旅-交通，第三张是差旅-餐饮""1和3是打车，2是餐费"。只有当用户明确同时对多张发票描述不同用途时才触发此意图，单张发票描述仍走 emp_fill_invoice_desc
 - **emp_batch_modify**: 批量修改发票字段——用户一次描述多个字段的修改，如"金额改为100，日期改为2026-08-01""把销售方改成XX公司，税号改成123"。只有当用户同时修改多个字段时才触发此意图，单字段修改仍走 emp_modify_field
+- **emp_modify_field**: 修改单张发票的某个字段，如"把金额改成100""销售方改成XX公司""第一张发票的日期改成2026-08-01""把这张的用途改成投标费""修改第二张的税号"。可修改字段：金额、日期、销售方、税号、发票号、用途。槽位：field_name（字段名，如金额/日期/销售方/税号/发票号/用途）、field_value（新值）、invoice_index（可选，"第N张"→N，如"第一张"→1）
 - **emp_query_status**: 查询报销进度，如"报销到哪了""批了没""查报销"
 - **emp_query_invoices**: 查询已上传发票，如"我的发票""查看发票"
 - **emp_query_my_reimbursement**: 查询我的报销单列表（含报销周期、费用/补贴明细、封账状态），如"我的报销单""我有哪些报销单""报销单列表""我的报销周期""看看我的报销单"
@@ -55,8 +61,14 @@ _SYSTEM_PROMPT = """你是AI报销智能体的意图识别引擎。根据用户�
 - **self_insight_category**: 我的费用分类占比，如"我哪类费用多""我的费用分布"
 - **self_insight_trend**: 我的费用趋势，如"我的费用变化""我最近开支走势"
 - **self_insight_compare**: 我的期间费用对比，如"这个月比上个月花得多吗"
-- **self_insight_category_amount**: 我的某类费用金额，如"快递费花了多少""差旅费报了多少"
+- **self_insight_category_amount**: 我的某类费用金额/明细。如"快递费花了多少""差旅费报了多少""我有哪些快递费的发票""我有哪些打车费的发票""哪些是打车费""打车费明细"
 - **self_insight_invoice_total**: 我的发票统计，如"我上传了多少发票""我有多少张发票""我的发票总金额"
+- **emp_permission_denied**: 员工越权查询拦截。员工询问非本人数据时返回此意图。判定流程：先读 user_msg 中的"用户身份: 工号=XXX 姓名=YYY"，若文本提到的人名/工号正是当前用户本人，按本人查询正常返回（如 self_insight_invoice_total），不返回此意图。仅当文本提到的人是**非当前用户**或公司全员范围时才返回此意图。
+  示例：用户身份=工号EMP001姓名陈辉
+  - "查看陈辉的发票" → self_insight_invoice_total（本人，不拦截）
+  - "陈辉的发票" → self_insight_invoice_total（本人，不拦截）
+  - "查看张三的发票" → emp_permission_denied（非本人，拦截）
+  - "查看公司所有的发票" → emp_permission_denied（公司范围，拦截）
 
 ### admin（管理员）可用意图：
 员工全部意图 + 以下：
@@ -99,6 +111,23 @@ _SYSTEM_PROMPT = """你是AI报销智能体的意图识别引擎。根据用户�
 7. **发票统计 vs 报销总额**：用户提到"发票数量""发票张数""发票总额""上传多少发票"→ insight_invoice_total（查发票表），而非 insight_total（查报销单表）。员工用 self_insight_invoice_total
 8. **发票筛选 vs 异常检测**：用户明确问"重复的发票""验真失败的发票""高风险发票"→ insight_invoice_filter（返回筛选列表），而非 insight_anomaly（返回综合报告）。只有说"有没有异常""超标"才走 insight_anomaly
 9. **anomaly_type**：用户指定异常类型时，insight_anomaly 应提取 anomaly_type 槽位。"重复"→duplicate，"验真失败"→invalid，"高风险"→high_risk，"超标"→over_budget。未指定则不提取此槽位
+10. **员工越权查询**：员工（role=employee）询问非本人数据时，intent_name 返回 "emp_permission_denied"。
+    **判定流程（必须执行）**：
+    第一步：从 user_msg 中读取"用户身份: 工号=XXX 姓名=YYY"，记住当前用户的姓名 YYY 和工号 XXX
+    第二步：检查用户输入中是否提到人名/工号
+      - 若提到的人名/工号 == YYY 或 XXX（即本人）→ 按本人查询正常处理（如 self_insight_invoice_total），**不返回** emp_permission_denied
+      - 若提到的人名/工号 != YYY 且 != XXX（即他人）→ 返回 emp_permission_denied
+      - 若提到公司全员范围词（"公司所有""所有员工""全公司""各部门""全员"）→ 返回 emp_permission_denied
+      - 若未提到人名/工号 → 按本人查询正常处理
+    示例（假设用户身份=工号EMP001姓名陈辉）：
+      - "查看陈辉的发票" → self_insight_invoice_total（陈辉是本人）
+      - "陈辉的发票" → self_insight_invoice_total（陈辉是本人）
+      - "陈辉的重复发票" → self_insight_invoice_filter（陈辉是本人）
+      - "查看张三的发票" → emp_permission_denied（张三非本人）
+      - "admin的发票" → emp_permission_denied（admin非本人）
+      - "EMP002的发票" → emp_permission_denied（EMP002非本人工号）
+      - "查看公司所有的发票" → emp_permission_denied（公司范围）
+    返回该意图即可，由 FSM 回复"没有权限，只能看本人的信息。"
 
 ## 语义边界精细化（易混淆意图区分）
 
@@ -120,9 +149,23 @@ _SYSTEM_PROMPT = """你是AI报销智能体的意图识别引擎。根据用户�
 
 ### insight_by_category vs insight_category_amount
 - insight_by_category：关注**全部分类的分布/占比**。关键词："占比""分布""各占多少""哪些分类""有多少类费用"
-- insight_category_amount：关注**某个具体分类的发票明细/金额**。关键词："哪些是XX费""XX费有哪些""XX费花了多少""XX费详情""XX费明细""XX费报了多少"
-- **关键区分**："差旅费占多少""各类费用分布"→ insight_by_category（问全局分布占比），"哪些是差旅费""差旅费有哪些""差旅费花了多少"→ insight_category_amount（问某分类的具体发票/金额）
+- insight_category_amount：关注**某个具体分类的发票明细/金额**。关键词："哪些是XX费""XX费有哪些""XX费有哪些发票""XX费花了多少""XX费详情""XX费明细""XX费报了多少"
+- **关键区分**："差旅费占多少""各类费用分布"→ insight_by_category（问全局分布占比），"哪些是差旅费""差旅费有哪些""差旅费有哪些发票""差旅费花了多少"→ insight_category_amount（问某分类的具体发票/金额）
 - 判断原则：问的是「全局分布/各分类占比」→ insight_by_category；问的是「某个分类的具体发票或金额」→ insight_category_amount。即使没有金额词（如"哪些是差旅费"），只要聚焦在某个具体分类上就是 insight_category_amount
+
+### insight_category_amount vs insight_invoice_filter（按分类查 vs 异常筛选）
+- insight_category_amount：用户指定**费用分类名**（快递费/差旅费/餐饮费/打车费/投标费等），问该分类下的发票或金额。如"我有哪些快递费的发票""我有哪些打车费的发票""快递费明细""差旅费报了多少"
+- insight_invoice_filter：用户指定**异常条件**（重复/验真失败/高风险/待审核/收据），筛选符合异常条件的发票。如"重复的发票""验真失败的""高风险的发票""待审核的发票""有收据吗"
+- **关键区分**：宾语是「费用分类名」→ insight_category_amount（按分类查发票明细）；宾语是「异常条件」→ insight_invoice_filter（按异常筛发票）
+- 判定流程：用户问"X的发票有哪些"时，先看 X 是费用分类名（如打车费/快递费/差旅费）还是异常条件（如重复/验真失败/高风险）。前者走 category_amount，后者走 invoice_filter
+- 示例（必看）：
+  - "我有哪些打车费的发票" → self_insight_category_amount（打车费是分类名）
+  - "快递费的发票有哪些" → self_insight_category_amount（快递费是分类名）
+  - "我有哪些差旅费的发票" → self_insight_category_amount（差旅费是分类名）
+  - "重复的发票有哪些" → self_insight_invoice_filter（重复是异常条件）
+  - "验真失败的发票有哪些" → self_insight_invoice_filter（验真失败是异常条件）
+  - "待审核的发票有哪些" → self_insight_invoice_filter（待审核是状态条件）
+- **绝不能**把"我有哪些X费的发票"误判为 invoice_filter
 
 ### insight_anomaly vs insight_invoice_filter
 - insight_anomaly：关注**整体异常状况扫描**。关键词："有没有异常""超标""不对劲""有没有问题"——返回4类异常检测综合报告
@@ -137,13 +180,19 @@ _SYSTEM_PROMPT = """你是AI报销智能体的意图识别引擎。根据用户�
 10. **发票筛选 vs 人员查询**：用户问"这个收据/发票是谁上传的""这张发票谁传的"→ insight_invoice_filter（筛选后展示上传者），而非 insight_person。insight_person 是查看某人的报销费用，不是查发票上传者
 11. **收据/票据类型筛选**：用户提到"收据""有收据吗""收据有哪些"→ insight_invoice_filter + filter_type="receipt"，不是 insight_invoice_total。员工用 self_insight_invoice_filter
 12. **删除发票 vs 取消操作**："删除上一张""撤销上传""删掉第2张""删除那张机票"→ emp_delete_invoice（删除特定已上传发票记录），"取消""算了""不做了"→ common_cancel（取消整个对话流程）。emp_delete_invoice 只对未提交的发票有效
+13. **人名 vs 时间词**：中文常见时间副词（目前、现在、当前、今天、昨天、本周、本月等）不是人名，绝不能提取到 person 槽位。"目前上传了多少发票"→ person 不填，而非 person="目前"
 
 ### insight_total vs insight_invoice_total
 - insight_total：查询**报销单维度**的统计（报销总额、报销单笔数、报销人数）。关键词："公司花了多少""报销总额""报销了多少"
-- insight_invoice_total：查询**发票维度**的统计（发票张数、发票总额、按状态分组），**支持 person 槽位按员工筛选**。关键词："上传了多少发票""发票总金额""多少张发票""发票统计"
-  - 当用户指定员工（如"员工admin上传了多少发票""陈辉的发票有多少张"）→ insight_invoice_total + person="admin"/"陈辉"
-  - 未指定员工 → 全公司统计，不填 person
-- **关键区分**：用户提到"发票""上传""张"→ insight_invoice_total（发票表），用户提到"报销""花了多少"→ insight_total（报销单表）
+- insight_invoice_total：查询**发票维度**的统计（发票张数、发票总额、按状态分组），**支持 person 槽位按员工筛选**。关键词："上传了多少发票""发票总金额""多少张发票""发票统计""查看公司所有发票""查看XX的发票"
+  - 当用户指定员工（如"员工admin上传了多少发票""陈辉的发票有多少张""查看陈辉的发票"）→ insight_invoice_total + person="admin"/"陈辉"
+  - 未指定员工或"所有/全部/公司所有" → 全公司统计，**不填 person**（不要把"所有/全部/all"填入 person）
+- **关键区分**：用户提到"发票""上传""张""的发票"→ insight_invoice_total（发票表），用户提到"报销""花了多少""的报销"→ insight_total（报销单表）
+
+### insight_invoice_total vs admin_query_person/insight_person
+- insight_invoice_total：关注**发票**。用户说"查看XX的发票""XX的发票""XX有多少张发票"→ 查发票表，person 槽位填 XX
+- admin_query_person/insight_person：关注**报销单/费用**。用户说"查XX的报销""XX报销了多少""XX的费用"→ 查报销单
+- **关键区分**："XX的发票"→ insight_invoice_total（发票表），"XX的报销/费用"→ admin_query_person（报销单）。即使"查看"是动词，只要宾语是"发票"就走 insight_invoice_total
 
 ### insight_top 的 order 和 data_scope 槽位
 - order: "最多/最大/最高/榜首" → "desc"，"最少/最小/最低/末位" → "asc"，默认 "desc"
@@ -169,7 +218,8 @@ _SYSTEM_PROMPT = """你是AI报销智能体的意图识别引擎。根据用户�
 - **period**: 时间段，映射值：today/yesterday/current_week/last_week/current_month/last_month/current_year/last_year/last_6_months/last_12_months/YYYY-MM/YYYY
   - today=今天/今日, yesterday=昨天/昨日, current_week=本周/这周/这一周, last_week=上周/上一周
   - current_month=本月/这个月, last_month=上月/上个月, current_year=今年, last_year=去年
-- **person**: 人员姓名或工号（中文2-4字或英文/工号如admin/EMP001）
+- **person**: 人员姓名或工号（中文2-4字或英文/工号如admin/EMP001）。注意：**不要**将以下时间/通用词识别为人名：目前、现在、当前、今天、昨天、本周、上周、本月、上月、今年、去年、最近、全部、一共、总共、至今、迄今、暂时、刚才、刚刚、近期、这几天、个月
+  - 示例："目前上传了多少发票"→ person 不填；"陈辉的发票有多少张"→ person="陈辉"；"员工admin上传了多少"→ person="admin"；"8月一共上传多少"→ person 不填；"小李最近的上传"→ person="小李"
 - **project_name**: 项目名称
 - **fee_category_keyword**: 费用分类关键词（差旅/交通/住宿/餐饮/培训/快递/办公/投标/运营）
 - **fee_category_aliases**: 费用分类别名列表（JSON数组字符串），根据 fee_category_keyword 自动推导。例如差旅→["差旅","住宿","交通","出差"]，餐饮→["餐饮","餐费","伙食","吃饭"]，培训→["培训","课程","学习"]，快递→["快递","物流","邮寄"]，办公→["办公","文具","耗材"]，投标→["投标","招标"]，运营→["运营"]。当识别到 fee_category_keyword 时必须同时输出此槽位
@@ -178,8 +228,18 @@ _SYSTEM_PROMPT = """你是AI报销智能体的意图识别引擎。根据用户�
 - **data_scope**: 数据范围，仅insight_top有效。"invoice"=按单张发票排名，"reimbursement"=按人汇总排名（默认）
 - **reimbursement_id**: 报销单编号（整数）
 - **anomaly_type**: 异常类型，仅insight_anomaly有效。"duplicate"=重复发票，"invalid"=验真失败，"high_risk"=高风险，"over_budget"=超标报销。未指定则检测全部类型
-- **filter_type**: 筛选类型，仅insight_invoice_filter有效。"duplicate"=重复发票，"invalid"=验真失败，"high_risk"=高风险，"pending"=待审核，"receipt"=收据。用户说"收据""有收据吗""收据有哪些"→ filter_type="receipt"
+- **filter_type**: 筛选类型，仅insight_invoice_filter有效。**严格枚举**：仅可为 "duplicate"（重复发票）、"invalid"（验真失败）、"high_risk"（高风险）、"pending"（待审核）、"receipt"（收据）之一。**绝不能填入费用分类名**（如"打车费""快递费""差旅费""餐饮费""培训费""投标费""办公费""住宿费"），分类名应走 self_insight_category_amount 的 fee_category_keyword 槽位。
+  - 用户说"重复的发票"→ filter_type="duplicate"
+  - 用户说"验真失败的发票"→ filter_type="invalid"
+  - 用户说"高风险的发票"→ filter_type="high_risk"
+  - 用户说"待审核的发票"→ filter_type="pending"
+  - 用户说"收据有哪些"→ filter_type="receipt"
+  - 用户说"打车费的发票"/"我有哪些打车费的发票"→ **不填 filter_type，不返回 invoice_filter**，应返回 self_insight_category_amount + fee_category_keyword="打车费"
+  - 用户说"快递费的发票"/"我有哪些快递费的发票"→ **不填 filter_type，不返回 invoice_filter**，应返回 self_insight_category_amount + fee_category_keyword="快递费"
 - **delete_target**: 删除目标，仅emp_delete_invoice有效。"last"=最近一张（默认），"index:N"=第N张（如"删除第2张"→"index:2"），"type:关键词"=按发票类型/销售方匹配（如"删除那张机票"→"type:机票"）
+- **field_name**: 字段名，仅emp_modify_field有效。可选值：金额/日期/销售方/税号/发票号/用途。如"把金额改成100"→"金额"，"用途改成投标费"→"用途"，"销售方改一下"→"销售方"
+- **field_value**: 字段新值，仅emp_modify_field有效。如"金额改成100"→"100"，"用途改成投标费"→"投标费"，"日期改成2026-08-01"→"2026-08-01"
+- **invoice_index**: 发票序号（整数，1-based），仅emp_modify_field/emp_fill_invoice_desc等需要指定具体发票时有效。如"第一张"→1，"第2张"→2，"第三张"→3。未指定则不填（默认操作最近一张或上下文中的pending发票）
 
 ## 输出格式
 
@@ -191,6 +251,107 @@ _SYSTEM_PROMPT = """你是AI报销智能体的意图识别引擎。根据用户�
   "slots": {"槽位名": "槽位值"},
   "reasoning": "简要推理过程"
 }
+```"""
+
+
+# ============================================================
+# 动态 prompt 构造 — Step 2.1.5
+# ============================================================
+
+def _format_candidates(candidates: list) -> str:
+    """格式化候选意图清单为 prompt 片段
+
+    Args:
+        candidates: Intent 对象列表（来自 IntentRetriever.retrieve）
+
+    Returns:
+        形如：
+            - **intent_name**: description
+              典型表述：utterance1 / utterance2 / ...
+              槽位：required: [field_name, field_value] | optional: [invoice_index]
+    """
+    if not candidates:
+        return ""
+    lines: list[str] = []
+    for intent in candidates:
+        utts = " / ".join(intent.typical_utterances[:3]) if intent.typical_utterances else "无"
+        slot_info = ""
+        if intent.required_slots or intent.optional_slots:
+            parts = []
+            if intent.required_slots:
+                parts.append(f"必填: {intent.required_slots}")
+            if intent.optional_slots:
+                parts.append(f"可选: {intent.optional_slots}")
+            slot_info = f"\n  槽位（{' | '.join(parts)}）"
+        lines.append(f"- **{intent.name}**: {intent.description}\n  典型表述：{utts}{slot_info}")
+    return "\n".join(lines)
+
+
+def _build_prompt(candidates: list | None, role_str: str = "") -> str:
+    """构造 LLM system prompt
+
+    策略：
+    - candidates 非空：用 RAG 检索的 Top-K 候选意图构造精简 prompt（~800 tokens）
+    - candidates 为空：降级到全量意图 prompt（_FALLBACK_PROMPT，~2500 tokens）
+
+    Args:
+        candidates: IntentRetriever.retrieve 返回的候选 Intent 列表
+        role_str: 用户角色字符串（用于上下文提示）
+
+    Returns:
+        完整的 system prompt 字符串
+    """
+    if not candidates:
+        # 降级：retriever 不可用或返回空，用全量意图 prompt
+        return _FALLBACK_PROMPT
+
+    candidates_block = _format_candidates(candidates)
+    return f"""你是AI报销智能体的意图识别引擎。根据用户输入识别意图并提取槽位。
+
+## 候选意图（从全库检索出的 Top-{len(candidates)} 个最相关意图）
+
+{candidates_block}
+
+## 关键判别规则
+
+1. **角色感知**：当前用户角色为 {role_str or "未知"}，请基于此判断意图合理性
+2. **置信度**：若用户输入与所有候选意图都不匹配，intent_name 返回空字符串
+3. **槽位提取**：从用户输入中提取候选意图定义的槽位值，槽位名必须严格使用候选意图列出的标准名
+4. **典型表述参考**：每个意图的"典型表述"是该意图的常见说法，可作为匹配参考
+5. **发票查询 vs 报销查询**：用户说"查看XX的发票""XX的发票""列出XX的发票"→ insight_invoice_total（查发票表，person=XX）；用户说"查看XX的报销""XX报销了多少""XX的费用"→ admin_query_person/insight_person（查报销单）。**宾语是"发票"走 insight_invoice_total，宾语是"报销/费用"走 admin_query_person**
+6. **全公司查询**：用户说"查看公司所有发票""所有发票""全部发票"→ insight_invoice_total，**不填 person**（不要把"所有/全部/all/公司"填入 person 槽位）
+7. **员工越权查询**：员工（role=employee）询问非本人数据时，返回 intent_name="emp_permission_denied"。
+   **判定流程（必须执行）**：
+   第一步：从 user_msg 中读取"用户身份: 工号=XXX 姓名=YYY"
+   第二步：检查用户输入是否提到人名/工号
+     - 若人名/工号 == YYY 或 XXX（本人）→ 按本人查询正常返回（如 self_insight_invoice_total），不返回 emp_permission_denied
+     - 若人名/工号 != YYY 且 != XXX（他人）→ 返回 emp_permission_denied
+     - 若提到公司全员范围（"公司所有""所有员工""全公司""各部门""全员"）→ 返回 emp_permission_denied
+     - 未提到人名/工号 → 按本人查询正常返回
+   示例（用户身份=工号EMP001姓名陈辉）：
+     - "查看陈辉的发票" → self_insight_invoice_total（陈辉是本人）
+     - "查看张三的发票" → emp_permission_denied（张三非本人）
+     - "EMP002的发票" → emp_permission_denied（EMP002非本人工号）
+     - "查看公司所有的发票" → emp_permission_denied（公司范围）
+   不在候选列表中也返回该意图，由 FSM 直接回复"没有权限，只能看本人的信息。"
+
+## 通用槽位说明
+
+- **invoice_index**: 发票序号（整数，1-based）。用户说"第一张"→1，"第2张"→2，"第三张"→3。当意图涉及具体发票操作（如 emp_modify_field/emp_fill_invoice_desc/emp_delete_invoice）且用户提到"第N张"时必须提取
+- **field_name**: 字段名，仅 emp_modify_field 有效。可选值：金额/日期/销售方/税号/发票号/用途
+- **field_value**: 字段新值，仅 emp_modify_field 有效
+- **delete_target**: 删除目标，仅 emp_delete_invoice 有效。"last"=最近一张，"index:N"=第N张，"type:关键词"=按类型匹配
+
+## 输出格式
+
+严格返回以下 JSON，不要包含其他文字：
+```json
+{{
+  "intent_name": "意图名称，如果都不匹配则为空字符串",
+  "confidence": 0.0到1.0的浮点数,
+  "slots": {{"槽位名": "槽位值"}},
+  "reasoning": "简要推理过程"
+}}
 ```"""
 
 
@@ -213,13 +374,16 @@ class _CacheEntry:
 class LlmNluCache:
     """LLM NLU 响应缓存
 
-    - 相同 (text, role) 在 TTL 内直接命中缓存，零延迟零成本
+    - 相同 (text, role, model) 在 TTL 内直接命中缓存，零延迟零成本
     - TTL 默认 300 秒（5 分钟），避免数据变更后缓存不一致
     - 最大条目数限制，防止内存泄漏
     - 幂等性：同一时刻相同请求只调一次 LLM（通过 asyncio.Lock 去重）
+
+    分层模型路由（Step 1.1.3）：缓存 key 加入 model 字段，
+    避免相同文本在不同模型下命中错误结果（跨模型污染）。
     """
 
-    DEFAULT_TTL = 300          # 5 分钟
+    DEFAULT_TTL = 120          # 2 分钟（Step 2.2.3：从 300s 缩短，因历史变化快，长 TTL 缓存价值下降）
     MAX_ENTRIES = 500
 
     def __init__(self, ttl: float | None = None):
@@ -228,21 +392,31 @@ class LlmNluCache:
         # 正在进行的 LLM 调用（防止并发重复调用）
         self._inflight: dict[str, asyncio.Task] = {}
 
-    def _make_key(self, text: str, role: str) -> str:
-        """生成缓存 key"""
-        raw = f"{role}:{text.strip().lower()}"
+    def _make_key(self, text: str, role: str, model: str = "", history_hash: str = "") -> str:
+        """生成缓存 key
+
+        Args:
+            text: 用户输入
+            role: 用户角色
+            model: 模型名（隔离不同模型产生的结果）
+            history_hash: 对话历史摘要的 hash（隔离不同历史下的结果）
+        """
+        raw = f"{model}:{history_hash}:{role}:{text.strip().lower()}"
         return hashlib.md5(raw.encode()).hexdigest()
 
-    def get(self, text: str, role: str) -> NluResult | None:
+    def get(self, text: str, role: str, model: str = "", history_hash: str = "") -> NluResult | None:
         """获取缓存结果"""
-        key = self._make_key(text, role)
+        key = self._make_key(text, role, model, history_hash)
         entry = self._cache.get(key)
         if entry and not entry.is_expired():
-            logger.debug("LLM NLU cache hit: text=%r role=%s", text[:30], role)
+            logger.debug(
+                "LLM NLU cache hit: text=%r role=%s model=%s history_hash=%s",
+                text[:30], role, model, history_hash[:8] if history_hash else "(none)",
+            )
             return entry.result
         return None
 
-    def set(self, text: str, role: str, result: NluResult) -> None:
+    def set(self, text: str, role: str, result: NluResult, model: str = "", history_hash: str = "") -> None:
         """写入缓存"""
         # 超出容量限制时清理过期条目
         if len(self._cache) >= self.MAX_ENTRIES:
@@ -253,7 +427,7 @@ class LlmNluCache:
                 for k in keys[:len(keys) // 2]:
                     del self._cache[k]
 
-        key = self._make_key(text, role)
+        key = self._make_key(text, role, model, history_hash)
         self._cache[key] = _CacheEntry(result, self._ttl)
 
     def _evict_expired(self) -> None:
@@ -264,18 +438,23 @@ class LlmNluCache:
         if expired:
             logger.debug("LLM NLU cache evicted %d expired entries", len(expired))
 
-    def invalidate(self, text: str | None = None, role: str | None = None) -> int:
+    def invalidate(
+        self,
+        text: str | None = None,
+        role: str | None = None,
+        model: str | None = None,
+    ) -> int:
         """使缓存失效
 
         - text=None, role=None: 清空全部缓存
-        - 指定 text+role: 只清除特定条目
+        - 指定 text+role (+model): 只清除特定条目
         """
         if text is None and role is None:
             count = len(self._cache)
             self._cache.clear()
             return count
         if text and role:
-            key = self._make_key(text, role)
+            key = self._make_key(text, role, model or "")
             if key in self._cache:
                 del self._cache[key]
                 return 1
@@ -291,53 +470,102 @@ class LlmNlu:
 
     替代 L1+L2+L3 三级架构，通过单次 LLM 调用完成意图识别和槽位提取。
     内置响应缓存，相同 (text, role) 在 TTL 内零延迟返回。
+
+    分层模型路由（Step 1.1.2）：通过 task_type 指定任务类型，
+    由 settings.get_model_for_task() 解析具体模型，按 model 复用 OpenAI client。
     """
 
     TIMEOUT_SECONDS = 15.0
     CONFIDENCE_THRESHOLD = 0.6
 
-    def __init__(self):
-        self._client = None
-        self._model = None
+    def __init__(self, task_type: str = "nlu_classify"):
+        # task_type → 模型名解析延迟到 _ensure_client，便于运行时热更新
+        self._task_type = task_type
+        # 按 model 复用 client：相同 model 共享一个 OpenAI 实例，避免重复连接
+        self._clients: dict[str, "OpenAI"] = {}
         self._initialized = False
         self._cache = LlmNluCache()
         # 并发去重锁：防止同一时刻多个协程对相同文本发起重复 LLM 调用
         self._locks: dict[str, asyncio.Lock] = {}
 
+    def _resolve_model(self) -> str:
+        """根据 task_type 解析当前应使用的模型名（每次调用都读，支持热更新）"""
+        from app.config import settings
+        return settings.get_model_for_task(self._task_type)
+
     def _ensure_client(self):
-        """延迟初始化 LLM 客户端"""
-        if self._initialized:
-            return
-        try:
-            from app.config import settings, LLM_PROVIDERS
-            from openai import OpenAI
+        """延迟初始化 LLM 客户端（按 model 复用，支持模型热更新）
 
-            base_url = settings.llm_base_url
-            if not base_url:
-                provider = settings.llm_provider.lower()
-                provider_info = LLM_PROVIDERS.get(provider, {})
-                base_url = provider_info.get("base_url", "")
+        设计要点：
+        - _initialized 仅标记"首次初始化已完成"，不阻止后续按需新增 client
+        - 每次 _resolve_model() 返回的模型若不在 _clients 中，则新建一个 client
+        - 模型热更新后（SystemSettings 表），下次调用自动用新模型
+        """
+        if not self._initialized:
+            try:
+                from app.config import settings, LLM_PROVIDERS
+                from openai import OpenAI
 
-            model = settings.text_model
+                base_url = settings.llm_base_url
+                if not base_url:
+                    provider = settings.llm_provider.lower()
+                    provider_info = LLM_PROVIDERS.get(provider, {})
+                    base_url = provider_info.get("base_url", "")
 
-            self._client = OpenAI(
-                api_key=settings.llm_api_key,
-                base_url=base_url,
-            )
-            self._model = model
-            self._initialized = True
-            logger.info("LLM NLU initialized: model=%s", model)
-        except Exception as e:
-            logger.warning("Failed to init LLM NLU client: %s", e)
-            self._initialized = True  # 避免反复重试
+                model = self._resolve_model()
+                self._clients[model] = OpenAI(
+                    api_key=settings.llm_api_key,
+                    base_url=base_url,
+                )
+                self._initialized = True
+                logger.info("LLM NLU initialized: task=%s model=%s", self._task_type, model)
+            except Exception as e:
+                logger.warning("Failed to init LLM NLU client: %s", e)
+                self._initialized = True  # 避免反复重试
+
+    def _get_client_and_model(self):
+        """获取当前任务对应的 (client, model)，按需新建 client"""
+        return self._get_client_and_model_for_task(self._task_type)
+
+    def _get_client_and_model_for_task(self, task_type: str):
+        """获取指定任务类型对应的 (client, model)，按需新建 client
+
+        复用 self._clients dict，相同 model 共享 client。
+        用于 batch_describe 等子任务需要切换模型的路由场景。
+        """
+        self._ensure_client()
+        from app.config import settings
+        model = settings.get_model_for_task(task_type)
+        if model not in self._clients:
+            try:
+                from app.config import LLM_PROVIDERS
+                from openai import OpenAI
+
+                base_url = settings.llm_base_url
+                if not base_url:
+                    provider = settings.llm_provider.lower()
+                    provider_info = LLM_PROVIDERS.get(provider, {})
+                    base_url = provider_info.get("base_url", "")
+
+                self._clients[model] = OpenAI(
+                    api_key=settings.llm_api_key,
+                    base_url=base_url,
+                )
+                logger.info("LLM NLU client added for model=%s (task=%s)", model, task_type)
+            except Exception as e:
+                logger.warning("Failed to create client for model=%s: %s", model, e)
+                return None, model
+        return self._clients.get(model), model
 
     def reset_client(self):
-        """重置 LLM 客户端（配置变更后调用）"""
-        self._client = None
-        self._model = None
+        """重置 LLM 客户端（配置变更后调用）
+
+        清空所有按 model 缓存的 client，下次调用时按当前 task_type 重新建立。
+        """
+        self._clients.clear()
         self._initialized = False
         self._cache.invalidate()  # 配置变更，清空缓存
-        logger.info("LLM NLU client reset")
+        logger.info("LLM NLU clients reset (task=%s)", self._task_type)
 
     async def classify(
         self,
@@ -354,9 +582,15 @@ class LlmNlu:
             NluResult 识别结果
         """
         role = context.role.value
+        # 解析当前任务对应的 model，用于缓存隔离（避免跨模型污染）
+        model = self._resolve_model()
+        # Step 2.2.3：缓存 key 加入 history_hash，避免相同文本在不同历史下命中错误结果
+        # 历史摘要为空时 hash 固定，等价于无历史场景
+        history_summary = context.get_history_summary(max_turns=3, max_tokens=500)
+        history_hash = hashlib.md5(history_summary.encode()).hexdigest() if history_summary else ""
 
         # 1. 查缓存
-        cached = self._cache.get(text, role)
+        cached = self._cache.get(text, role, model, history_hash)
         if cached is not None:
             # 返回新对象，避免缓存被外部修改
             return NluResult(
@@ -367,8 +601,8 @@ class LlmNlu:
                 extracted_slots=dict(cached.extracted_slots),
             )
 
-        # 2. 幂等去重：同一文本+角色只允许一个并发 LLM 调用
-        cache_key = self._cache._make_key(text, role)
+        # 2. 幂等去重：同一文本+角色+模型+历史只允许一个并发 LLM 调用
+        cache_key = self._cache._make_key(text, role, model, history_hash)
         if cache_key not in self._locks:
             self._locks[cache_key] = asyncio.Lock()
         lock = self._locks[cache_key]
@@ -376,7 +610,7 @@ class LlmNlu:
         if lock.locked():
             # 有其他协程正在调 LLM，等待其完成后再查缓存
             async with lock:
-                cached = self._cache.get(text, role)
+                cached = self._cache.get(text, role, model, history_hash)
                 if cached is not None:
                     return NluResult(
                         intent_name=cached.intent_name,
@@ -395,7 +629,7 @@ class LlmNlu:
 
         async with lock:
             # 双重检查：获取锁后再查缓存
-            cached = self._cache.get(text, role)
+            cached = self._cache.get(text, role, model, history_hash)
             if cached is not None:
                 return NluResult(
                     intent_name=cached.intent_name,
@@ -410,9 +644,36 @@ class LlmNlu:
 
             # 4. 写缓存（只缓存有意图的结果，未识别不缓存以允许重试）
             if result.intent_name:
-                self._cache.set(text, role, result)
+                self._cache.set(text, role, result, model, history_hash)
 
             return result
+
+    async def _resolve_user_identity(self, user_id: str) -> str:
+        """查询当前用户工号+姓名，构造注入 NLU prompt 的身份描述
+
+        返回形如 "用户身份: 工号=EMP001 姓名=陈辉\n"
+        失败时返回空字符串（不影响主流程）
+        """
+        if not user_id:
+            return ""
+        try:
+            from sqlalchemy import select
+            from app.database import get_async_sessionmaker
+            from app.models.employee import Employee
+            sm = get_async_sessionmaker()
+            async with sm() as db:
+                result = await db.execute(
+                    select(Employee.name, Employee.employee_no).where(
+                        (Employee.employee_no == user_id)
+                        | (Employee.wecom_user_id == user_id)
+                    )
+                )
+                row = result.first()
+                if row:
+                    return f"用户身份: 工号={row.employee_no or user_id} 姓名={row.name}\n"
+        except Exception as e:
+            logger.warning("resolve_user_identity failed: %s", e)
+        return ""
 
     async def _call_llm_classify(
         self,
@@ -420,9 +681,9 @@ class LlmNlu:
         context: DialogContext,
     ) -> NluResult:
         """实际调用 LLM 进行意图识别"""
-        self._ensure_client()
-        if not self._client:
-            logger.warning("LLM NLU client not available")
+        client, model = self._get_client_and_model()
+        if not client:
+            logger.warning("LLM NLU client not available (task=%s model=%s)", self._task_type, model)
             return NluResult(
                 intent_name="",
                 confidence=0.0,
@@ -430,12 +691,44 @@ class LlmNlu:
                 raw_text=text,
             )
 
-        # 构造用户消息 — 包含角色和状态信息
-        user_msg = f"用户角色: {context.role.value}\n用户输入: {text}"
+        # 注入当前用户身份（工号 + 姓名）— 供 LLM 判断"X的发票"中的 X 是否本人
+        # 例如陈辉本人问"陈辉的发票"应正常返回 self_insight_invoice_total，而非 emp_permission_denied
+        user_identity = await self._resolve_user_identity(context.user_id)
+
+        # Step 2.2.3：构造用户消息 — 注入对话历史摘要，让 LLM 自行处理省略句式与跨轮继承
+        history_summary = context.get_history_summary(max_turns=3, max_tokens=500)
+        if history_summary:
+            user_msg = (
+                f"用户角色: {context.role.value}\n"
+                f"{user_identity}"
+                f"{history_summary}\n"
+                f"用户输入: {text}"
+            )
+        else:
+            user_msg = f"用户角色: {context.role.value}\n{user_identity}用户输入: {text}"
+
+        # Step 2.1.6：RAG 检索 Top-K 候选意图，构造精简 prompt
+        candidates: list = []
+        try:
+            from .intent_retriever import get_intent_retriever
+            retriever = get_intent_retriever()
+            if retriever.is_built:
+                candidates = await retriever.retrieve(text, context.role, top_k=8)
+                if candidates:
+                    logger.debug(
+                        "RAG retrieved %d candidates for text=%r: %s",
+                        len(candidates), text[:30],
+                        [c.name for c in candidates],
+                    )
+        except Exception as e:
+            logger.warning("RAG retrieve failed, falling back to full prompt: %s", e)
+
+        # 动态构造 system prompt（candidates 为空时降级到 _FALLBACK_PROMPT）
+        system_prompt = _build_prompt(candidates, context.role.value)
 
         try:
             result = await asyncio.wait_for(
-                self._call_llm(user_msg),
+                self._call_llm(user_msg, client, model, system_prompt),
                 timeout=self.TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
@@ -463,30 +756,47 @@ class LlmNlu:
                 raw_text=text,
             )
 
-        intent_name = result.get("intent_name", "")
-        confidence = result.get("confidence", 0.0)
-        slots = result.get("slots", {})
+        # result 是 NluResultSchema 实例，属性访问（替代 dict.get）
+        intent_name = result.intent_name
+        confidence = result.confidence
+        slots = result.slots
+        reasoning = result.reasoning
 
-        # 意图名别名映射 —— LLM 可能返回非标准名称
-        intent_name = _INTENT_ALIASES.get(intent_name, intent_name)
-        reasoning = result.get("reasoning", "")
+        # 注：原 _INTENT_ALIASES / _SLOT_ALIASES 后处理已删除
+        # Agent 模式（主路径）下 LLM 通过 Function Calling 调用 Tool，Tool 名是严格枚举
+        # Legacy 路径下 prompt 已要求 LLM 输出标准意图名和槽位名
+        # 若 LLM 返回非标准名，直接走 _handle_unrecognized 兜底，不再静默重映射
 
+        # Step 2.1.6：badcase 监控 — 记录候选列表 vs 最终输出，便于分析 RAG 召回质量
+        candidate_names = [c.name for c in candidates] if candidates else []
         logger.info(
-            "LLM NLU result: text=%r intent=%s conf=%.2f slots=%s reasoning=%s",
-            text, intent_name, confidence, slots, reasoning,
+            "LLM NLU result: text=%r intent=%s conf=%.2f slots=%s reasoning=%s | rag_candidates=%s",
+            text, intent_name, confidence, slots, reasoning, candidate_names,
         )
+
+        # badcase 检测：若 LLM 输出的意图不在候选列表中（且候选非空），标记为潜在误判
+        if candidates and intent_name and intent_name not in candidate_names:
+            logger.warning(
+                "RAG badcase: LLM output %r not in retrieved candidates %r (text=%r)",
+                intent_name, candidate_names, text[:50],
+            )
 
         if not intent_name or confidence < self.CONFIDENCE_THRESHOLD:
             logger.debug(
                 "LLM NLU low confidence: text=%r intent=%s conf=%.2f",
                 text, intent_name, confidence,
             )
+            # Step 1.2.7：低置信度时保留候选意图，供 DialogEngine 构造澄清追问
+            candidates: list[tuple[str, float]] = []
+            if intent_name and confidence >= 0.3:  # 太低置信度不作为候选
+                candidates.append((intent_name, confidence))
             return NluResult(
                 intent_name="",
                 confidence=confidence,
                 level=NluLevel.L3_LLM,
                 raw_text=text,
                 extracted_slots=slots,
+                candidates=candidates,
             )
 
         return NluResult(
@@ -497,34 +807,84 @@ class LlmNlu:
             extracted_slots=slots,
         )
 
-    async def _call_llm(self, user_msg: str) -> dict | None:
-        """调用 LLM API"""
-        try:
-            resp = await asyncio.to_thread(
-                self._client.chat.completions.create,
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": user_msg},
-                ],
-                temperature=0.1,
-                max_tokens=256,
-                timeout=self.TIMEOUT_SECONDS,
-            )
-            content = resp.choices[0].message.content.strip()
-            # 提取 JSON（可能被 markdown 代码块包裹）
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0].strip()
+    async def _call_llm(
+        self,
+        user_msg: str,
+        client,
+        model: str,
+        system_prompt: str | None = None,
+    ) -> Optional[NluResultSchema]:
+        """调用 LLM API（client 和 model 由调用方传入，支持多模型路由）
 
-            return json.loads(content)
-        except json.JSONDecodeError as e:
-            logger.warning("LLM NLU JSON parse error: %s content=%r", e, content[:200])
-            return None
-        except Exception as e:
-            logger.warning("LLM NLU API call error: %s", e)
-            return None
+        Step 1.2.2 改造：
+        - 使用 response_format={"type": "json_object"} 强制 LLM 返回 JSON
+        - 用 NluResultSchema Pydantic 校验替代脆弱的 split("```json") 解析
+        - 校验失败时重试 1 次（带"请严格返回 JSON"提示）
+        - 保留 markdown 代码块剥离作为 fallback（兼容不完整支持 response_format 的 Provider）
+
+        Step 2.1.5 改造：
+        - system_prompt 参数由调用方传入（_build_prompt 动态构造）
+        - 默认 None 时降级用 _FALLBACK_PROMPT（全量意图）
+
+        Returns:
+            NluResultSchema 或 None（重试后仍失败）
+        """
+        schema = NluResultSchema.model_json_schema()
+        # Step 2.1.5：system_prompt 由调用方传入，默认用全量 fallback
+        sys_prompt = system_prompt or _FALLBACK_PROMPT
+
+        for attempt in range(2):  # 1 次正常 + 1 次重试
+            try:
+                resp = await asyncio.to_thread(
+                    client.chat.completions.create,
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    temperature=0.1,
+                    max_tokens=256,
+                    timeout=self.TIMEOUT_SECONDS,
+                    response_format={"type": "json_object"},
+                )
+                content = resp.choices[0].message.content.strip()
+                # Fallback：若 Provider 仍返回 markdown 包裹的 JSON，剥离代码块
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0].strip()
+                elif "```" in content:
+                    content = content.split("```")[1].split("```")[0].strip()
+
+                # Pydantic 校验（替代 json.loads + 手动 dict.get）
+                try:
+                    return NluResultSchema.model_validate_json(content)
+                except ValidationError as ve:
+                    logger.warning(
+                        "LLM NLU schema validation failed (attempt=%d): %s content=%r",
+                        attempt + 1, ve, content[:200],
+                    )
+                    # 校验失败 → 重试时追加"严格 JSON"提示
+                    if attempt == 0:
+                        user_msg = (
+                            user_msg
+                            + "\n\n[注意] 上次返回的内容不符合 JSON 格式要求，"
+                            "请严格返回 JSON 对象，不要包含任何 markdown 标记或额外文字。"
+                        )
+                        continue
+                    return None
+
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    "LLM NLU JSON parse error (attempt=%d): %s",
+                    attempt + 1, e,
+                )
+                if attempt == 0:
+                    continue
+                return None
+            except Exception as e:
+                logger.warning("LLM NLU API call error (attempt=%d): %s", attempt + 1, e)
+                return None  # API 错误不重试，避免无谓等待
+
+        return None
 
 
     async def _call_llm_batch_describe(
@@ -544,7 +904,8 @@ class LlmNlu:
             [{"invoice_id": int, "description": str}, ...] 或 None（拆解失败）
         """
         self._ensure_client()
-        if not self._client:
+        client, model = self._get_client_and_model_for_task("batch_describe")
+        if not client:
             return None
 
         prompt = (
@@ -560,8 +921,8 @@ class LlmNlu:
         try:
             resp = await asyncio.wait_for(
                 asyncio.to_thread(
-                    self._client.chat.completions.create,
-                    model=self._model,
+                    client.chat.completions.create,
+                    model=model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.1,
                     max_tokens=256,
@@ -585,18 +946,10 @@ class LlmNlu:
 
 
 # 意图名别名映射 — LLM 可能返回非标准意图名
-_INTENT_ALIASES: dict[str, str] = {
-    "emp_query_pending": "self_insight_pending",
-    "emp_insight_total": "self_insight_total",
-    "emp_insight_category": "self_insight_category",
-    "emp_insight_trend": "self_insight_trend",
-    "emp_insight_compare": "self_insight_compare",
-    "emp_insight_pending": "self_insight_pending",
-    "emp_category_amount": "self_insight_category_amount",
-    "query_pending": "admin_query_pending",
-    "query_status": "emp_query_status",
-    "query_invoices": "emp_query_invoices",
-}
+# 注：原 _INTENT_ALIASES / _SLOT_ALIASES 已删除
+# Agent 模式（主路径）下 LLM 通过 Function Calling 调用 Tool，Tool 名是严格枚举
+# Legacy 路径下 prompt 已要求 LLM 输出标准意图名和槽位名
+# 若 LLM 返回非标准名，直接走 _handle_unrecognized 兜底，不再静默重映射
 
 
 # 全局单例

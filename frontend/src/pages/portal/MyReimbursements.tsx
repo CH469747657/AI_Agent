@@ -769,6 +769,63 @@ function ReimbursementDetail({
         </div>
       )}
 
+      {/* 出差日 */}
+      {detail.travel_days && detail.travel_days.length > 0 && (
+        <div className="rounded-2xl border border-border/60 bg-background p-6 shadow-sm">
+          <div className="mb-4 flex items-center gap-2">
+            <CalendarBlank size={18} className="text-primary-600" />
+            <h2 className="font-display text-sm font-semibold text-foreground/90">出差日</h2>
+            <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+              {detail.travel_days.length} 天
+            </span>
+          </div>
+          <div className="space-y-2">
+            {detail.travel_days.map((td) => {
+              const invoiceCount = (detail.items || []).filter(
+                (it) => it.item_date === td.travel_date
+              ).length;
+              return (
+                <div
+                  key={td.id}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background p-2.5"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-foreground/90">
+                      {td.travel_date}
+                      {td.day_type && (
+                        <span className="ml-1 text-xs text-muted-foreground">
+                          · {dayTypeLabel(td.day_type)}
+                        </span>
+                      )}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {td.note || "—"} · 当日发票 {invoiceCount} 张
+                    </p>
+                  </div>
+                  {isDraft && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          await portalApi.deleteTravelDayByDate(td.travel_date);
+                          loadDetail();
+                          window.dispatchEvent(new CustomEvent("chat-invoices-changed"));
+                        } catch (err) {
+                          setError(err instanceof Error ? err.message : "删除失败");
+                        }
+                      }}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-error-50 hover:text-error-600"
+                      title="删除出差日"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* 日补贴 */}
       {detail.day_subsidies && detail.day_subsidies.length > 0 && (
         <div className="rounded-2xl border border-border/60 bg-background p-6 shadow-sm">

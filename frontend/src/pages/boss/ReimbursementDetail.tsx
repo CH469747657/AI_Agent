@@ -8,6 +8,7 @@ import {
   WarningCircle,
   Link as LinkIcon,
   Stack,
+  CalendarBlank,
 } from "@phosphor-icons/react";
 
 const statusLabels: Record<ReimbursementStatus, { label: string; color: string }> = {
@@ -175,6 +176,51 @@ export function BossReimbursementDetail() {
         <Field label="封账时间" value={r.locked_at} />
         <Field label="自动生成" value={r.auto_generated ? "是" : "否"} />
       </Section>
+
+      {/* 出差日 */}
+      {r.travel_days && r.travel_days.length > 0 && (
+        <div className="rounded-xl border border-border bg-background p-4 shadow-sm">
+          <h3 className="mb-3 flex items-center gap-1.5 font-display text-sm font-semibold text-foreground/70">
+            <CalendarBlank size={14} className="text-muted" />
+            出差日（{r.travel_days.length} 天）
+          </h3>
+          <div className="space-y-2">
+            {r.travel_days.map((td) => {
+              const invoiceCount = (r.items || []).filter(
+                (it) => it.item_date === td.travel_date
+              ).length;
+              const dayTypeText =
+                td.day_type === "weekend"
+                  ? "周末"
+                  : td.day_type === "holiday"
+                    ? "节假日"
+                    : td.day_type === "workday"
+                      ? "工作日"
+                      : "—";
+              return (
+                <div
+                  key={td.id}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background p-2.5"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-foreground">
+                      {td.travel_date}
+                      {td.day_type && (
+                        <span className="ml-1 text-xs text-muted-foreground">
+                          · {dayTypeText}
+                        </span>
+                      )}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {td.note || "—"} · 当日发票 {invoiceCount} 张
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {r.items && r.items.length > 0 ? (
         <div className="rounded-xl border border-border bg-background p-4 shadow-sm">

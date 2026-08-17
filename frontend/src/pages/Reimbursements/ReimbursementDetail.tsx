@@ -364,6 +364,46 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
             </motion.div>
           )}
 
+          {/* 出差日 */}
+          {reimb.travel_days && reimb.travel_days.length > 0 && (
+            <div className="rounded-xl border border-border bg-background p-5 shadow-sm">
+              <div className="mb-3 flex items-center gap-2">
+                <CalendarBlank size={18} className="text-primary-600" />
+                <h3 className="font-display text-sm font-semibold text-foreground/90">出差日</h3>
+                <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                  {reimb.travel_days.length} 天
+                </span>
+              </div>
+              <div className="space-y-2">
+                {reimb.travel_days.map((td) => {
+                  const invoiceCount = (reimb.items || []).filter(
+                    (it) => it.item_date === td.travel_date
+                  ).length;
+                  return (
+                    <div
+                      key={td.id}
+                      className="flex items-center justify-between rounded-lg border border-border p-2.5"
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-foreground/90">
+                          {td.travel_date}
+                          {td.day_type && (
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              · {dayTypeLabel(td.day_type)}
+                            </span>
+                          )}
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {td.note || "—"} · 当日发票 {invoiceCount} 张
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* 日补贴 */}
           {reimb.day_subsidies && reimb.day_subsidies.length > 0 && (
             <motion.div

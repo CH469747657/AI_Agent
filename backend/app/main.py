@@ -173,6 +173,10 @@ app.include_router(holidays.router, prefix="/api/holidays", tags=["节假日管�
 from app.routers.admin_auth import router as admin_auth_router
 app.include_router(admin_auth_router, prefix="/api/admin/auth", tags=["管理端-认证"])
 
+# 老板端认证路由（boss 账户，与管理端 admin 账户独立）
+from app.routers.admin_auth import boss_router as boss_auth_router
+app.include_router(boss_auth_router, prefix="/api/boss/auth", tags=["老板端-认证"])
+
 # 员工端路由（portal）
 app.include_router(portal_auth.router, prefix="/api/portal/auth", tags=["员工端-认证"])
 app.include_router(portal.router, prefix="/api/portal", tags=["员工端-业务"])

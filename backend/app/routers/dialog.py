@@ -16,12 +16,12 @@ from pydantic import BaseModel, Field
 from app.dialog.dialog_engine import get_dialog_engine
 from app.dialog.context_store import RedisContextStore
 from app.dialog.models import UserRole, DialogState
-from app.routers.admin_auth import get_current_admin
+from app.routers.admin_auth import get_current_admin, get_current_admin_or_boss
 
 logger = logging.getLogger(__name__)
 
 # 管理端对话接口鉴权 — 与员工端 /api/portal/dialog/* (portal.py 独立实现) 物理隔离
-router = APIRouter(dependencies=[Depends(get_current_admin)])
+router = APIRouter(dependencies=[Depends(get_current_admin_or_boss)])
 
 
 def _sse_event(event: dict) -> str:
@@ -227,7 +227,10 @@ async def get_state(user_id: str):
 
 
 @router.post("/reset/{user_id}")
-async def reset_context(user_id: str):
+async def reset_context(
+    user_id: str,
+    _admin: dict = Depends(get_current_admin),
+):
     """重置用户对话上下文"""
     engine = get_dialog_engine()
     await engine.reset_user_async(user_id)

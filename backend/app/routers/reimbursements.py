@@ -14,7 +14,7 @@ from app.database import get_db
 from app.models.reimbursement import Reimbursement, ReimbursementAttachment
 from app.models.invoice import Invoice
 from app.models.employee import Employee
-from app.routers.admin_auth import get_current_admin
+from app.routers.admin_auth import get_current_admin, get_current_admin_or_boss
 from app.schemas import (
     ReimbursementCreateRequest,
     ReimbursementResponse,
@@ -24,13 +24,14 @@ from app.schemas import (
 )
 from app.services import reimbursement_service as svc
 
-router = APIRouter(dependencies=[Depends(get_current_admin)])
+router = APIRouter(dependencies=[Depends(get_current_admin_or_boss)])
 
 
 @router.post("", response_model=ReimbursementResponse)
 async def create_reimbursement(
     request: ReimbursementCreateRequest,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """创建报销单，可选关联发票"""
     # 自动从 Employee 表填充申请人信息（如果未手动传入）
@@ -86,6 +87,7 @@ async def link_invoices(
     reimbursement_id: int,
     request: ReimbursementLinkRequest,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """关联发票到报销单"""
     await svc.link_invoices(db, reimbursement_id, request.invoice_ids)
@@ -97,6 +99,7 @@ async def unlink_invoice(
     reimbursement_id: int,
     invoice_id: int,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """移除报销单中的发票关联"""
     await svc.unlink_invoice(db, reimbursement_id, invoice_id)
@@ -104,19 +107,31 @@ async def unlink_invoice(
 
 
 @router.put("/{reimbursement_id}/submit", response_model=ReimbursementResponse)
-async def submit_reimbursement(reimbursement_id: int, db: AsyncSession = Depends(get_db)):
+async def submit_reimbursement(
+    reimbursement_id: int,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+):
     """提交报销单（DRAFT → SUBMITTED）"""
     return await svc.submit_reimbursement(db, reimbursement_id)
 
 
 @router.put("/{reimbursement_id}/withdraw", response_model=ReimbursementResponse)
-async def withdraw_reimbursement(reimbursement_id: int, db: AsyncSession = Depends(get_db)):
+async def withdraw_reimbursement(
+    reimbursement_id: int,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+):
     """撤回报销单（SUBMITTED → DRAFT）"""
     return await svc.withdraw_reimbursement(db, reimbursement_id)
 
 
 @router.put("/{reimbursement_id}/approve", response_model=ReimbursementResponse)
-async def approve_reimbursement(reimbursement_id: int, db: AsyncSession = Depends(get_db)):
+async def approve_reimbursement(
+    reimbursement_id: int,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+):
     """审核通过（SUBMITTED → REVIEWED）"""
     return await svc.approve_reimbursement(db, reimbursement_id)
 
@@ -126,13 +141,18 @@ async def reject_reimbursement(
     reimbursement_id: int,
     reason: str = "",
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """驳回报销单（SUBMITTED → DRAFT）"""
     return await svc.reject_reimbursement(db, reimbursement_id, reason=reason)
 
 
 @router.put("/{reimbursement_id}/reimburse", response_model=ReimbursementResponse)
-async def reimburse_reimbursement(reimbursement_id: int, db: AsyncSession = Depends(get_db)):
+async def reimburse_reimbursement(
+    reimbursement_id: int,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+):
     """标记已报销（SUBMITTED/REVIEWED → REIMBURSED）"""
     return await svc.mark_reimbursed(db, reimbursement_id)
 
@@ -142,6 +162,7 @@ async def toggle_subsidy(
     reimbursement_id: int,
     request: SubsidyToggleRequest,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """手动切换某天的补贴计入/取消（仅草稿状态）"""
     return await svc.toggle_day_subsidy(
@@ -158,6 +179,7 @@ async def lock_cycle(
     cycle_key: str,
     auto_submit: bool = True,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """手动封账指定周期（管理端）
 
@@ -182,6 +204,7 @@ async def cycle_lock_status(
 async def aggregate_invoices(
     request: AggregateRequest,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """批量归集游离发票到报销单（管理端）
 
@@ -211,7 +234,11 @@ async def aggregate_invoices(
 
 
 @router.delete("/{reimbursement_id}")
-async def delete_reimbursement(reimbursement_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_reimbursement(
+    reimbursement_id: int,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+):
     """删除报销单（仅草稿状态）"""
     await svc.delete_reimbursement(db, reimbursement_id)
     return {"message": f"报销单 #{reimbursement_id} 已删除", "deleted": True}
@@ -224,6 +251,7 @@ async def upload_attachment(
     reimbursement_id: int,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """上传报销单附件"""
     file_data = await file.read()
@@ -249,6 +277,7 @@ async def delete_attachment(
     reimbursement_id: int,
     attachment_id: int,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """删除报销单附件（仅草稿状态）"""
     await svc.delete_attachment(db, reimbursement_id, attachment_id)

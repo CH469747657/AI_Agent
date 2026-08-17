@@ -6,14 +6,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.project import Project, ProjectStatus
-from app.routers.admin_auth import get_current_admin
+from app.routers.admin_auth import get_current_admin, get_current_admin_or_boss
 from app.schemas import ProjectCreateRequest, ProjectResponse
 
-router = APIRouter(dependencies=[Depends(get_current_admin)])
+router = APIRouter(dependencies=[Depends(get_current_admin_or_boss)])
 
 
 @router.post("", response_model=ProjectResponse)
-async def create_project(request: ProjectCreateRequest, db: AsyncSession = Depends(get_db)):
+async def create_project(
+    request: ProjectCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+):
     """创建项目"""
     project = Project(
         name=request.name,
@@ -53,6 +57,7 @@ async def update_members(
     project_id: int,
     member_ids: list[str],
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """更新项目关联人员"""
     result = await db.execute(select(Project).where(Project.id == project_id))

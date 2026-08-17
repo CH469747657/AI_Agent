@@ -182,3 +182,92 @@ async def admin_change_password(
     logger.info(f"Admin {username} changed password")
 
     return {"message": "密码修改成功，下次登录请使用新密码"}
+
+
+# ============================================================
+# 老板端认证（BOSS）— 复用 admin_auth 的 JWT 机制，独立路由前缀
+# ============================================================
+
+boss_router = APIRouter()
+
+
+class BossLoginRequest(BaseModel):
+    """老板端登录请求"""
+    username: str
+    password: str
+
+
+@boss_router.post("/login")
+async def boss_login(request: BossLoginRequest):
+    """老板端登录 — 用户名+密码，返回 JWT (role=boss)
+
+    凭证从 .env 读取（BOSS_USERNAME / BOSS_PASSWORD_HASH）。
+    """
+    username = settings.boss_username
+    if not username:
+        logger.error("BOSS_USERNAME 未配置")
+        raise HTTPException(status_code=500, detail="老板账号未配置")
+
+    password_hash = settings.boss_password_hash
+    if not password_hash:
+        logger.error("BOSS_PASSWORD_HASH 未配置")
+        raise HTTPException(status_code=500, detail="老板账号未配置")
+
+    if request.username != username:
+        logger.warning(f"Boss login failed: wrong username={request.username}")
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+
+    if not verify_password(request.password, password_hash):
+        logger.warning(f"Boss login failed: wrong password for username={request.username}")
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+
+    import jwt
+    from app.services.auth_service import JWT_SECRET, JWT_ALGORITHM
+    from datetime import timedelta
+    expire = datetime.now(timezone.utc) + timedelta(hours=settings.jwt_expire_hours)
+    payload = {
+        "sub": username,
+        "emp_id": 0,
+        "name": "老板",
+        "role": "boss",
+        "exp": expire,
+        "iat": datetime.now(timezone.utc),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+    logger.info(f"Boss {username} logged in")
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "profile": {
+            "username": username,
+            "name": "老板",
+            "role": "boss",
+        },
+    }
+
+
+async def get_current_admin_or_boss(authorization: str = Header(None)) -> dict[str, Any]:
+    """管理端/老板端通用鉴权依赖
+
+    允许 admin 或 boss JWT 通过，返回 {"sub","name","role"}。
+    用于在 GET 路由上放宽权限让 BOSS 也能读，写路由仍用 get_current_admin。
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+
+    token = authorization[7:]
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
+
+    role = payload.get("role")
+    if role not in ("admin", "boss"):
+        raise HTTPException(status_code=403, detail="需要管理员或老板权限")
+
+    return {
+        "username": payload.get("sub"),
+        "name": payload.get("name", ""),
+        "role": role,
+    }

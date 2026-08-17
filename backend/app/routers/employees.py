@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from app.database import get_db
 from app.models.employee import Employee, EmployeeStatus
-from app.routers.admin_auth import get_current_admin
+from app.routers.admin_auth import get_current_admin, get_current_admin_or_boss
 from app.schemas import (
     EmployeeCreateRequest,
     EmployeeUpdateRequest,
@@ -22,7 +22,7 @@ from app.schemas import (
 from app.services.wecom_contact_service import get_contact_service
 from app.services.auth_service import hash_password
 
-router = APIRouter(dependencies=[Depends(get_current_admin)])
+router = APIRouter(dependencies=[Depends(get_current_admin_or_boss)])
 
 
 # 批量导入模板的字段定义（顺序即 Excel 列顺序）
@@ -63,7 +63,10 @@ async def list_employees(
 
 
 @router.post("/sync", response_model=EmployeeSyncResult)
-async def sync_from_wecom(db: AsyncSession = Depends(get_db)):
+async def sync_from_wecom(
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+):
     """从企业微信通讯录同步员工信息
 
     前置条件：.env 中已配置 WECOM_CORP_ID 和 WECOM_SECRET，
@@ -86,7 +89,9 @@ async def get_employee(employee_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.post("", response_model=EmployeeResponse)
 async def create_employee(
-    request: EmployeeCreateRequest, db: AsyncSession = Depends(get_db)
+    request: EmployeeCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """手动添加员工"""
     return await _create_employee_record(request, db)
@@ -205,6 +210,7 @@ async def download_batch_template():
 async def batch_upload_employees(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """批量上传 Excel 添加员工
 
@@ -295,6 +301,7 @@ async def update_employee(
     employee_id: int,
     request: EmployeeUpdateRequest,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """更新员工信息"""
     result = await db.execute(select(Employee).where(Employee.id == employee_id))
@@ -319,7 +326,11 @@ async def update_employee(
 
 
 @router.delete("/{employee_id}")
-async def delete_employee(employee_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_employee(
+    employee_id: int,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+):
     """删除员工"""
     result = await db.execute(select(Employee).where(Employee.id == employee_id))
     emp = result.scalars().first()

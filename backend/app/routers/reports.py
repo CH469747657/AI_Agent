@@ -9,14 +9,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.reimbursement import Reimbursement
-from app.routers.admin_auth import get_current_admin
+from app.routers.admin_auth import get_current_admin, get_current_admin_or_boss
 from app.services.report_generator import ReportGenerator
 
-router = APIRouter(dependencies=[Depends(get_current_admin)])
+router = APIRouter(dependencies=[Depends(get_current_admin_or_boss)])
 
 
 @router.post("/generate/{reimbursement_id}")
-async def generate_reports(reimbursement_id: int, db: AsyncSession = Depends(get_db)):
+async def generate_reports(
+    reimbursement_id: int,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+):
     """生成报销包（Excel + PDF + ZIP）"""
     result = await db.execute(
         select(Reimbursement).where(Reimbursement.id == reimbursement_id)

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.routers.admin_auth import get_current_admin
+from app.routers.admin_auth import get_current_admin, get_current_admin_or_boss
 from app.schemas import (
     InvoiceResponse, InvoiceUpdateRequest, NoReceiptRequest,
     WeComProcessRequest, StatisticsResponse, InvoiceVerifyRequest,
@@ -13,7 +13,7 @@ from app.schemas import (
 )
 from app.services.invoice_service import InvoiceService
 
-router = APIRouter(dependencies=[Depends(get_current_admin)])
+router = APIRouter(dependencies=[Depends(get_current_admin_or_boss)])
 
 # 上传发票允许的文件扩展名
 ALLOWED_INVOICE_EXTS = {"pdf", "ofd", "jpg", "jpeg", "png", "gif", "bmp", "webp"}
@@ -26,6 +26,7 @@ async def upload_invoice(
     user_id: str = Form(...),
     user_description: str = Form("", min_length=0),  # 无感上传：备注可选
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """上传票据文件并自动处理（OCR + LLM 双源验证 + 分类 + 查重）
 
@@ -59,6 +60,7 @@ async def upload_invoice(
 async def process_from_wecom(
     request: WeComProcessRequest,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """企微网关转发：base64图片 → 处理"""
     file_data = base64.b64decode(request.file_data) if request.file_data else b""
@@ -78,6 +80,7 @@ async def process_from_wecom(
 async def create_no_receipt(
     request: NoReceiptRequest,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """无票报销：用户文字描述 → LLM 分类"""
     service = InvoiceService(db)
@@ -397,6 +400,7 @@ async def update_invoice(
     invoice_id: int,
     request: InvoiceUpdateRequest,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """更新发票信息（人工修正分类/项目/状态）"""
     from sqlalchemy import select
@@ -435,6 +439,7 @@ async def update_invoice(
 async def online_verify_invoice(
     invoice_id: int,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """在线验真：调用百度智能云增值税发票验真 API
 
@@ -565,6 +570,7 @@ async def verify_invoice(
     invoice_id: int,
     request: InvoiceVerifyRequest,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """手动设置发票验真状态"""
     from sqlalchemy import select
@@ -612,6 +618,7 @@ async def download_invoice_file(invoice_id: int, db: AsyncSession = Depends(get_
 async def approve_invoice(
     invoice_id: int,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """审核通过：REVIEWING → CONFIRMED（管理员专用）"""
     from sqlalchemy import select
@@ -638,6 +645,7 @@ async def approve_invoice(
 async def reject_invoice(
     invoice_id: int,
     db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
 ):
     """审核驳回：REVIEWING → NOT_REIMBURSED（管理员专用）"""
     from sqlalchemy import select
@@ -659,7 +667,11 @@ async def reject_invoice(
 
 
 @router.delete("/{invoice_id}")
-async def delete_invoice(invoice_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_invoice(
+    invoice_id: int,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+):
     """删除发票及其关联的 OCR/LLM 结果
 
     同时删除服务器上的原始票据文件。

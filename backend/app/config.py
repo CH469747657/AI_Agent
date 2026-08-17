@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     admin_username: str = os.getenv("ADMIN_USERNAME", "admin")
     admin_password_hash: str = os.getenv("ADMIN_PASSWORD_HASH", "")
 
+    # 老板端账号 — 单一老板账户，账户名/密码哈希从 .env 读取
+    # 与员工端 employees 表、管理端 admin 账户完全分离
+    boss_username: str = os.getenv("BOSS_USERNAME", "")
+    boss_password_hash: str = os.getenv("BOSS_PASSWORD_HASH", "")
+
     # CORS 配置 — 多个域名用逗号分隔
     cors_allow_origins: str = os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:5173")
 

@@ -89,7 +89,7 @@ function useRoleAndUserId(): { role: DialogRole; userId: string; displayName: st
       return {
         role: "boss" as DialogRole,
         userId: profile?.username || "boss",
-        displayName: profile?.name || "老板",
+        displayName: profile?.name || "超级管理员",
       };
     }
     // 管理后台默认 admin
@@ -444,7 +444,7 @@ function createWelcomeMessage(role: DialogRole, name: string): DialogMessage {
       ? `你好${name}！我是 AI 报销助手，发送发票图片即可上传报销，输入「帮助」查看完整功能。`
       : role === "admin"
         ? `管理员你好！我可以帮你上传发票、查询报销、审批操作和数据洞察。输入「帮助」查看详情。`
-        : `老板好！我可以帮您查看公司报销数据洞察。输入「帮助」查看可用功能。`;
+        : `超级管理员好！我可以帮您查看公司报销数据洞察。输入「帮助」查看可用功能。`;
   return {
     id: "welcome",
     role: "assistant",
@@ -1019,7 +1019,7 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
                       <span className="pulse-dot" aria-label="在线" />
                     </span>
                     <span className="text-[10px] text-white/70">
-                      {role === "employee" ? "员工模式" : role === "admin" ? "管理员模式" : "老板模式"}
+                      {role === "employee" ? "员工模式" : role === "admin" ? "管理员模式" : "超级管理员模式"}
                       {" · "}
                       {displayName}
                     </span>

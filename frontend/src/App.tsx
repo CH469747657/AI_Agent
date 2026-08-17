@@ -49,7 +49,7 @@ function App() {
 
   return (
     <>
-      {/* 老板端：独立移动端布局，底部 3 Tab */}
+      {/* 超级管理员端：独立移动端布局，底部 3 Tab */}
       {isBoss ? (
         <Routes location={location}>
           <Route path="/boss/login" element={<BossLogin />} />

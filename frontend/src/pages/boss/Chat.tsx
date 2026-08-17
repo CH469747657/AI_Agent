@@ -2,7 +2,7 @@ import { bossApi } from "../../api/client";
 import { ChatFullscreen } from "../../components/chat/ChatFullscreen";
 
 /**
- * 老板端"智能问数"页 — 复用员工端 ChatFullscreen 主体
+ * 超级管理员端"智能问数"页 — 复用员工端 ChatFullscreen 主体
  *
  * ChatWidget 内部 useRoleAndUserId 会按 /boss/* 路径推导 role=boss，
  * 对话引擎后端按 BOSS 角色路由 BOSS 意图（含 3 个 BOSS 独有洞察）。
@@ -14,7 +14,7 @@ export function BossChat() {
     <div className="flex h-[calc(100dvh-3.5rem)] flex-col sm:h-[calc(100dvh-3.5rem)]">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pt-4 text-sm text-muted-foreground sm:gap-6 sm:px-8 sm:pt-6">
         <span>
-          您好，<b className="text-foreground">{profile?.name || "老板"}</b>
+          您好，<b className="text-foreground">{profile?.name || "超级管理员"}</b>
         </span>
         <span className="hidden h-3 w-px bg-border sm:block" />
         <span>

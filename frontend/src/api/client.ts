@@ -1079,25 +1079,25 @@ export const adminApi = {
   },
 };
 
-// ===== 老板端 API（BOSS） — token 与 admin_token / portal_token 物理隔离 =====
+// ===== 超级管理员端 API（BOSS） — token 与 admin_token / portal_token 物理隔离 =====
 
-/** 获取老板端 token */
+/** 获取超级管理员端 token */
 function getBossToken(): string | null {
   return localStorage.getItem("boss_token");
 }
 
-/** 保存老板端 token */
+/** 保存超级管理员端 token */
 function setBossToken(token: string) {
   localStorage.setItem("boss_token", token);
 }
 
-/** 清除老板端 token */
+/** 清除超级管理员端 token */
 function clearBossToken() {
   localStorage.removeItem("boss_token");
   localStorage.removeItem("boss_profile");
 }
 
-/** 老板端专用请求函数 — 自动注入 boss_token，401 清 token + 跳 /boss/login */
+/** 超级管理员端专用请求函数 — 自动注入 boss_token，401 清 token + 跳 /boss/login */
 async function bossRequest<T>(
   url: string,
   options?: RequestInit

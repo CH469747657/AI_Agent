@@ -53,7 +53,7 @@ export function BossLogin() {
           <h1 className="font-display text-2xl font-bold tracking-tight text-foreground">
             发票报销智能助手
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">老板端登录</p>
+          <p className="mt-1 text-sm text-muted-foreground">超级管理员登录</p>
         </div>
 
         <div className="rounded-xl border border-border bg-background p-6 shadow-lg">

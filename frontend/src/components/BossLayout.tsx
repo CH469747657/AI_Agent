@@ -15,7 +15,7 @@ const navItems = [
 ];
 
 /**
- * 老板端布局 — 复用员工端的设计语言（顶部 header + 底部 Tab Bar + design-system 配色）
+ * 超级管理员端布局 — 复用员工端的设计语言（顶部 header + 底部 Tab Bar + design-system 配色）
  * 详情页（含 /:id）隐藏底部 Tab，由详情页自身提供返回按钮
  */
 export function BossLayout() {
@@ -53,7 +53,7 @@ export function BossLayout() {
             发票报销智能助手
           </span>
           <span className="ml-1 hidden rounded-full bg-primary-50 px-2 py-0.5 text-xs font-medium text-primary-700 sm:inline">
-            老板端
+            超级管理员
           </span>
         </div>
 

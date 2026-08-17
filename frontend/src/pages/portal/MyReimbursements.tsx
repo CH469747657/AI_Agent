@@ -802,7 +802,7 @@ function ReimbursementDetail({
                       {td.note || "—"} · 当日发票 {invoiceCount} 张
                     </p>
                   </div>
-                  {isDraft && (
+                  {isDraft && !detail.is_cycle_locked && (
                     <button
                       onClick={async () => {
                         try {

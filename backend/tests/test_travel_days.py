@@ -266,3 +266,46 @@ def test_unauth_cannot_access(client):
     """无 token → 401"""
     resp = client.get("/api/portal/travel-days")
     assert resp.status_code == 401
+
+
+def test_mark_after_cycle_lock_rejected(client):
+    """周期封账后 POST/DELETE travel_days → 409"""
+    from datetime import date
+    from app.services.cycle_engine import current_cycle_key
+
+    token = _emp_token(client)
+    d = _today_in_cycle()
+    # 先标一个
+    resp = client.post(
+        "/api/portal/travel-days",
+        json={"travel_date": d, "note": None},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    # 用 admin 端点封账该周期
+    ck = current_cycle_key(date.today())
+    admin_token = _admin_token(client)
+    lock_resp = client.post(
+        f"/api/reimbursements/cycle/lock/{ck}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert lock_resp.status_code == 200, lock_resp.text
+
+    # 再标一个（同周期内今天）→ 409
+    other_d = date.today().isoformat()
+    resp2 = client.post(
+        "/api/portal/travel-days",
+        json={"travel_date": other_d, "note": None},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp2.status_code == 409, resp2.text
+    assert "封账" in resp2.json()["detail"]
+
+    # 删除已标的 → 409
+    del_resp = client.delete(
+        f"/api/portal/travel-days/by-date/{d}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert del_resp.status_code == 409, del_resp.text
+    assert "封账" in del_resp.json()["detail"]

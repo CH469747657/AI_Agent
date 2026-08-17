@@ -22,7 +22,30 @@ import urllib.request
 import urllib.error
 from datetime import date
 
-BASE = "http://127.0.0.1:18080"
+# 容器内执行时让 /app 模块可被导入（用于 _reset_cycle_unlock 直接改 DB）
+for _p in ("/app",):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+# 容器内 backend 监听 8080，本机走 docker 映射的 18080
+def _detect_base() -> str:
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.5)
+        try:
+            s.connect(("127.0.0.1", 8080))
+            return "http://127.0.0.1:8080"
+        except OSError:
+            pass
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+    return "http://127.0.0.1:18080"
+
+BASE = _detect_base()
 
 
 def req(method: str, path: str, body=None, token=None):
@@ -42,10 +65,42 @@ def req(method: str, path: str, body=None, token=None):
             return e.code, None
 
 
+def _reset_cycle_unlock():
+    """E2E 前重置 EMP001 当前周期报销单的封账标志（避免上轮测试残留）
+
+    优先在 backend 容器内跑（用 app 模块），失败则尝试直连 DB
+    """
+    import asyncio
+    import os
+    from app.services.cycle_engine import current_cycle_key
+    from app.database import get_async_sessionmaker
+    from app.models.reimbursement import Reimbursement
+    from sqlalchemy import select, update
+
+    async def _do():
+        async with get_async_sessionmaker()() as db:
+            ck = current_cycle_key(date.today())
+            await db.execute(
+                update(Reimbursement)
+                .where(Reimbursement.applicant_id == "EMP001")
+                .where(Reimbursement.cycle_key == ck)
+                .values(is_cycle_locked=False, locked_at=None)
+            )
+            await db.commit()
+
+    try:
+        asyncio.run(_do())
+    except Exception as e:
+        print(f"  [warn] reset cycle lock 失败（忽略）：{e}", file=sys.stderr)
+
+
 def main():
     print("=" * 60)
     print("出差日 E2E 验证")
     print("=" * 60)
+
+    # 0. 重置封账标志（防止上轮测试残留封账状态导致后续 POST 409）
+    _reset_cycle_unlock()
 
     # 1. 员工登录
     code, body = req(

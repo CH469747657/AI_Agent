@@ -57,6 +57,19 @@ async def _get_or_create_my_reimbursement(
     return await get_or_create_reimbursement(db, employee.employee_no, expected_cycle_key)
 
 
+def _assert_not_locked(reimb: Reimbursement) -> None:
+    """周期已封账则禁止改 travel_days（21 日定时任务后只读）"""
+    if reimb.is_cycle_locked:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"周期 {reimb.cycle_key} 已封账"
+                f"（{reimb.locked_at.isoformat() if reimb.locked_at else ''}），"
+                f"不能再修改出差日"
+            ),
+        )
+
+
 @portal_router.get("", response_model=List[TravelDayResponse])
 async def list_my_travel_days(
     employee: Employee = Depends(get_current_employee_async),
@@ -79,6 +92,7 @@ async def mark_travel_day(
 ):
     """标记一个出差日"""
     reimb = await _get_or_create_my_reimbursement(db, employee, req.travel_date)
+    _assert_not_locked(reimb)
 
     cycle_year = (reimb.cycle_start or date.today()).year
     holidays = await load_holidays(db, cycle_year)
@@ -124,11 +138,15 @@ async def delete_travel_day(
         raise HTTPException(status_code=403, detail="不能删除他人的出差日")
 
     reimb_id = td.reimbursement_id
-    await db.delete(td)
-
     reimb = (
         await db.execute(select(Reimbursement).where(Reimbursement.id == reimb_id))
     ).scalars().first()
+    if reimb:
+        _assert_not_locked(reimb)
+
+    await db.delete(td)
+    await db.flush()
+
     if reimb:
         cycle_year = (reimb.cycle_start or date.today()).year
         holidays = await load_holidays(db, cycle_year)
@@ -156,11 +174,15 @@ async def delete_travel_day_by_date(
         raise HTTPException(status_code=404, detail=f"出差日 {travel_date} 不存在")
 
     reimb_id = td.reimbursement_id
-    await db.delete(td)
-
     reimb = (
         await db.execute(select(Reimbursement).where(Reimbursement.id == reimb_id))
     ).scalars().first()
+    if reimb:
+        _assert_not_locked(reimb)
+
+    await db.delete(td)
+    await db.flush()
+
     if reimb:
         cycle_year = (reimb.cycle_start or date.today()).year
         holidays = await load_holidays(db, cycle_year)

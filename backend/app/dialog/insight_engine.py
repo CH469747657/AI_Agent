@@ -809,6 +809,15 @@ class InsightEngine:
                 cnt, amt = by_status[status]
                 lines.append(f"  {name}：{self._fmt_money(amt)}（{cnt} 笔）")
 
+        # 按状态汇总表格预览
+        lines.append("\n| 状态 | 报销单数 | 金额 |")
+        lines.append("|------|----------|------|")
+        for status, name in status_names.items():
+            if status in by_status:
+                cnt, amt = by_status[status]
+                lines.append(f"| {name} | {cnt} 笔 | {self._fmt_money(amt)} |")
+        lines.append(f"| **合计** | **{len(reimbs)} 笔** | **{self._fmt_money(total)}** |")
+
         return {"text": "\n".join(lines), "data": {
             "total": total, "count": len(reimbs),
             "persons": len(persons), "period": desc
@@ -1004,6 +1013,12 @@ class InsightEngine:
             for month, amount in sorted_months:
                 lines.append(f"  {month}：{self._fmt_money(amount)}")
             lines.append("\n数据不足，无法计算趋势。")
+            # 单月也输出表格预览
+            if sorted_months:
+                lines.append("\n| 月份 | 报销金额 | 报销单数 |")
+                lines.append("|------|----------|----------|")
+                for month, amount in sorted_months:
+                    lines.append(f"| {month} | {self._fmt_money(amount)} | {monthly_count[month]} 笔 |")
             return {"text": "\n".join(lines), "data": {"monthly": dict(sorted_months)}}
 
         last_val = sorted_months[-1][1]
@@ -1014,6 +1029,12 @@ class InsightEngine:
         for month, amount in sorted_months:
             lines.append(f"  {month}：{self._fmt_money(amount)}（{monthly_count[month]} 笔）")
         lines.append(f"\n📈 环比：{trend}")
+
+        # 月度趋势表格预览
+        lines.append("\n| 月份 | 报销金额 | 报销单数 |")
+        lines.append("|------|----------|----------|")
+        for month, amount in sorted_months:
+            lines.append(f"| {month} | {self._fmt_money(amount)} | {monthly_count[month]} 笔 |")
 
         return {"text": "\n".join(lines), "data": {
             "monthly": dict(sorted_months), "trend": trend, "period": desc
@@ -1098,40 +1119,62 @@ class InsightEngine:
 
         lines = [f"⚠️ 异常检测报告（{desc}）\n"]
 
+        # 异常汇总表格预览
+        lines.append("| 异常类型 | 数量 |")
+        lines.append("|----------|------|")
+        if dups:
+            lines.append(f"| 重复发票 | {len(dups)} 张 |")
+        if invalids:
+            lines.append(f"| 验真失败 | {len(invalids)} 张 |")
+        if risks:
+            lines.append(f"| 高风险票据 | {len(risks)} 张 |")
+        if over_budget:
+            lines.append(f"| 超标报销 | {len(over_budget)} 笔 |")
+        lines.append(f"| **合计** | **{total_anomalies}** |")
+        lines.append("")
+
         if dups:
             lines.append(f"🔍 重复发票：{len(dups)} 张")
+            lines.append("| 发票编号 | 销售方 | 金额 |")
+            lines.append("|----------|--------|------|")
             for inv in dups[:5]:
                 seller = inv.seller_name or "未知"
                 amount = inv.total_with_tax or "—"
-                lines.append(f"  #{inv.id} | {seller} | ¥{amount}")
+                lines.append(f"| #{inv.id} | {seller} | ¥{amount} |")
             if len(dups) > 5:
-                lines.append(f"  ...等 {len(dups)} 张")
+                lines.append(f"| ... | 共 {len(dups)} 张 | ... |")
             lines.append("")
 
         if invalids:
             lines.append(f"❌ 验真失败：{len(invalids)} 张")
+            lines.append("| 发票编号 | 销售方 | 失败原因 |")
+            lines.append("|----------|--------|----------|")
             for inv in invalids[:5]:
                 seller = inv.seller_name or "未知"
                 msg = inv.verify_message or "无"
-                lines.append(f"  #{inv.id} | {seller} | {msg}")
+                lines.append(f"| #{inv.id} | {seller} | {msg} |")
             if len(invalids) > 5:
-                lines.append(f"  ...等 {len(invalids)} 张")
+                lines.append(f"| ... | 共 {len(invalids)} 张 | ... |")
             lines.append("")
 
         if risks:
             lines.append(f"🚨 高风险票据：{len(risks)} 张")
+            lines.append("| 发票编号 | 销售方 |")
+            lines.append("|----------|--------|")
             for inv in risks[:5]:
                 seller = inv.seller_name or "非标准票据"
-                lines.append(f"  #{inv.id} | {seller}")
+                lines.append(f"| #{inv.id} | {seller} |")
             if len(risks) > 5:
-                lines.append(f"  ...等 {len(risks)} 张")
+                lines.append(f"| ... | 共 {len(risks)} 张 | ... |")
             lines.append("")
 
         if over_budget:
             lines.append(f"📈 超标报销：{len(over_budget)} 笔（超出均值2倍）")
+            lines.append("| 报销单编号 | 申请人 | 金额 |")
+            lines.append("|------------|--------|------|")
             for r in over_budget[:5]:
                 name = r.applicant_name or r.applicant_id
-                lines.append(f"  #{r.id} | {name} | {self._fmt_money(r.total_amount or 0)}")
+                lines.append(f"| #{r.id} | {name} | {self._fmt_money(r.total_amount or 0)} |")
 
         return {"text": "\n".join(lines), "data": {
             "total": total_anomalies,
@@ -1229,6 +1272,12 @@ class InsightEngine:
                 line += f"  {date}"
             lines.append(line)
 
+        # 发票排名表格预览
+        lines.append("\n| 排名 | 销售方 | 金额 | 分类 | 开票日期 |")
+        lines.append("|------|--------|------|------|----------|")
+        for i, (inv_id, seller, amount, category, date) in enumerate(top_n, 1):
+            lines.append(f"| {i} | {seller} | {self._fmt_money(amount)} | {category if category and category != '未分类' else '—'} | {date or '—'} |")
+
         return {"text": "\n".join(lines), "data": {
             "top": [(seller, amt) for _, seller, amt, _, _ in top_n],
             "period": desc,
@@ -1288,6 +1337,14 @@ class InsightEngine:
             name = person_names.get(uid, uid)
             count = person_counts[uid]
             lines.append(f"  {i}. {name}  {self._fmt_money(amount)}（{count} 笔）")
+
+        # 人员排名表格预览
+        lines.append("\n| 排名 | 申请人 | 报销金额 | 报销单数 |")
+        lines.append("|------|--------|----------|----------|")
+        for i, (uid, amount) in enumerate(top_n, 1):
+            name = person_names.get(uid, uid)
+            count = person_counts[uid]
+            lines.append(f"| {i} | {name} | {self._fmt_money(amount)} | {count} 笔 |")
 
         return {"text": "\n".join(lines), "data": {
             "top": [(person_names.get(uid, uid), amt) for uid, amt in top_n],
@@ -1404,6 +1461,15 @@ class InsightEngine:
             lines.append(f"  {i}. {dept_name}  {self._fmt_money(amount or 0)}（{pct}，{count} 笔）")
         lines.append(f"\n合计：{self._fmt_money(total)}")
 
+        # 部门费用排名表格预览
+        lines.append("\n| 排名 | 部门 | 报销金额 | 占比 | 报销单数 |")
+        lines.append("|------|------|----------|------|----------|")
+        for i, (dept, amount, count) in enumerate(rows, 1):
+            dept_name = dept or "未分配部门"
+            pct = self._fmt_pct(amount or 0, total)
+            lines.append(f"| {i} | {dept_name} | {self._fmt_money(amount or 0)} | {pct} | {count} 笔 |")
+        lines.append(f"| **合计** | — | **{self._fmt_money(total)}** | **100%** | — |")
+
         return {"text": "\n".join(lines), "data": {
             "departments": [(r[0] or "未分配", r[1] or 0) for r in rows],
             "total": total, "period": desc,
@@ -1421,11 +1487,21 @@ class InsightEngine:
         person_name = person_slot.value if person_slot and person_slot.filled else ""
 
         if not person_name:
-            return {"text": "请告诉我员工姓名，例如「查张三的费用」。", "data": {}}
+            return {
+                "text": "请告诉我具体员工姓名，例如「查张三的费用」。如需查看全公司数据，可以说「公司花了多少」「公司报销总额」「各部门报销」等。",
+                "data": {},
+            }
 
-        # 防御：过滤时间词/通用词，避免"目前"等被当人名查询
+        # 防御：过滤时间词/通用词/LLM 缺失槽位填的 None，避免被当人名查询
         if not _is_valid_person(person_name):
-            return {"text": f"「{person_name}」不是有效的员工姓名，请使用具体人名或工号查询。", "data": {}}
+            return {
+                "text": (
+                    f"「{person_name}」不是有效的员工姓名。"
+                    f"如需查全公司数据，可以说「公司报销总额」「各部门报销」"
+                    f"「重复的发票」「高风险的发票」等；查具体员工请使用姓名或工号。"
+                ),
+                "data": {},
+            }
 
         # 统一人名解析（先精确 ==，后模糊 contains，多候选消歧）
         resolution = await resolve_person(person_name, db, table_hint="reimbursement")
@@ -1565,6 +1641,12 @@ class InsightEngine:
             f"\n📈 报销金额环比：{trend}",
             f"📈 报销人数环比：{person_trend}",
         ]
+
+        # 本月 vs 上月对比表格
+        lines.append("\n| 周期 | 报销金额 | 报销单数 | 报销人数 |")
+        lines.append("|------|----------|----------|----------|")
+        lines.append(f"| 本月（{now.year}年{now.month}月） | {self._fmt_money(this_total)} | {len(this_reimbs)} 笔 | {len(this_persons)} 人 |")
+        lines.append(f"| 上月（{last_start.year}年{last_start.month}月） | {self._fmt_money(last_total)} | {len(last_reimbs)} 笔 | {len(last_persons)} 人 |")
 
         return {"text": "\n".join(lines), "data": {
             "this_month": this_total, "last_month": last_total,
@@ -2073,6 +2155,8 @@ _NON_PERSON_WORDS = frozenset({
     # 英文通用词 — LLM 偶发将"所有/全部"翻译成英文填入 person slot
     "all", "total", "everyone", "everybody", "all_users",
     "all_employees", "whole", "entire",
+    # LLM 偶发将缺失槽位填为字面 "None"/"null"/"未指定"
+    "none", "null", "n/a", "na", "未指定", "未知", "无",
 })
 
 # 候选人名不应以后缀词结尾（防止日期碎片"月一共"等被误识别）
@@ -2084,6 +2168,12 @@ _NON_PERSON_SUFFIXES = frozenset({
 
 def _is_valid_person(candidate: str) -> bool:
     """检查候选名是否为有效人员名（排除时间词和日期碎片）"""
+    if not candidate:
+        return False
+    # case-insensitive 比较，防止 LLM 偶发填 "None"/"NULL"/"N/A"
+    lower = candidate.lower() if isinstance(candidate, str) else str(candidate).lower()
+    if lower in {w.lower() for w in _NON_PERSON_WORDS}:
+        return False
     if candidate in _NON_PERSON_WORDS:
         return False
     return not any(candidate.endswith(s) for s in _NON_PERSON_SUFFIXES)

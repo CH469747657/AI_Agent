@@ -441,6 +441,19 @@ class AgentCore:
 12. **引导用户上传时也附表格**：用户说"上传发票""再上传一张"但未附文件时，先按规则 8 引导
     用户上传，**同时**调用 emp_query_invoices 工具展示当前已有的发票列表表格，让用户对照
     上下文决定补充哪张发票的字段或继续上传。这避免用户问"再上传一张"时只收到一句空泛引导。
+13. **老板全公司查询**（关键）：老板/管理员说"公司所有发票""全部发票""所有员工的发票"
+    "公司报销总额""各部门报销""重复的发票""验真失败的发票""高风险的发票""全公司费用趋势"
+    "公司本月对比""谁报销最多"等全公司范围查询时，**不要调用 insight_person 工具**
+    （person 参数不要填"None"/"全公司"/"所有"等非人名值）。应调用：
+    - "公司所有发票""全部发票""发票总金额""一共多少张发票" → insight_invoice_total（不传 person）
+    - "公司报销总额""公司花了多少" → insight_total
+    - "各部门报销""哪个部门花得多" → insight_by_dept
+    - "公司费用趋势""费用变化" → insight_trend
+    - "这个月比上个月""环比对比" → insight_compare
+    - "谁报销最多""费用排名""TOP N" → insight_top
+    - "重复的发票""验真失败的发票""高风险的发票""待审核的发票""收据" → insight_invoice_filter
+      （filter_type 填对应枚举：duplicate/invalid/high_risk/pending/receipt，不传 person）
+    - 仅当老板明确提到**具体人名**（如"陈辉的报销""李总的发票"）才调用 insight_person + person="具体姓名"
 """
         # follow_up 上下文：上一轮上传了发票，等待用户补充用途
         if context.pending_invoice_id:

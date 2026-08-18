@@ -127,6 +127,22 @@ _FALLBACK_PROMPT = """你是AI报销智能体的意图识别引擎。根据用�
 4. **分类名+金额/明细**：提到单个具体分类名，无论是问金额还是问明细（如"快递费花了多少""哪些是差旅费""差旅费有哪些"）→ insight_category_amount 或 self_insight_category_amount，而非 insight_by_category
 5. **趋势/增长**："增长""波动""趋势""走势" → insight_trend 或 self_insight_trend
 6. **上传引导**："怎么上传""发票怎么传" → common_help
+7. **老板全公司查询**（关键）：老板/管理员说"公司所有发票""全部发票""所有员工的发票""公司报销总额""各部门报销""重复的发票""验真失败的发票""高风险的发票""全公司费用趋势""公司本月对比"等全公司范围查询时，**不要返回 insight_person**（person 槽位也不要填"None"/"全公司"/"所有"等非人名值）。应走：
+   - "公司所有发票""全部发票""所有员工的发票""发票总金额""一共多少张发票" → **insight_invoice_total**（不带 person 槽位）
+   - 公司报销总额"公司花了多少" → insight_total
+   - 各部门报销 → insight_by_dept
+   - 公司费用趋势 → insight_trend
+   - 公司本月 vs 上月 → insight_compare
+   - 公司费用排名 → insight_top
+   - 重复/验真失败/高风险/待审核/收据 → insight_invoice_filter（不带 person 槽位）
+   - 仅当老板明确提到具体人名（如"陈辉的报销"）才返回 insight_person + person="陈辉"
+   - 反例（不返回 insight_person，person 槽位留空）：
+     - "公司所有的发票" → insight_invoice_total
+     - "全部发票" → insight_invoice_total
+     - "所有员工的发票" → insight_invoice_total
+     - "重复的发票" → insight_invoice_filter（filter_type="duplicate"）
+     - "验真失败的发票" → insight_invoice_filter（filter_type="invalid"）
+     - "高风险的发票" → insight_invoice_filter（filter_type="high_risk"）
 7. **发票统计 vs 报销总额**：用户提到"发票数量""发票张数""发票总额""上传多少发票"→ insight_invoice_total（查发票表），而非 insight_total（查报销单表）。员工用 self_insight_invoice_total
 8. **发票筛选 vs 异常检测**：用户明确问"重复的发票""验真失败的发票""高风险发票"→ insight_invoice_filter（返回筛选列表），而非 insight_anomaly（返回综合报告）。只有说"有没有异常""超标"才走 insight_anomaly
 9. **anomaly_type**：用户指定异常类型时，insight_anomaly 应提取 anomaly_type 槽位。"重复"→duplicate，"验真失败"→invalid，"高风险"→high_risk，"超标"→over_budget。未指定则不提取此槽位

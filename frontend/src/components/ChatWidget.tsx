@@ -13,6 +13,7 @@ import {
   WarningCircle,
   ArrowCounterClockwise,
   Calendar,
+  FileText,
 } from "@phosphor-icons/react";
 import { dialogApi, portalApi, bossApi } from "../api/client";
 import type { DialogMessage, DialogRole, BatchInvoiceSummary, TravelDay } from "../types";
@@ -1110,11 +1111,22 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
                 </button>
               </div>
             )}
-            {/* 单文件预览 */}
-            {filePreview && pendingFiles.length <= 1 && (
+            {/* 单文件预览 — 图片显示缩略图，PDF/OFD 显示文件名+图标 */}
+            {pendingFiles.length === 1 && (
               <div className="relative z-30 flex items-center gap-2 border-t border-border bg-muted px-4 py-2">
-                <img src={filePreview} alt="待发送" className="h-12 w-12 rounded-lg border border-border object-cover" />
-                <span className="flex-1 text-xs text-muted-foreground">附件已就绪，输入文字后发送，或直接发送</span>
+                {filePreview ? (
+                  <img src={filePreview} alt="待发送" className="h-12 w-12 rounded-lg border border-border object-cover" />
+                ) : (
+                  <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-border bg-primary-50 text-primary-700">
+                    <FileText size={22} weight="bold" />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-foreground truncate">
+                    {pendingFiles[0].name}
+                  </p>
+                  <p className="text-xs text-muted-foreground">附件已就绪，输入文字后发送，或直接发送</p>
+                </div>
                 <button
                   onClick={() => { setSelectedFile(null); setFilePreview(""); setPendingFiles([]); }}
                   className="text-xs text-muted-foreground hover:text-red-500"

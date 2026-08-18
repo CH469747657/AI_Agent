@@ -127,43 +127,10 @@ class InvoiceService:
             # 3. 并行执行 OCR + LLM
             ocr_result, llm_result = await self._run_dual_source(file_data, file_type)
 
-            # 3.5. 根据OCR原始文本自动修正票据类型
-            if ocr_result and ocr_result.get("raw_text"):
-                raw = ocr_result["raw_text"]
-                if "专用发票" in raw or ("专用" in raw and "发票" in raw):
-                    if invoice.receipt_type != ReceiptType.vat_special:
-                        logger.info(f"Invoice #{invoice.id} 票据类型自动修正: {invoice.receipt_type.value} → 增值税专用发票")
-                        invoice.receipt_type = ReceiptType.vat_special
-                elif "普通发票" in raw or ("普通" in raw and "发票" in raw):
-                    if invoice.receipt_type != ReceiptType.vat_normal:
-                        logger.info(f"Invoice #{invoice.id} 票据类型自动修正: {invoice.receipt_type.value} → 增值税普通发票")
-                        invoice.receipt_type = ReceiptType.vat_normal
-
-                # 3.6. 反向修正：OCR文本中无发票特征但有支付截图特征时，纠正误分类
-                # 当VLM将支付截图误判为增值税发票时，OCR文本不会包含"发票"字样，
-                # 但会包含支付App特征词，利用此信号做二次纠正
-                if invoice.receipt_type in (ReceiptType.vat_normal, ReceiptType.vat_special):
-                    no_invoice_keywords = "发票" not in raw and "发票代码" not in raw and "校验码" not in raw
-                    payment_keywords = any(kw in raw for kw in [
-                        "支付成功", "交易完成", "付款金额", "收款方",
-                        "交易单号", "微信支付", "支付宝", "转账",
-                    ])
-                    if no_invoice_keywords and payment_keywords:
-                        logger.info(
-                            f"Invoice #{invoice.id} 票据类型反向修正: {invoice.receipt_type.value} → 支付截图 "
-                            f"(OCR无发票特征，检测到支付App特征)"
-                        )
-                        invoice.receipt_type = ReceiptType.payment_screenshot
-                        # 类型已修正为非标，需重新路由到非标管线
-                        from app.services.nonstandard_service import NonStandardReceiptService
-                        nonstandard_svc = NonStandardReceiptService(self.db)
-                        invoice = await nonstandard_svc.process(
-                            invoice=invoice,
-                            file_data=file_data,
-                            file_type=file_type,
-                            user_description=user_description,
-                        )
-                        return invoice
+            # 票据类型判定责任收敛到 VLM（_detect_receipt_type_by_vision）
+            # 不再用 OCR 文本关键词二次修正类型 —— 关键词规则覆盖不全，
+            # 与 VLM 视觉判断冲突时难定优先级，分散了判定责任。
+            # VLM 判错时由用户在对话框补充（如"这是收据"）修正类型。
 
             # 4. 双源比对
             ocr_fields = ocr_result.get("extracted_fields", {}) if ocr_result else {}
@@ -451,17 +418,19 @@ class InvoiceService:
 
 只返回类型名称，不要其他文字。
 
-## 类型特征（按视觉布局区分）：
+## 类型特征（按视觉布局区分）
 
-**增值税普通发票** — 官方标准格式：
-- 顶部有红色边框和"XX省/市增值税普通发票"标题
-- 有"发票代码"、"发票号码"（20位）、"校验码"等官方字段
+**增值税普通发票** — 国家税务总局监制的官方标准格式：
+- 顶部有红色/蓝色边框，标题为"XX省/市增值税普通发票"
+- **必须有"发票代码"（20位）、"发票号码"（20位）、"校验码"等官方字段**
 - 分为购买方、销售方、货物明细、金额等标准区块
 - 底部有"国家税务总局监制"字样
+- **关键判据**：标题明确含"增值税普通发票"，且含发票代码/号码/校验码
 
 **增值税专用发票** — 与普票类似但标题含"专用"：
 - 顶部标题为"XX省/市增值税**专用**发票"
 - 其他布局与普通发票相同
+- **关键判据**：标题含"增值税专用发票"
 
 **火车票** — 12306标准格式：
 - 票面较小，横向布局
@@ -473,23 +442,37 @@ class InvoiceService:
 - 有出发/到达机场、登机时间
 - 通常有航空公司Logo
 
-**收据** — 手写或简易格式：
-- 标题含"收据"或"收条"
-- 格式简单，无发票代码/号码
-- 可能为手写体
+**收据** — 手写或简易打印的收款凭证，**非发票**：
+- 标题含"收据""收条""收款凭证""缴费凭证""收款收据"等
+- 格式简单，**无"发票代码""发票号码""校验码"等官方字段**
+- 可能为手写体或简易打印
+- 可能含"实收金额""人民币大写""收款员工号"等字样
+- **关键判据**：标题含"收据/收款凭证/缴费凭证"且**不含**"发票代码/校验码"
+- **特别注意**：即使票面有"号码"字段，只要不是"发票代码/发票号码/校验码"，仍应判为收据
 
-**支付截图** — 手机App截图：
+**支付截图** — 手机App截图，**非发票**：
 - **明显是手机App界面截图**，非正式票据
 - 顶部有微信/支付宝的绿色或蓝色导航栏
-- 显示"支付成功"、"交易完成"等状态
-- 包含"收款方"、"付款金额"、"交易时间"、"交易单号"
+- 显示"支付成功""交易完成"等状态
+- 包含"收款方""付款金额""交易时间""交易单号"
 - 有手机状态栏（信号、电量、时间）
-- **无"发票代码"、"发票号码"、"校验码"等官方字段**
+- **无"发票代码""发票号码""校验码"等官方字段**
 
 **交易流水单** — 银行/支付平台流水：
 - 表格形式，多行交易记录
 - 包含日期、金额、余额、交易类型等列
 - 有账户信息或银行Logo
+
+## 关键判别规则（防止误判为增值税发票）
+
+1. **出租车发票**（含"车费发票""TAXI""客运出租"字样）→ **收据**（不是增值税发票）
+   - 虽含"发票"字样，但不是增值税发票，归为收据类
+2. **缴费凭证/收款凭证**（电信/水电/燃气等）→ **收据**
+   - 标题含"收款凭证""缴费凭证"，明确不是发票
+3. **手写收据** → **收据**
+4. **支付App截图** → **支付截图**（不是增值税发票）
+5. **必须含"发票代码+发票号码+校验码"3个官方字段**才能判为增值税发票（普通/专用）
+   - 缺任一字段 → 不是增值税发票，按其他类型判断
 
 若无法判断，返回"未知"。"""
 

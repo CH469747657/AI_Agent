@@ -41,7 +41,14 @@ class UploadInvoiceTool(_BridgeTool):
 
 class FillInvoiceDescTool(_BridgeTool):
     name = "emp_fill_invoice_desc"
-    description = "为刚上传的发票补充用途描述/备注"
+    description = (
+        "为刚上传的发票补充用途描述/出差日期。**关键拆分规则**：用户回复中"
+        "若同时包含日期+用途（如「8月2日 打车费」「出差时间8月1日，项目投标费」"
+        "「7月15号去上海打车」），必须拆分为两个参数：purpose 只填用途短语（不含日期），"
+        "expense_date 填 YYYY-MM-DD 日期。用户只说月日未带年份时用当前年份 2026 补全。"
+        "反例：purpose=\"8月2日 打车费\" ❌（日期被塞进用途）。"
+        "正例：purpose=\"打车费\" + expense_date=\"2026-08-02\" ✓"
+    )
     Parameters = FillInvoiceDescParams
     required_roles = [UserRole.EMPLOYEE, UserRole.ADMIN]
     handler_method = "_handle_fill_invoice_desc"

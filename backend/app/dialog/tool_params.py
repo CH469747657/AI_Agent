@@ -28,12 +28,26 @@ class UploadInvoiceParams(BaseModel):
 class FillInvoiceDescParams(BaseModel):
     """补充发票用途描述参数
 
-    支持一次性同时补充用途和出差日期——用户回复"出差时间8月1日，项目投标费"时，
-    LLM 应拆分为 purpose="项目投标费" + expense_date="2026-08-01" 两个参数，
-    避免日期信息丢失。
+    支持一次性同时补充用途和出差日期——用户回复"出差时间8月1日，项目投标费"
+    或"8月2日 打车费"时，LLM 应拆分为：
+    - purpose="项目投标费"（仅用途短语，**不含日期**）
+    - expense_date="2026-08-01"（YYYY-MM-DD，未识别到日期则不填）
+    两个参数同时传入，避免日期信息被塞进 purpose。
     """
     model_config = {"extra": "allow"}
-    purpose: str = Field(description="费用用途，如：去机场打车 / 项目投标费 / 寄合同至北京")
+    purpose: str = Field(
+        description=(
+            "费用用途短语，**仅用途描述，不含日期**。如：去机场打车 / 项目投标费 / 寄合同至北京 / 员工培训住宿费"
+        ),
+    )
+    expense_date: Optional[str] = Field(
+        default=None,
+        description=(
+            "出差/费用发生日期，YYYY-MM-DD 格式。用户文本中提到日期时必须提取并填入此字段，"
+            "不要把日期塞进 purpose。如：用户说「8月2日 打车费」→ purpose=\"打车费\" + expense_date=\"2026-08-02\"。"
+            "用户只说月日未带年份时用当前年份 2026 补全。未识别到日期则留空。"
+        ),
+    )
     expense_date: Optional[str] = Field(
         default=None,
         description=(

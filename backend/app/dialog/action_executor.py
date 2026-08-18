@@ -252,7 +252,7 @@ class ActionExecutor:
             ("开票时间", invoice.issue_date or "—"),
             ("费用分类", invoice.fee_subcategory or "—"),
             ("用途", invoice.user_description or "待补充"),
-            ("出差日期", invoice.expense_date or "待补充"),
+            ("日期", invoice.expense_date or "待补充"),
             ("状态", f"{self._status_emoji(invoice)} {self._status_text(invoice)}"),
             ("验真", f"{self._verify_emoji(invoice)} {self._verify_text(invoice)}"),
         ]
@@ -1465,8 +1465,8 @@ class ActionExecutor:
             return ""
 
         lines = [
-            "| 序号 | 类型 | 销售方 | 金额 | 用途 | 出差日期 | 上传时间 |",
-            "|------|------|--------|------|------|----------|----------|",
+            "| 序号 | 类型 | 销售方 | 金额 | 用途 | 日期 |",
+            "|------|------|--------|------|------|------|",
         ]
         for idx, inv in enumerate(invoices, 1):
             rt = inv.receipt_type.value if inv.receipt_type else "未知"
@@ -1474,8 +1474,7 @@ class ActionExecutor:
             amount = f"¥{inv.total_with_tax or '—'}"
             desc = (inv.user_description or "待补充")[:12]
             expense_date = str(inv.expense_date) if inv.expense_date else "—"
-            created = inv.created_at.strftime("%Y-%m-%d %H:%M") if inv.created_at else "—"
-            lines.append(f"| {idx} | {rt} | {seller} | {amount} | {desc} | {expense_date} | {created} |")
+            lines.append(f"| {idx} | {rt} | {seller} | {amount} | {desc} | {expense_date} |")
 
         # 合计行
         total = 0.0
@@ -1484,7 +1483,7 @@ class ActionExecutor:
                 total += self._safe_amount(inv.total_with_tax)
             except (ValueError, TypeError):
                 pass
-        lines.append(f"| **合计** | | | **¥{total:.2f}** | {len(invoices)}张 | | |")
+        lines.append(f"| **合计** | | | **¥{total:.2f}** | {len(invoices)}张 | |")
 
         return "\n".join(lines)
 
@@ -1513,8 +1512,8 @@ class ActionExecutor:
             return ""
 
         lines = [
-            "| 序号 | 类型 | 销售方 | 金额 | 用途 | 出差日期 | 上传时间 |",
-            "|------|------|--------|------|------|----------|----------|",
+            "| 序号 | 类型 | 销售方 | 金额 | 用途 | 日期 |",
+            "|------|------|--------|------|------|------|",
         ]
         total = 0.0
         for idx, inv in enumerate(invoices, 1):
@@ -1527,10 +1526,9 @@ class ActionExecutor:
                 pass
             desc = (inv.user_description or "待补充")[:12]
             expense_date = str(inv.expense_date) if inv.expense_date else "—"
-            created = inv.created_at.strftime("%Y-%m-%d %H:%M") if inv.created_at else "—"
-            lines.append(f"| {idx} | {rt} | {seller} | ¥{amount_str} | {desc} | {expense_date} | {created} |")
+            lines.append(f"| {idx} | {rt} | {seller} | ¥{amount_str} | {desc} | {expense_date} |")
 
-        lines.append(f"| **合计** | | | **¥{total:.2f}** | {len(invoices)}张 | | |")
+        lines.append(f"| **合计** | | | **¥{total:.2f}** | {len(invoices)}张 | |")
         return "\n".join(lines)
 
     async def _build_user_invoices_table(
@@ -1552,8 +1550,8 @@ class ActionExecutor:
             return ""
 
         lines = [
-            "| 序号 | 类型 | 销售方 | 金额 | 用途 | 出差日期 | 状态 | 上传时间 |",
-            "|------|------|--------|------|------|----------|------|----------|",
+            "| 序号 | 类型 | 销售方 | 金额 | 用途 | 日期 | 状态 |",
+            "|------|------|--------|------|------|------|------|",
         ]
         total = 0.0
         for idx, inv in enumerate(invoices, 1):
@@ -1567,10 +1565,9 @@ class ActionExecutor:
             desc = (inv.user_description or "待补充")[:12]
             expense_date = str(inv.expense_date) if inv.expense_date else "—"
             status = self._status_text(inv)
-            created = inv.created_at.strftime("%Y-%m-%d %H:%M") if inv.created_at else "—"
-            lines.append(f"| {idx} | {rt} | {seller} | ¥{amount_str} | {desc} | {expense_date} | {status} | {created} |")
+            lines.append(f"| {idx} | {rt} | {seller} | ¥{amount_str} | {desc} | {expense_date} | {status} |")
 
-        lines.append(f"| **合计** | | | **¥{total:.2f}** | {len(invoices)}张 | | | |")
+        lines.append(f"| **合计** | | | **¥{total:.2f}** | {len(invoices)}张 | | |")
         return "\n".join(lines)
 
     def _build_single_invoice_table(self, invoice: Invoice) -> str:
@@ -1586,7 +1583,7 @@ class ActionExecutor:
             ("金额（含税）", f"¥{invoice.total_with_tax or '—'}"),
             ("税额", f"¥{invoice.tax_amount or '—'}"),
             ("开票时间", invoice.issue_date or "—"),
-            ("出差日期", invoice.expense_date or "待补充"),
+            ("日期", invoice.expense_date or "待补充"),
             ("费用分类", invoice.fee_subcategory or "—"),
             ("用途", invoice.user_description or "待补充"),
             ("状态", f"{self._status_emoji(invoice)} {self._status_text(invoice)}"),

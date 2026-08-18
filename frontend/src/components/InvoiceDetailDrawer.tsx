@@ -298,8 +298,10 @@ function DetailContent({
               }`}
             />
           </div>
-          {/* Diff conflicts */}
-          {detail.diff_conflicts && detail.diff_conflicts.length > 0 && (
+          {/* Diff conflicts — 仅 PDF/OFD 双源场景展示，图片发票走单源 LLM 无 OCR 比对 */}
+          {detail.diff_conflicts && detail.diff_conflicts.length > 0
+            && detail.file_type
+            && !["jpg", "jpeg", "png", "gif", "bmp", "webp"].includes(detail.file_type.toLowerCase()) && (
             <div className="mt-3 space-y-1.5">
               <p className="text-xs font-medium text-muted-foreground">
                 OCR / LLM 比对差异（{detail.diff_conflicts.length} 项）

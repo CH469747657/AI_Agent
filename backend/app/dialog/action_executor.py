@@ -302,7 +302,7 @@ class ActionExecutor:
             }
 
         # 无用途 → follow_up 追问，并附带当前 batch 发票摘要，帮助用户对应“第几张”
-        text += "请按序号描述每张发票的用途（如“1 打车费，2 餐费”），可回复「跳过」跳过"
+        text += "请补充每张发票的【时间+用途】，格式如「8月5日 打车费」或「1 8月5日 打车费，2 8月10日 住宿费」。可回复「跳过」跳过"
         # 追加当前批量发票的 Markdown 汇总表格
         md_table = await self._build_batch_summary_table(ctx, db)
         if md_table:
@@ -312,12 +312,13 @@ class ActionExecutor:
         batch_summary = await self._build_batch_invoice_summaries(ctx, db)
         return {
             "text": text,
+            "quick_replies": ["8月5日 打车费", "8月10日 住宿费"],
             "data": {
                 "invoice_id": invoice.id,
                 "follow_up": {
                     "state": "waiting_purpose",
                     "intent": "emp_fill_invoice_desc",
-                    "prompt": "请按序号描述每张发票的用途（如“1 打车费，2 餐费”）",
+                    "prompt": "请补充每张发票的【时间+用途】，格式如「8月5日 打车费」",
                     "pending_invoice_id": invoice.id,
                     "batch_summary": batch_summary,
                 },
@@ -670,13 +671,15 @@ class ActionExecutor:
             amount = amount_val
         else:
             return {
-                "text": "请提供无凭证报销的金额（正数）和具体用途说明，例如：120 元打车费。",
+                "text": "请按【无发票报销+时间+用途】格式输入，例如：无发票报销 8月5日 120元 打车费",
+                "quick_replies": ["无发票报销 8月5日 120元 打车费", "无发票报销 8月10日 350元 餐费"],
                 "data": {},
             }
         description = desc_slot.value if desc_slot and desc_slot.filled else ""
         if not description or len(description.strip()) < 2:
             return {
-                "text": "请描述这笔无凭证报销的具体用途，例如：120 元打车费-机场往返。",
+                "text": "请按【无发票报销+时间+用途】格式输入，例如：无发票报销 8月5日 120元 打车费",
+                "quick_replies": ["无发票报销 8月5日 120元 打车费", "无发票报销 8月10日 350元 餐费"],
                 "data": {},
             }
 

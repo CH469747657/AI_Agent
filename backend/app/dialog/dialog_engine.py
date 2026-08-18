@@ -527,6 +527,26 @@ class DialogEngine:
             error=agent_resp.error,
         )
 
+        # 引导场景自动补 quick_replies 示例气泡（agent 路径下 LLM 不输出 quick_replies 数组，
+        # 后端按回复内容关键词识别场景并补上）
+        # 规则：用户已成功操作（action_taken=true）则不补，避免气泡重复打扰
+        if not response.action_taken and agent_resp.text:
+            text_lower = agent_resp.text
+            # 无发票报销引导场景：回复含「无发票报销+时间+用途」或「无凭证报销」格式引导
+            if ("无发票报销" in text_lower or "无凭证报销" in text_lower) and (
+                "时间" in text_lower or "用途" in text_lower or "格式" in text_lower
+            ):
+                response.quick_replies = [
+                    "无发票报销 8月5日 120元 打车费",
+                    "无发票报销 8月10日 350元 餐费",
+                ]
+            # 凭证上传后追问用途场景：回复含「时间+用途」或「请补充」+「用途」
+            elif (
+                ("时间+用途" in text_lower or "时间 + 用途" in text_lower)
+                or ("请补充" in text_lower and "用途" in text_lower)
+            ) and "无发票" not in text_lower:
+                response.quick_replies = ["8月5日 打车费", "8月10日 住宿费"]
+
         # 记录对话历史（仅查询类）
         if response.intent_name and is_query_intent(response.intent_name):
             context.add_history(

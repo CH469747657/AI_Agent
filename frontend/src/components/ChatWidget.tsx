@@ -1179,8 +1179,10 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
                     isTyping
                       ? "助手正在回复…"
                       : pendingFiles.length > 1
-                        ? `已选 ${pendingFiles.length} 个附件，输入说明后发送（如"第一张是打车费，第二张是餐费"）`
-                        : "输入消息，Enter 发送，Shift+Enter 换行"
+                        ? `已选 ${pendingFiles.length} 个附件，输入说明后发送（如"1 8月5日 打车费，2 8月10日 住宿费"）`
+                        : role === "employee"
+                          ? "输入消息，如【8月5日 打车费】或【无发票报销 8月5日 120元 打车费】"
+                          : "输入消息，Enter 发送，Shift+Enter 换行"
                   }
                   className="max-h-[120px] flex-1 resize-none rounded-xl border border-border bg-muted px-3 py-2 text-[13px] leading-relaxed text-foreground placeholder:text-muted-foreground focus:border-primary-400 focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-50 sm:px-3.5 sm:py-2.5 sm:text-sm"
                 />

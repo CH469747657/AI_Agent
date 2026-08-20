@@ -35,10 +35,10 @@ TZ_OFFSET = 8
 _DATE_PATTERNS = [
     # YYYY-MM-DD / YYYY/MM/DD
     re.compile(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})'),
-    # YYYY年M月D日
-    re.compile(r'(\d{4})年(\d{1,2})月(\d{1,2})日'),
-    # M月D日（补当前年）
-    re.compile(r'(\d{1,2})月(\d{1,2})日'),
+    # YYYY年M月D日/号
+    re.compile(r'(\d{4})年(\d{1,2})月(\d{1,2})[日号]'),
+    # M月D日/号（补当前年）
+    re.compile(r'(\d{1,2})月(\d{1,2})[日号]'),
     # M-D 或 M/D（补当前年，要求月份1-12）
     re.compile(r'(?<!\d)(\d{1,2})[-/](\d{1,2})(?!\d)'),
 ]
@@ -84,6 +84,43 @@ def parse_note_date(text: str, today: date | None = None) -> Optional[date]:
         return None
 
     return min(candidates)  # 取最早日期（保守归属）
+
+
+def extract_date_and_purpose(text: str, today: date | None = None) -> tuple[Optional[date], str]:
+    """从用户描述提取日期 + 剩余纯用途文本
+
+    用于上传时拆分"8月9号 项目投标费" → (2026-08-09, "项目投标费")
+    返回 (date, remaining_text)；无日期返回 (None, 原文)
+    """
+    if not text or not str(text).strip():
+        return None, ""
+    today = today or date.today()
+    s = str(text)
+
+    # 遍历模式找第一个匹配的日期子串，从原文移除后返回剩余
+    for pattern in _DATE_PATTERNS:
+        m = pattern.search(s)
+        if m:
+            try:
+                groups = m.groups()
+                if len(groups) == 3:
+                    y, mo, d = int(groups[0]), int(groups[1]), int(groups[2])
+                elif len(groups) == 2:
+                    y, mo, d = today.year, int(groups[0]), int(groups[1])
+                else:
+                    continue
+                parsed = date(y, mo, d)
+                if parsed > today:
+                    parsed = date(y - 1, mo, d)
+                # 从原文移除匹配的日期子串 + 前后多余空格/分隔符
+                remaining = (s[:m.start()] + s[m.end():]).strip()
+                # 清理前后残留分隔符
+                remaining = re.sub(r'^[\s,，、|/:-]+|[\s,，、|/:-]+$', '', remaining)
+                return parsed, remaining
+            except ValueError:
+                continue
+
+    return None, s.strip()
 
 
 def _collect_note_text(inv: Invoice) -> str:

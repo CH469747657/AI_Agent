@@ -94,6 +94,12 @@ class InvoiceService:
         if file_type in ("jpg", "jpeg", "png"):
             file_data = self._compress_image_for_vlm(file_data)
 
+        # 1.6 从 user_description 拆分日期 + 纯用途（支持"8月9号 项目投标费"等写法）
+        from app.services.expense_date_engine import extract_date_and_purpose
+        parsed_expense_date, clean_purpose = extract_date_and_purpose(user_description)
+        if parsed_expense_date:
+            user_description = clean_purpose or user_description
+
         # 2. 创建发票记录（receipt_type 为空时默认 vat_normal，后续 LLM 识别后修正）
         actual_receipt_type = receipt_type if receipt_type else ReceiptType.vat_normal.value
         mime_map = {
@@ -109,6 +115,8 @@ class InvoiceService:
             file_type=file_type,
             user_id=user_id,
             user_description=user_description,
+            expense_date=parsed_expense_date,
+            expense_date_source="note" if parsed_expense_date else None,
             status=InvoiceStatus.processing,
         )
         self.db.add(invoice)

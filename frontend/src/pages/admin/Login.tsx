@@ -57,56 +57,65 @@ export function AdminLogin() {
               />
             </svg>
           </div>
-          <h1 className="font-display text-2xl font-bold tracking-tight text-white">
+          <h1 className="font-display text-3xl font-extrabold tracking-tight text-white">
             发票报销智能助手
           </h1>
-          <p className="mt-1 text-sm text-slate-300">管理后台登录</p>
+          <p className="mt-1.5 text-sm font-medium text-slate-300">管理后台登录</p>
         </div>
 
         {/* 登录表单 */}
-        <div className="rounded-xl border border-slate-700 bg-slate-800/80 p-6 shadow-2xl backdrop-blur">
+        <div className="rounded-xl border border-slate-700 bg-slate-800/80 p-6 shadow-xl backdrop-blur">
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <div className="flex items-center gap-2 rounded-lg bg-red-500/20 px-4 py-3 text-sm text-red-200">
+              <div
+                role="alert"
+                aria-live="polite"
+                className="flex items-center gap-2 rounded-lg bg-red-500/20 px-4 py-3 text-sm text-red-200"
+              >
                 <WarningCircle size={18} weight="fill" />
                 {error}
               </div>
             )}
 
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-200">
+              <label htmlFor="login-username" className="mb-1.5 block text-sm font-medium text-slate-200">
                 用户名
               </label>
               <input
+                id="login-username"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="请输入用户名"
-                className="w-full rounded-md border border-slate-600 bg-slate-900/60 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                placeholder="admin"
+                autoComplete="username"
+                className="min-h-[44px] w-full rounded-md border border-slate-600 bg-slate-900/60 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                 required
                 autoFocus
               />
             </div>
 
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-200">
+              <label htmlFor="login-password" className="mb-1.5 block text-sm font-medium text-slate-200">
                 密码
               </label>
               <div className="relative">
                 <input
+                  id="login-password"
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="请输入密码"
-                  className="w-full rounded-md border border-slate-600 bg-slate-900/60 px-3 py-2 pr-10 text-sm text-white placeholder:text-slate-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                  autoComplete="current-password"
+                  className="min-h-[44px] w-full rounded-md border border-slate-600 bg-slate-900/60 px-3 py-2.5 pr-12 text-sm text-white placeholder:text-slate-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
                   required
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                  aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                  className="absolute right-2 top-1/2 flex min-h-[40px] min-w-[40px] -translate-y-1/2 items-center justify-center rounded text-slate-400 transition-colors hover:text-slate-200"
                 >
-                  {showPassword ? <EyeSlash size={16} /> : <Eye size={16} />}
+                  {showPassword ? <EyeSlash size={18} /> : <Eye size={18} />}
                 </button>
               </div>
             </div>
@@ -114,23 +123,23 @@ export function AdminLogin() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-400 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-h-[44px] w-full rounded-md bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white transition-all duration-200 hover:bg-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-400 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? "登录中..." : "登录"}
             </button>
           </form>
 
-          <div className="mt-4 flex items-center justify-between text-xs text-slate-400">
+          <div className="mt-4 flex items-center justify-between text-sm text-slate-400">
             <Link
               to="/portal/login"
-              className="hover:text-slate-200 hover:underline"
+              className="inline-block rounded py-1 transition-colors hover:text-slate-200 hover:underline"
             >
               员工登录入口 →
             </Link>
           </div>
         </div>
 
-        <p className="mt-6 text-center text-xs text-slate-500">
+        <p className="mt-6 text-center text-xs text-slate-400">
           管理员账户由系统配置，如忘记密码请联系系统管理员
         </p>
       </div>

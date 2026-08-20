@@ -172,7 +172,6 @@ class ReportGenerator:
         from openpyxl import Workbook
         from openpyxl.styles import Font, Alignment, Border, Side
         from collections import defaultdict
-        from app.services.subsidy_engine import day_type
 
         if holidays is None:
             holidays = {}
@@ -223,15 +222,27 @@ class ReportGenerator:
             cell.border = thin_border
 
         # 数据行构建
-        items = getattr(reimbursement, "_items_cache", None) or []
+        # 补贴行：从 day_subsidies 表读，每条出差日独立一行（不再从 items 推导）
+        subsidies = getattr(reimbursement, "_day_subsidies_cache", None) or []
+        subsidy_by_date: dict[date, ReimbursementDaySubsidy] = {}
+        for sub in subsidies:
+            if not sub.included:
+                continue
+            if not sub.subsidy_date:
+                continue
+            subsidy_by_date[sub.subsidy_date] = sub
 
-        # 仅保留 item_date 落在周期内的明细
-        in_cycle_items = []
+        # 费用行：按 item_date 分组
+        items = getattr(reimbursement, "_items_cache", None) or []
+        in_cycle_items: list = []  # 有日期且在周期内 → 进主体行
+        tail_items: list = []      # 无日期或不在周期内 → 进末尾
         for it in items:
             if not it.item_date:
+                tail_items.append(it)
                 continue
             if reimbursement.cycle_start and reimbursement.cycle_end:
                 if not (reimbursement.cycle_start <= it.item_date <= reimbursement.cycle_end):
+                    tail_items.append(it)
                     continue
             in_cycle_items.append(it)
 
@@ -239,31 +250,48 @@ class ReportGenerator:
         for it in in_cycle_items:
             by_date[it.item_date].append(it)
 
-        upper_rows = []  # (date, weekday_str, rate, amount_or_None, desc_or_None)
-        lower_rows = []  # (amount, desc)
-        for d in sorted(by_date.keys()):
-            its = by_date[d]
-            its.sort(key=lambda x: x.sort_order or 0)
-            wd = _WEEKDAY_CN[d.weekday()]
-            dt = day_type(d, holidays)
-            rate = 60 if dt == "workday" else 80
+        # 合并日期集合：补贴日期 ∪ 费用日期，排序
+        all_dates = sorted(set(subsidy_by_date.keys()) | set(by_date.keys()))
 
-            if len(its) == 1:
+        upper_rows = []  # (date, weekday_str, subsidy_amount_or_None, amount_or_None, desc_or_None)
+        lower_rows = []  # (amount, desc) — 同日溢出 + 无日期费用
+        for d in all_dates:
+            sub = subsidy_by_date.get(d)
+            subsidy_amt = float(sub.subsidy_amount) if sub else None
+            wd = _WEEKDAY_CN[d.weekday()]
+
+            its = by_date.get(d, [])
+            its.sort(key=lambda x: x.sort_order or 0)
+
+            if not its:
+                # 该日只有补贴，无费用
+                upper_rows.append((d, wd, subsidy_amt, None, None))
+            elif len(its) == 1:
                 it = its[0]
                 amt = float(it.amount) if it.amount is not None else 0.0
                 desc = it.description or it.fee_subcategory or ""
-                upper_rows.append((d, wd, rate, amt, desc))
+                upper_rows.append((d, wd, subsidy_amt, amt, desc))
             else:
-                upper_rows.append((d, wd, rate, None, None))
-                for it in its:
-                    amt = float(it.amount) if it.amount is not None else 0.0
-                    desc = it.description or it.fee_subcategory or ""
-                    lower_rows.append((amt, desc))
+                # 同日多条费用：第一条进主行，其余进末尾
+                first = its[0]
+                amt = float(first.amount) if first.amount is not None else 0.0
+                desc = first.description or first.fee_subcategory or ""
+                upper_rows.append((d, wd, subsidy_amt, amt, desc))
+                for it in its[1:]:
+                    a = float(it.amount) if it.amount is not None else 0.0
+                    dsc = it.description or it.fee_subcategory or ""
+                    lower_rows.append((a, dsc))
 
-        # 写入上半段
+        # 无日期/不在周期内的费用 → 末尾
+        for it in tail_items:
+            a = float(it.amount) if it.amount is not None else 0.0
+            dsc = it.description or it.fee_subcategory or ""
+            lower_rows.append((a, dsc))
+
+        # 写入上半段（日期行：A 日期 / B 星期 / C 补贴 / D 费用 / E 说明）
         row = 6
         upper_first = row
-        for d, wd, rate, amt, desc in upper_rows:
+        for d, wd, subsidy_amt, amt, desc in upper_rows:
             cell = ws.cell(row=row, column=1, value=d)
             cell.font = font_normal
             cell.number_format = "yyyy-mm-dd"
@@ -275,10 +303,15 @@ class ReportGenerator:
             cell.alignment = align_center
             cell.border = thin_border
 
-            cell = ws.cell(row=row, column=3, value=rate)
-            cell.font = font_normal
-            cell.alignment = align_center
-            cell.border = thin_border
+            # C 列补贴：每条出差日独立填写
+            if subsidy_amt is not None:
+                cell = ws.cell(row=row, column=3, value=subsidy_amt)
+                cell.font = font_normal
+                cell.number_format = "0.00"
+                cell.alignment = align_center
+                cell.border = thin_border
+            else:
+                ws.cell(row=row, column=3).border = thin_border
 
             if amt is not None:
                 cell = ws.cell(row=row, column=4, value=amt)
@@ -286,6 +319,8 @@ class ReportGenerator:
                 cell.number_format = "0.00"
                 cell.alignment = align_center
                 cell.border = thin_border
+            else:
+                ws.cell(row=row, column=4).border = thin_border
 
             if desc:
                 cell = ws.cell(row=row, column=5, value=desc)
@@ -293,13 +328,11 @@ class ReportGenerator:
                 cell.alignment = align_center_wrap
                 cell.border = thin_border
             else:
-                # 即使 D/E 空，也补边框
-                ws.cell(row=row, column=4).border = thin_border
                 ws.cell(row=row, column=5).border = thin_border
             row += 1
         upper_last = row - 1
 
-        # 写入下半段
+        # 写入下半段（末尾费用行：D 金额 / E 说明，A/B/C 空）
         for amt, desc in lower_rows:
             cell = ws.cell(row=row, column=4, value=amt)
             cell.font = font_normal
@@ -312,7 +345,6 @@ class ReportGenerator:
             cell.alignment = align_center_wrap
             cell.border = thin_border
 
-            # A/B/C 列空但补边框，与模板视觉一致
             for col in (1, 2, 3):
                 ws.cell(row=row, column=col).border = thin_border
             row += 1

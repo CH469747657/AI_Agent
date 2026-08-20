@@ -48,8 +48,43 @@ async def _cycle_lock_job() -> None:
             # 3. 封账后自动生成报表三件套（Excel + PDF + ZIP）
             if lock_result and lock_result.get("locked_count", 0) > 0:
                 await _generate_reports_for_locked_cycles(db, lock_result)
+
+            # 4. 为归集涉及的报销单生成报表（历史周期未封账也生成，让用户能查看）
+            agg_reimb_ids = agg_result.get("reimb_ids", []) if agg_result else []
+            if agg_reimb_ids:
+                await _generate_reports_for_ids(db, agg_reimb_ids)
     except Exception:
         logger.exception("Cycle lock job failed")
+
+
+async def _generate_reports_for_ids(db, reimb_ids: list[int]) -> None:
+    """为指定报销单生成报表三件套（归集后调用，不要求封账）"""
+    from app.models.reimbursement import Reimbursement
+    from app.services.report_generator import ReportGenerator
+    from sqlalchemy import select
+
+    if not reimb_ids:
+        return
+    result = await db.execute(
+        select(Reimbursement).where(Reimbursement.id.in_(reimb_ids))
+    )
+    reimbursements = list(result.scalars().all())
+
+    generator = ReportGenerator(db)
+    success_count = 0
+    fail_count = 0
+    for reimb in reimbursements:
+        try:
+            await generator.generate_all(reimb.id)
+            success_count += 1
+            logger.info("Report generated for reimbursement #%s (aggregated)", reimb.id)
+        except Exception as e:
+            fail_count += 1
+            logger.warning("Report generation failed for #%s: %s", reimb.id, e)
+    logger.info(
+        "Aggregated report generation: success=%d fail=%d total=%d",
+        success_count, fail_count, len(reimbursements),
+    )
 
 
 async def _generate_reports_for_locked_cycles(db, lock_result: dict) -> None:

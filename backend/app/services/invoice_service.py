@@ -281,7 +281,7 @@ class InvoiceService:
                                         + (f"，已自动回写 {len(corrected_fields)} 个字段" if corrected_fields else "")
                                     )
                                     # 标记为人工复核，但保留 VALID 状态
-                                    if invoice.status == InvoiceStatus.confirmed:
+                                    if invoice.status == InvoiceStatus.reviewed:
                                         invoice.status = InvoiceStatus.reviewing
                         elif verify_result.is_valid is False:
                             invoice.verify_status = VerifyStatus.invalid
@@ -303,7 +303,7 @@ class InvoiceService:
             if needs_review:
                 invoice.status = InvoiceStatus.reviewing  # 有未解决冲突 → 待人工复核
             else:
-                invoice.status = InvoiceStatus.confirmed  # 冲突已全部解决或无冲突 → 自动确认
+                invoice.status = InvoiceStatus.reviewed  # 冲突已全部解决或无冲突 → 自动确认
 
             # 11. 保存 OCR/LLM 结果
             if ocr_result:
@@ -774,7 +774,7 @@ class InvoiceService:
         total_amount = sum(_safe_float(i.total_with_tax) for i in invoices)
         total_tax = sum(_safe_float(i.tax_amount) for i in invoices)
         pending_review = len([i for i in invoices if i.status == InvoiceStatus.reviewing])
-        confirmed = len([i for i in invoices if i.status == InvoiceStatus.confirmed])
+        confirmed = len([i for i in invoices if i.status == InvoiceStatus.reviewed])
         duplicates = len([i for i in invoices if i.duplicate_status == DuplicateStatus.duplicate])
         nonstandard_count = len([i for i in invoices if i.is_nonstandard])
         high_risk_count = len([i for i in invoices if i.is_nonstandard and i.risk_level == "high"])

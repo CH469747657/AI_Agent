@@ -51,7 +51,7 @@ async def confirm_invoice(invoice_id: int, db: AsyncSession = Depends(get_db)):
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
-    invoice.status = InvoiceStatus.confirmed
+    invoice.status = InvoiceStatus.reviewed
     await db.commit()
     return {"status": "ok", "message": "发票已确认"}
 

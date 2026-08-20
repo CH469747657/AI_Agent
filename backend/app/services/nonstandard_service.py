@@ -469,7 +469,7 @@ class NonStandardReceiptService:
 
         # 状态决定
         if risk_level == "low" and validation.is_valid:
-            invoice.status = InvoiceStatus.confirmed
+            invoice.status = InvoiceStatus.reviewed
         else:
             invoice.status = InvoiceStatus.reviewing
 

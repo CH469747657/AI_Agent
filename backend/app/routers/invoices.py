@@ -199,8 +199,8 @@ async def export_invoices(
     def translate_status(v: InvoiceStatus | None) -> str:
         mapping = {
             InvoiceStatus.uploaded: "已上传", InvoiceStatus.processing: "处理中",
-            InvoiceStatus.reviewing: "待审核", InvoiceStatus.confirmed: "已确认",
-            InvoiceStatus.reimbursed: "已报销", InvoiceStatus.not_reimbursed: "不予报销",
+            InvoiceStatus.reviewing: "待审核", InvoiceStatus.reviewed: "已确认",
+            InvoiceStatus.reviewed: "已报销", InvoiceStatus.rejected: "不予报销",
         }
         return mapping.get(v, "—")
 
@@ -542,7 +542,7 @@ async def online_verify_invoice(
                     except Exception as e:
                         logger.error(f"Invoice #{invoice.id} 重新分类失败: {e}")
                 # 有差异 → 标记人工复核
-                if invoice.status == InvoiceStatus.confirmed:
+                if invoice.status == InvoiceStatus.reviewed:
                     invoice.status = InvoiceStatus.reviewing
     elif verify_result.is_valid is False:
         invoice.verify_status = VerifyStatus.invalid
@@ -634,7 +634,7 @@ async def approve_invoice(
             status_code=409,
             detail=f"当前发票状态为 {invoice.status.value}，仅待审核状态可确认",
         )
-    invoice.status = InvoiceStatus.confirmed
+    invoice.status = InvoiceStatus.reviewed
     invoice.confirmed_at = datetime.now()
     await db.commit()
     await db.refresh(invoice)
@@ -660,7 +660,7 @@ async def reject_invoice(
             status_code=409,
             detail=f"当前发票状态为 {invoice.status.value}，仅待审核状态可驳回",
         )
-    invoice.status = InvoiceStatus.not_reimbursed
+    invoice.status = InvoiceStatus.rejected
     await db.commit()
     await db.refresh(invoice)
     return invoice

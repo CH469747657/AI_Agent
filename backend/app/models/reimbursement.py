@@ -12,7 +12,6 @@ class ReimbursementStatus(str, enum.Enum):
     draft = "DRAFT"
     submitted = "SUBMITTED"
     reviewed = "REVIEWED"
-    reimbursed = "REIMBURSED"
 
 
 class Reimbursement(Base, TimestampMixin):

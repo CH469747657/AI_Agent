@@ -79,7 +79,7 @@ async def _generate_reports_for_locked_cycles(db, lock_result: dict) -> None:
             Reimbursement.status.in_([
                 ReimbursementStatus.submitted,
                 ReimbursementStatus.reviewed,
-                ReimbursementStatus.reimbursed,
+                ReimbursementStatus.reviewed,
             ]),
         )
     )

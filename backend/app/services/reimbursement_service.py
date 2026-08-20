@@ -88,7 +88,7 @@ def _assert_invoice_linkable(inv: Invoice) -> None:
 
     if inv.is_nonstandard:
         # 非标票据：管理员审核通过 + 查重唯一
-        if inv.status != InvoiceStatus.confirmed:
+        if inv.status != InvoiceStatus.reviewed:
             raise HTTPException(
                 status_code=400,
                 detail=f"非标票据 #{inv.id} 状态为「{inv.status.value}」，需管理员审核通过后才能关联报销单。",
@@ -476,7 +476,7 @@ async def mark_reimbursed(
             status_code=409,
             detail=f"报销单状态为「{reimbursement.status.value}」，仅已提交或已审核状态可标记报销。",
         )
-    reimbursement.status = ReimbursementStatus.reimbursed
+    reimbursement.status = ReimbursementStatus.reviewed
     reimbursement.confirmed_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(reimbursement)

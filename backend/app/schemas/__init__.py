@@ -33,7 +33,6 @@ class InvoiceResponse(BaseModel):
     tax_rate: str | None = None
     fee_category: str | None = None
     fee_subcategory: str | None = None
-    project_id: int | None = None
     diff_confidence: float | None = None
     diff_conflicts: list | None = None
     verify_status: str | None = None
@@ -55,7 +54,6 @@ class InvoiceResponse(BaseModel):
 class InvoiceUpdateRequest(BaseModel):
     fee_category: str | None = None
     fee_subcategory: str | None = None
-    project_id: int | None = None
     status: str | None = None
     user_description: str | None = None
 

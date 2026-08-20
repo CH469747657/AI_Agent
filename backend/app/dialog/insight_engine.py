@@ -460,7 +460,7 @@ class InsightEngine:
             ReimbursementStatus.draft: "草稿",
             ReimbursementStatus.submitted: "待审批",
             ReimbursementStatus.reviewed: "已审核",
-            ReimbursementStatus.reimbursed: "已报销",
+            ReimbursementStatus.reviewed: "已报销",
         }
 
         lines = [f"📊 您的报销总额（{desc}）\n"]
@@ -737,7 +737,7 @@ class InsightEngine:
                 Invoice.user_id == ctx.user_id,
                 Invoice.reimbursement_id.is_(None),
                 Invoice.status.in_([
-                    InvoiceStatus.confirmed,
+                    InvoiceStatus.reviewed,
                     InvoiceStatus.reviewing,
                     InvoiceStatus.uploaded,
                 ]),
@@ -796,7 +796,7 @@ class InsightEngine:
             ReimbursementStatus.draft: "草稿",
             ReimbursementStatus.submitted: "待审批",
             ReimbursementStatus.reviewed: "已审核",
-            ReimbursementStatus.reimbursed: "已报销",
+            ReimbursementStatus.reviewed: "已报销",
         }
 
         lines = [f"📊 公司报销总额（{desc}）\n"]
@@ -1222,7 +1222,7 @@ class InsightEngine:
         """insight_top 发票级排名 — 按单张发票金额排序"""
         query = select(Invoice).where(
             Invoice.total_with_tax.is_not(None),
-            Invoice.status != InvoiceStatus.reimbursed,  # 排除已替代的
+            Invoice.status != InvoiceStatus.reviewed,  # 排除已替代的
         )
         if start:
             query = query.where(Invoice.created_at >= start)
@@ -1571,7 +1571,7 @@ class InsightEngine:
             ReimbursementStatus.draft: "草稿",
             ReimbursementStatus.submitted: "待审批",
             ReimbursementStatus.reviewed: "已审核",
-            ReimbursementStatus.reimbursed: "已报销",
+            ReimbursementStatus.reviewed: "已报销",
         }
 
         lines = [f"📊 {real_name}的费用情况（{desc}）\n"]
@@ -1734,9 +1734,9 @@ class InsightEngine:
             InvoiceStatus.uploaded: "已上传",
             InvoiceStatus.processing: "处理中",
             InvoiceStatus.reviewing: "待审核",
-            InvoiceStatus.confirmed: "已确认",
-            InvoiceStatus.reimbursed: "已报销",
-            InvoiceStatus.not_reimbursed: "不予报销",
+            InvoiceStatus.reviewed: "已确认",
+            InvoiceStatus.reviewed: "已报销",
+            InvoiceStatus.rejected: "不予报销",
         }
         return status_map.get(invoice.status, str(invoice.status))
 

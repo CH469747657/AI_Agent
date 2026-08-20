@@ -17,6 +17,7 @@ class ReceiptType(str, enum.Enum):
     payment_screenshot = "支付截图"
     bank_statement = "交易流水单"
     no_receipt = "无票"
+    unknown = "未知"
 
 
 class FeeCategory(str, enum.Enum):
@@ -29,9 +30,8 @@ class InvoiceStatus(str, enum.Enum):
     uploaded = "UPLOADED"
     processing = "PROCESSING"
     reviewing = "REVIEWING"
-    confirmed = "CONFIRMED"
-    reimbursed = "REIMBURSED"
-    not_reimbursed = "NOT_REIMBURSED"
+    reviewed = "REVIEWED"
+    rejected = "REJECTED"
 
 
 class VerifyStatus(str, enum.Enum):
@@ -99,10 +99,6 @@ class Invoice(Base, TimestampMixin):
     fee_subcategory: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="费用子类")
     classify_source: Mapped[str | None] = mapped_column(String(20), nullable=True, comment="分类来源 rule/llm/manual")
     classify_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
-
-    # 项目归属
-    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
-    project_match_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     # 验真查重
     verify_status: Mapped[VerifyStatus] = mapped_column(Enum(VerifyStatus), default=VerifyStatus.pending)

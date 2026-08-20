@@ -865,10 +865,10 @@ class ActionExecutor:
         invoices = list(result.scalars().all())
 
         # 筛选可提交的发票（CONFIRMED 状态）
-        confirmed = [inv for inv in invoices if inv.status == InvoiceStatus.confirmed]
+        confirmed = [inv for inv in invoices if inv.status == InvoiceStatus.reviewed]
         reviewing = [inv for inv in invoices if inv.status == InvoiceStatus.reviewing]
         not_submittable = [inv for inv in invoices if inv.status not in (
-            InvoiceStatus.confirmed, InvoiceStatus.reviewing
+            InvoiceStatus.reviewed, InvoiceStatus.reviewing
         )]
 
         if not confirmed and not reviewing:
@@ -880,7 +880,7 @@ class ActionExecutor:
 
         # 确认 REVIEWING 状态的发票
         for inv in reviewing:
-            inv.status = InvoiceStatus.confirmed
+            inv.status = InvoiceStatus.reviewed
         if reviewing:
             await db.flush()
 
@@ -892,7 +892,7 @@ class ActionExecutor:
             db,
             applicant_id=ctx.user_id,
             reason=purpose,
-            invoice_ids=[inv.id for inv in invoices if inv.status == InvoiceStatus.confirmed],
+            invoice_ids=[inv.id for inv in invoices if inv.status == InvoiceStatus.reviewed],
             allowed_user_filter=ctx.user_id if ctx.role == UserRole.EMPLOYEE else None,
         )
 
@@ -1020,7 +1020,7 @@ class ActionExecutor:
         # 简化处理：将用户输入作为子分类
         invoice.fee_subcategory = str(cat_slot.value)
         invoice.classify_source = "manual"
-        invoice.status = InvoiceStatus.confirmed
+        invoice.status = InvoiceStatus.reviewed
         await db.commit()
 
         return {
@@ -1529,7 +1529,7 @@ class ActionExecutor:
                 Invoice.user_id == user_id,
                 Invoice.reimbursement_id.is_(None),
                 Invoice.status.in_([
-                    InvoiceStatus.confirmed,
+                    InvoiceStatus.reviewed,
                     InvoiceStatus.reviewing,
                     InvoiceStatus.uploaded,
                 ]),
@@ -1682,7 +1682,7 @@ class ActionExecutor:
             ReimbursementStatus.draft: "📝 草稿",
             ReimbursementStatus.submitted: "⏳ 已提交（等待审批）",
             ReimbursementStatus.reviewed: "✅ 已审核",
-            ReimbursementStatus.reimbursed: "💰 已报销",
+            ReimbursementStatus.reviewed: "💰 已报销",
         }
 
         lines = [f"📋 您的报销单（最近 {len(reimbursements)} 条）\n"]
@@ -1705,7 +1705,7 @@ class ActionExecutor:
                 Invoice.user_id == ctx.user_id,
                 Invoice.reimbursement_id.is_(None),
                 Invoice.status.in_([
-                    InvoiceStatus.confirmed,
+                    InvoiceStatus.reviewed,
                     InvoiceStatus.reviewing,
                     InvoiceStatus.uploaded,
                 ]),
@@ -1790,7 +1790,7 @@ class ActionExecutor:
         approved = 0
         for inv in invoices:
             if inv.status == InvoiceStatus.reviewing:
-                inv.status = InvoiceStatus.confirmed
+                inv.status = InvoiceStatus.reviewed
                 approved += 1
 
         # 更新报销单状态
@@ -1827,7 +1827,7 @@ class ActionExecutor:
         rejected = 0
         for inv in invoices:
             if inv.status == InvoiceStatus.reviewing:
-                inv.status = InvoiceStatus.not_reimbursed
+                inv.status = InvoiceStatus.rejected
                 rejected += 1
 
         reimb = await get_reimbursement_or_404(db, reimb_id)
@@ -1894,7 +1894,7 @@ class ActionExecutor:
             ReimbursementStatus.draft: "草稿",
             ReimbursementStatus.submitted: "已提交",
             ReimbursementStatus.reviewed: "已审核",
-            ReimbursementStatus.reimbursed: "已报销",
+            ReimbursementStatus.reviewed: "已报销",
         }
 
         lines = [
@@ -1971,7 +1971,7 @@ class ActionExecutor:
             ReimbursementStatus.draft: "📝 草稿",
             ReimbursementStatus.submitted: "⏳ 待审批",
             ReimbursementStatus.reviewed: "✅ 已审核",
-            ReimbursementStatus.reimbursed: "💰 已报销",
+            ReimbursementStatus.reviewed: "💰 已报销",
         }
 
         lines = [f"📋 您的报销单（最近 {len(reimbs)} 条）\n"]
@@ -2028,7 +2028,7 @@ class ActionExecutor:
             ReimbursementStatus.draft: "草稿",
             ReimbursementStatus.submitted: "待审批",
             ReimbursementStatus.reviewed: "已审核",
-            ReimbursementStatus.reimbursed: "已报销",
+            ReimbursementStatus.reviewed: "已报销",
         }
 
         lock_text = "🔒 已封账" if is_locked else "🔓 未封账"
@@ -2113,7 +2113,7 @@ class ActionExecutor:
                 ReimbursementStatus.draft: "草稿",
                 ReimbursementStatus.submitted: "待审批",
                 ReimbursementStatus.reviewed: "已审核",
-                ReimbursementStatus.reimbursed: "已报销",
+                ReimbursementStatus.reviewed: "已报销",
             }
             current = status_names.get(reimb.status, reimb.status.value)
             return {

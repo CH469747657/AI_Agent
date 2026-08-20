@@ -79,24 +79,6 @@ class NoReceiptRequest(BaseModel):
     amount: str = ""
 
 
-class ProjectCreateRequest(BaseModel):
-    name: str
-    code: str | None = None
-    member_ids: list[str] = []
-    supplier_names: list[str] = []
-    description: str | None = None
-
-
-class ProjectResponse(BaseModel):
-    id: int
-    name: str
-    code: str | None = None
-    status: str
-
-    class Config:
-        from_attributes = True
-
-
 class ReimbursementCreateRequest(BaseModel):
     applicant_id: str
     applicant_name: str | None = None

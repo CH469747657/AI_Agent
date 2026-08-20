@@ -500,17 +500,6 @@ class NonStandardReceiptService:
         invoice.classify_source = classify_result["source"]
         invoice.classify_confidence = classify_result["confidence"]
 
-        # 项目归属（复用现有逻辑）
-        from app.services.project_matcher import ProjectMatcher
-        project_matcher = ProjectMatcher(self.db)
-        project_result = await project_matcher.match_project(
-            {"seller_name": invoice.seller_name},
-            user_description,
-            invoice.user_id,
-        )
-        invoice.project_id = project_result.get("project_id")
-        invoice.project_match_source = project_result.get("source")
-
         # 标记非标票据
         invoice.is_nonstandard = True
         invoice.processing_pipeline = "nonstandard"

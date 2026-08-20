@@ -26,9 +26,8 @@ from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice import Invoice, InvoiceStatus, ReceiptType, DuplicateStatus, VerifyStatus
-from app.models.reimbursement import Reimbursement, ReimbursementStatus
+from app.models.reimbursement import Reimbursement, ReimbursementStatus, ReimbursementTravelDay
 from app.models.employee import Employee
-from app.models.project import Project
 from app.dialog.models import DialogContext, UserRole
 
 logger = logging.getLogger(__name__)
@@ -1355,67 +1354,11 @@ class InsightEngine:
     async def _insight_project(
         self, ctx: DialogContext, db: AsyncSession
     ) -> dict[str, Any]:
-        """insight_project — 项目费用统计"""
-        proj_slot = ctx.slots.get("project_name")
-        proj_name = proj_slot.value if proj_slot and proj_slot.filled else ""
-
-        if not proj_name:
-            return {"text": "请告诉我项目名称，例如「智慧城市项目花了多少」。", "data": {}}
-
-        # 查找匹配的项目
-        proj_result = await db.execute(
-            select(Project).where(
-                or_(
-                    Project.name.contains(proj_name),
-                    Project.name == proj_name,
-                )
-            )
-        )
-        projects = list(proj_result.scalars().all())
-
-        if not projects:
-            # 尝试去掉"项目"后缀再搜
-            short_name = proj_name.rstrip("项目")
-            if short_name != proj_name:
-                proj_result = await db.execute(
-                    select(Project).where(Project.name.contains(short_name))
-                )
-                projects = list(proj_result.scalars().all())
-
-        if not projects:
-            return {"text": f"未找到名称包含「{proj_name}」的项目。", "data": {}}
-
-        start, end, desc = self._get_period(ctx)
-        project_ids = [p.id for p in projects]
-        project_names = {p.id: p.name for p in projects}
-
-        # 查询该项目的发票
-        inv_query = select(Invoice).where(Invoice.project_id.in_(project_ids))
-        if start:
-            inv_query = inv_query.where(Invoice.created_at >= start)
-        if end:
-            inv_query = inv_query.where(Invoice.created_at < end)
-        inv_result = await db.execute(inv_query)
-        invoices = list(inv_result.scalars().all())
-
-        if not invoices:
-            return {"text": f"📊 项目「{proj_name}」在（{desc}）暂无费用记录。", "data": {"count": 0}}
-
-        total = sum(self._safe_float(inv.total_with_tax) for inv in invoices)
-        # 按项目分组
-        by_project: dict[int, float] = defaultdict(float)
-        for inv in invoices:
-            by_project[inv.project_id] += self._safe_float(inv.total_with_tax)
-
-        lines = [f"📊 项目费用统计（{desc}）\n"]
-        for pid, amount in sorted(by_project.items(), key=lambda x: x[1], reverse=True):
-            pname = project_names.get(pid, f"项目#{pid}")
-            lines.append(f"  {pname}：{self._fmt_money(amount)}")
-        lines.append(f"\n合计：{self._fmt_money(total)}（{len(invoices)} 张发票）")
-
-        return {"text": "\n".join(lines), "data": {
-            "total": total, "count": len(invoices), "period": desc
-        }}
+        """insight_project — 项目费用统计（项目模块已下线）"""
+        return {
+            "text": "项目归属功能已下线，无法按项目统计费用。可改用「按费用类型查询」或「按人员查询」。",
+            "data": {},
+        }
 
     async def _insight_by_dept(
         self, ctx: DialogContext, db: AsyncSession

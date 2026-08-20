@@ -1,1 +1,1 @@
-from app.routers import invoices, projects, reports, wecom
+from app.routers import invoices, reports, wecom

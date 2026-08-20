@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.config import settings  # noqa: E402
 from app.database import Base  # noqa: E402
-from app.models import invoice, project, reimbursement, employee  # noqa: E402, F401
+from app.models import invoice, reimbursement, employee  # noqa: E402, F401
 from app.models import settings as _settings_model  # noqa: E402, F401  (避免覆盖 config.settings)
 
 config = context.config

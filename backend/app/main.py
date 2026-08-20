@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import init_db
-from app.routers import invoices, projects, reports, wecom, reimbursements, employees
+from app.routers import invoices, reports, wecom, reimbursements, employees
 from app.routers import portal_auth, portal, dialog
 from app.routers import settings as settings_router
 from app.routers import holidays
@@ -162,7 +162,6 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(invoices.router, prefix="/api/invoices", tags=["发票管理"])
-app.include_router(projects.router, prefix="/api/projects", tags=["项目管理"])
 app.include_router(reports.router, prefix="/api/reports", tags=["报表生成"])
 app.include_router(wecom.router, prefix="/api/wecom", tags=["企业微信"])
 app.include_router(reimbursements.router, prefix="/api/reimbursements", tags=["报销单管理"])

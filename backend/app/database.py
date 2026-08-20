@@ -47,6 +47,6 @@ async def init_db():
     确保开发环境首次启动不会因表不存在而失败。
     """
     async with get_engine().begin() as conn:
-        from app.models import invoice, project, reimbursement, employee, settings  # noqa
+        from app.models import invoice, reimbursement, employee, settings  # noqa
         await conn.run_sync(Base.metadata.create_all)
 

@@ -24,7 +24,6 @@ from app.services.ocr_service import get_ocr_service, get_ocr_executor
 from app.services.llm_service import get_llm_service, get_llm_executor
 from app.services.diff_engine import compare_results
 from app.services.classifier import FeeClassifier
-from app.services.project_matcher import ProjectMatcher
 from app.services.duplicate_checker import DuplicateChecker
 from app.services.verify_service import get_verify_service
 from app.services.verify_cross_check import cross_check_verified_fields
@@ -161,16 +160,6 @@ class InvoiceService:
             invoice.fee_subcategory = classify_result["subcategory"]
             invoice.classify_source = classify_result["source"]
             invoice.classify_confidence = classify_result["confidence"]
-
-            # 7. 项目归属
-            project_matcher = ProjectMatcher(self.db)
-            project_result = await project_matcher.match_project(
-                {"seller_name": confirmed.get("seller_name")},
-                user_description,
-                user_id,
-            )
-            invoice.project_id = project_result.get("project_id")
-            invoice.project_match_source = project_result.get("source")
 
             # 8. 查重
             dup_checker = DuplicateChecker(self.db)
@@ -724,12 +713,6 @@ class InvoiceService:
         invoice.fee_subcategory = classify_result["subcategory"]
         invoice.classify_source = classify_result["source"]
         invoice.classify_confidence = classify_result["confidence"]
-
-        # 项目归属
-        project_matcher = ProjectMatcher(self.db)
-        project_result = await project_matcher.match_project({}, user_description, user_id)
-        invoice.project_id = project_result.get("project_id")
-        invoice.project_match_source = project_result.get("source")
 
         # 无票不需要查重和验真
         invoice.duplicate_status = DuplicateStatus.unique

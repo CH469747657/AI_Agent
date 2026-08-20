@@ -385,9 +385,11 @@ class NonStandardReceiptService:
         self.deduplicator = SemanticDeduplicator()
         self.risk_assessor = NonStandardRiskAssessor()
 
-    async def process(self, invoice: Invoice, file_data: bytes, file_type: str, user_description: str = "") -> Invoice:
-        """处理非标准票据完整链路"""
+    async def process(self, invoice: Invoice, file_data: bytes, file_type: str, user_description: str = "", predefined_fields: dict = None) -> Invoice:
+        """处理非标准票据完整链路
 
+        predefined_fields: 外部预提取的字段（如合并 VLM 调用），非空时跳过内部 _vlm_extract
+        """
         mime_map = {
             "pdf": "application/pdf",
             "jpg": "image/jpeg",
@@ -402,10 +404,15 @@ class NonStandardReceiptService:
         receipt_type = invoice.receipt_type.value if invoice.receipt_type else "支付截图"
         extract_prompt = EXTRACT_PROMPT_MAP.get(receipt_type, EXTRACT_PROMPT_MAP["支付截图"])
 
-        # 阶段1+2: 结构化字段提取（合并类型确认与提取，减少VLM调用）
-        logger.info(f"Invoice #{invoice.id} nonstandard: VLM extraction starting (type={receipt_type})")
-        extract_result = await self._vlm_extract(file_data, mime, extract_prompt)
-        fields = extract_result or {}
+        # 阶段1+2: 结构化字段提取（预提取字段时跳过 VLM 调用）
+        extract_result = None
+        if predefined_fields is not None:
+            logger.info(f"Invoice #{invoice.id} nonstandard: using predefined fields (skip VLM extract)")
+            fields = predefined_fields or {}
+        else:
+            logger.info(f"Invoice #{invoice.id} nonstandard: VLM extraction starting (type={receipt_type})")
+            extract_result = await self._vlm_extract(file_data, mime, extract_prompt)
+            fields = extract_result or {}
 
         if not fields:
             # VLM完全失败

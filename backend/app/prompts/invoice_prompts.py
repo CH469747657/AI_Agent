@@ -28,6 +28,42 @@ INVOICE_JSON_SCHEMA = {
 
 REQUIRED_FIELDS = list(INVOICE_JSON_SCHEMA["required"])
 
+# ===== 合并类型检测 + 字段提取（单次 VLM 调用） =====
+COMBINED_VISION_PROMPT = """请分析这张票据图片，一次返回票据类型和可识别字段。
+
+返回JSON对象，格式：
+{
+  "receipt_type": "增值税普通发票|增值税专用发票|火车票|机票|收据|支付截图|交易流水单|未知",
+  "fields": {
+    "invoice_number": null, "invoice_code": null, "issue_date": null,
+    "buyer_name": null, "buyer_tax_id": null,
+    "seller_name": null, "seller_tax_id": null,
+    "item_name": null, "total_with_tax": null,
+    "amount": null, "tax_amount": null, "tax_rate": null
+  }
+}
+
+## 类型判据（按视觉布局区分）
+- 增值税普通发票：标题含"增值税普通发票"，必须有发票代码+号码+校验码
+- 增值税专用发票：标题含"增值税**专用**发票"
+- 火车票：12306格式，含车次/座位号
+- 机票：含航班号/乘机人
+- 收据：标题含收据/收款凭证/缴费凭证，无官方发票字段；出租车票归此类
+- 支付截图：手机App界面，含交易单号/收款方/支付状态
+- 交易流水单：银行表格，多行交易记录
+
+## 字段规则
+- 所有值为 string 或 null，看不清的字段填 null
+- 日期格式 YYYY-MM-DD
+- 金额仅含数字和小数点
+- 非标票据（收据/支付截图/流水单）无 buyer/tax 等字段，对应填 null
+- total_with_tax = 价税合计或实付金额
+
+## 关键消歧
+- 购买方≠销售方，是不同公司
+- 发票号码必须完整（20位）
+- amount=不含税，tax_amount=税额，total_with_tax=含税总额"""
+
 # ===== Vision 系统提示词 =====
 INVOICE_VISION_SYSTEM_PROMPT = """你是一个专业的中国发票信息提取助手。
 严格按照JSON格式返回结果，无法识别的字段返回null。

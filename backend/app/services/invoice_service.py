@@ -115,10 +115,11 @@ class InvoiceService:
         await self.db.commit()
         await self.db.refresh(invoice)
 
-        # 无感上传：receipt_type 为空时，先用 LLM Vision 自动判断票据类型
+        # 无感上传：receipt_type 为空时，单次 VLM 同时判断类型 + 提取字段
+        vlm_fields = None
         if not receipt_type:
             try:
-                detected_type = await self._detect_receipt_type_by_vision(file_data, file_type)
+                detected_type, vlm_fields = await self._detect_and_extract_by_vision(file_data, file_type)
                 if detected_type and detected_type != actual_receipt_type:
                     logger.info(
                         f"Invoice #{invoice.id} VLM 自动识别票据类型: {actual_receipt_type} → {detected_type}"
@@ -128,7 +129,7 @@ class InvoiceService:
                     await self.db.commit()
                     await self.db.refresh(invoice)
             except Exception as e:
-                logger.warning(f"Invoice #{invoice.id} VLM 票据类型识别失败，使用默认值: {e}")
+                logger.warning(f"Invoice #{invoice.id} VLM 合并识别失败，回退默认值: {e}")
 
         logger.info(f"Invoice #{invoice.id} created, starting processing...")
 
@@ -147,14 +148,19 @@ class InvoiceService:
                     file_data=file_data,
                     file_type=file_type,
                     user_description=user_description,
+                    predefined_fields=vlm_fields,
                 )
 
                 # 非标票据处理完成，不自动归集报销单
                 # 归集时机：管理员主动生成或每月21号定时生成
                 return invoice
 
-            # 3. 并行执行 OCR + LLM
-            ocr_result, llm_result = await self._run_dual_source(file_data, file_type)
+            # 3. 字段提取：优先用合并 VLM 的结果，否则走双源（OCR+LLM）
+            if vlm_fields:
+                llm_result = {"extracted_fields": vlm_fields}
+                ocr_result = None
+            else:
+                ocr_result, llm_result = await self._run_dual_source(file_data, file_type)
 
             # 票据类型判定责任收敛到 VLM（_detect_receipt_type_by_vision）
             # 不再用 OCR 文本关键词二次修正类型 —— 关键词规则覆盖不全，
@@ -401,6 +407,104 @@ class InvoiceService:
             except Exception as cleanup_err:
                 logger.error(f"Invoice #{invoice_id} cleanup also failed: {cleanup_err}")
             raise
+
+    async def _detect_and_extract_by_vision(
+        self, file_data: bytes, file_type: str
+    ) -> tuple[Optional[str], Optional[dict]]:
+        """单次 VLM 调用同时返回票据类型 + 字段（替代 detect + extract 两次调用）
+
+        Returns: (receipt_type_value, fields_dict) — 失败时对应项为 None
+        """
+        try:
+            from app.services.llm_service import get_llm_service
+            from app.prompts.invoice_prompts import COMBINED_VISION_PROMPT
+            svc = get_llm_service()
+            if not svc.is_available() or not svc._supports_vision():
+                return None, None
+
+            mime_map = {
+                "pdf": "application/pdf", "ofd": "application/ofd",
+                "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+            }
+            mime_type = mime_map.get(file_type, "image/jpeg")
+
+            # PDF/OFD 转图片（复用现有逻辑）
+            actual_data = file_data
+            actual_mime = mime_type
+            if mime_type == "application/pdf":
+                try:
+                    from pdf2image import convert_from_bytes
+                    from io import BytesIO
+                    images = convert_from_bytes(file_data, dpi=300, first_page=1, last_page=1)
+                    if images:
+                        buf = BytesIO()
+                        images[0].save(buf, format="PNG")
+                        actual_data = buf.getvalue()
+                        actual_mime = "image/png"
+                except Exception as e:
+                    logger.warning(f"PDF to image failed for combined detect: {e}")
+                    return None, None
+            elif mime_type == "application/ofd":
+                try:
+                    from app.services.ofd_parser import get_ofd_parser
+                    parsed = get_ofd_parser().parse(file_data)
+                    img_bytes = parsed.get("image_bytes")
+                    if img_bytes:
+                        actual_data = img_bytes
+                        actual_mime = "image/png"
+                    else:
+                        return None, None
+                except Exception as e:
+                    logger.warning(f"OFD parse failed for combined detect: {e}")
+                    return None, None
+
+            import base64
+            b64_image = base64.b64encode(actual_data).decode()
+            response = await svc.client.chat.completions.create(
+                model=settings.llm_model,
+                messages=[
+                    {"role": "user", "content": [
+                        {"type": "text", "text": COMBINED_VISION_PROMPT},
+                        {"type": "image_url", "image_url": {
+                            "url": f"data:{actual_mime};base64,{b64_image}"
+                        }}
+                    ]}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0,
+                max_tokens=2000,
+            )
+            content = response.choices[0].message.content
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+            import json
+            data = json.loads(content)
+
+            raw_type = data.get("receipt_type", "")
+            type_mapping = {
+                "增值税普通发票": ReceiptType.vat_normal.value,
+                "增值税专用发票": ReceiptType.vat_special.value,
+                "火车票": ReceiptType.train_ticket.value,
+                "机票": ReceiptType.flight_ticket.value,
+                "收据": ReceiptType.receipt.value,
+                "支付截图": ReceiptType.payment_screenshot.value,
+                "交易流水单": ReceiptType.bank_statement.value,
+            }
+            receipt_type = None
+            for keyword, value in type_mapping.items():
+                if keyword in raw_type:
+                    receipt_type = value
+                    break
+            fields = data.get("fields") or {}
+            logger.info(
+                f"Combined VLM: type={receipt_type} fields_count={sum(1 for v in fields.values() if v)}"
+            )
+            return receipt_type, fields
+        except Exception as e:
+            logger.warning(f"_detect_and_extract_by_vision error: {e}")
+            return None, None
 
     async def _detect_receipt_type_by_vision(
         self,

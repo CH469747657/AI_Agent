@@ -182,10 +182,12 @@ def start_scheduler() -> AsyncIOScheduler:
 
     _scheduler = AsyncIOScheduler()
 
-    # 每月 21 日 00:00 归集游离发票 + 封账上一周期 + 自动生成报表
+    # 每月 21 日 00:00（北京时间）归集游离发票 + 封账上一周期 + 自动生成报表
+    # 容器时区为 UTC，必须显式指定 Asia/Shanghai，否则按 UTC 0 点 = 北京 8 点触发
+    from pytz import timezone as tz
     _scheduler.add_job(
         _cycle_lock_job,
-        trigger=CronTrigger(day=21, hour=0, minute=0),
+        trigger=CronTrigger(day=21, hour=0, minute=0, timezone=tz("Asia/Shanghai")),
         id="cycle_lock_job",
         name="归集+封账+报表",
         replace_existing=True,

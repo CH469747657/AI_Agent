@@ -26,6 +26,7 @@ import { BossInvoiceList } from "./pages/boss/InvoiceList";
 import { BossInvoiceDetail } from "./pages/boss/InvoiceDetail";
 import { BossReimbursementList } from "./pages/boss/ReimbursementList";
 import { BossReimbursementDetail } from "./pages/boss/ReimbursementDetail";
+import { BossSettings } from "./pages/boss/Settings";
 
 function NotFound() {
   return (
@@ -69,6 +70,7 @@ function App() {
                 path="/boss/reimbursements/:id"
                 element={<BossReimbursementDetail />}
               />
+              <Route path="/boss/settings" element={<BossSettings />} />
             </Route>
           </Route>
         </Routes>

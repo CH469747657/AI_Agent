@@ -1212,6 +1212,15 @@ export const bossApi = {
     return raw ? JSON.parse(raw) : null;
   },
 
+  /** 修改登录密码 — POST /api/boss/auth/change-password */
+  changePassword: async (oldPassword: string, newPassword: string) => {
+    return bossRequest<{ message: string }>(`/boss/auth/change-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+    });
+  },
+
   /** 智能问数 — POST /api/dialog/message，body 带 role=boss */
   ask: async (message: string, userId = "boss"): Promise<BossDialogResponse> => {
     return bossRequest<BossDialogResponse>(`/dialog/message`, {

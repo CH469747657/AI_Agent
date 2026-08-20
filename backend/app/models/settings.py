@@ -28,3 +28,6 @@ class SystemSettings(TimestampMixin, Base):
 
     # 管理员密码哈希（改密后写入此字段；为空时回退到 .env 的 ADMIN_PASSWORD_HASH）
     admin_password_hash: Mapped[str] = mapped_column(String(256), default="")
+
+    # 老板端密码哈希（改密后写入此字段；为空时回退到 .env 的 BOSS_PASSWORD_HASH）
+    boss_password_hash: Mapped[str] = mapped_column(String(256), default="")

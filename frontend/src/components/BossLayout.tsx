@@ -5,6 +5,7 @@ import {
   Receipt,
   Stack,
   SignOut,
+  Gear,
 } from "@phosphor-icons/react";
 import { bossApi } from "../api/client";
 
@@ -12,6 +13,7 @@ const navItems = [
   { to: "/boss/chat", label: "智能问数", icon: ChatCircle },
   { to: "/boss/invoices", label: "发票", icon: Receipt },
   { to: "/boss/reimbursements", label: "报销单", icon: Stack },
+  { to: "/boss/settings", label: "设置", icon: Gear },
 ];
 
 /**

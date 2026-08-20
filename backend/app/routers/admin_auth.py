@@ -197,20 +197,47 @@ class BossLoginRequest(BaseModel):
     password: str
 
 
-@boss_router.post("/login")
-async def boss_login(request: BossLoginRequest):
-    """老板端登录 — 用户名+密码，返回 JWT (role=boss)
+class BossChangePasswordRequest(BaseModel):
+    """老板端改密请求"""
+    old_password: str = Field(..., description="当前密码")
+    new_password: str = Field(..., min_length=6, description="新密码，至少6位")
 
-    凭证从 .env 读取（BOSS_USERNAME / BOSS_PASSWORD_HASH）。
+
+async def _get_boss_credentials(db: AsyncSession) -> tuple[str, str]:
+    """读取老板账户名和密码哈希
+
+    密码哈希优先级：
+    1. 数据库 system_settings.boss_password_hash（改密后写入）
+    2. .env BOSS_PASSWORD_HASH（初始默认值）
+
+    Returns: (username, password_hash)
     """
     username = settings.boss_username
     if not username:
-        logger.error("BOSS_USERNAME 未配置")
-        raise HTTPException(status_code=500, detail="老板账号未配置")
+        raise RuntimeError("BOSS_USERNAME 未配置")
+
+    row = (await db.execute(select(SystemSettings).where(SystemSettings.id == 1))).scalar_one_or_none()
+    if row and row.boss_password_hash:
+        return username, row.boss_password_hash
 
     password_hash = settings.boss_password_hash
     if not password_hash:
-        logger.error("BOSS_PASSWORD_HASH 未配置")
+        raise RuntimeError("BOSS_PASSWORD_HASH 未配置")
+    return username, password_hash
+
+
+@boss_router.post("/login")
+async def boss_login(
+    request: BossLoginRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """老板端登录 — 用户名+密码，返回 JWT (role=boss)
+
+    凭证优先从数据库读取（改密后），回退到 .env。
+    """
+    try:
+        username, password_hash = await _get_boss_credentials(db)
+    except RuntimeError as e:
         raise HTTPException(status_code=500, detail="老板账号未配置")
 
     if request.username != username:
@@ -246,6 +273,60 @@ async def boss_login(request: BossLoginRequest):
             "role": "boss",
         },
     }
+
+
+async def get_current_boss(authorization: str = Header(None)) -> dict[str, Any]:
+    """老板端接口鉴权依赖 — token 必须含 role=boss"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+
+    token = authorization[7:]
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
+
+    if payload.get("role") != "boss":
+        raise HTTPException(status_code=403, detail="非老板账号，无权访问老板端")
+
+    return {
+        "username": payload.get("sub"),
+        "name": payload.get("name", "老板"),
+        "role": "boss",
+    }
+
+
+@boss_router.post("/change-password")
+async def boss_change_password(
+    request: BossChangePasswordRequest,
+    boss: dict = Depends(get_current_boss),
+    db: AsyncSession = Depends(get_db),
+):
+    """修改老板端密码
+
+    校验旧密码后，把新密码的 bcrypt 哈希写入 system_settings.boss_password_hash。
+    下次登录时 _get_boss_credentials 会优先从数据库读取新哈希。
+    """
+    _, old_hash = await _get_boss_credentials(db)
+
+    if not verify_password(request.old_password, old_hash):
+        raise HTTPException(status_code=400, detail="当前密码错误")
+
+    if request.old_password == request.new_password:
+        raise HTTPException(status_code=400, detail="新密码不能与当前密码相同")
+
+    new_hash = hash_password(request.new_password)
+
+    row = (await db.execute(select(SystemSettings).where(SystemSettings.id == 1))).scalar_one_or_none()
+    if row is None:
+        row = SystemSettings(id=1, boss_password_hash=new_hash)
+        db.add(row)
+    else:
+        row.boss_password_hash = new_hash
+
+    await db.commit()
+    logger.info(f"Boss {boss['username']} changed password")
+
+    return {"message": "密码修改成功，下次登录请使用新密码"}
 
 
 async def get_current_admin_or_boss(authorization: str = Header(None)) -> dict[str, Any]:

@@ -982,6 +982,14 @@ class ActionExecutor:
                     }
                 invoice.expense_date = parsed
                 invoice.expense_date_source = "note"
+                # 同步更新已生成报销单明细行的 item_date（item 是 invoice 的快照，需联动）
+                from app.models.reimbursement import ReimbursementItem
+                items_result = await db.execute(
+                    select(ReimbursementItem).where(ReimbursementItem.invoice_id == invoice.id)
+                )
+                for item in items_result.scalars().all():
+                    item.item_date = parsed
+                    item.item_date_source = "note"
             else:
                 setattr(invoice, model_attr, fv)
             await db.commit()

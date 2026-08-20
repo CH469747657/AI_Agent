@@ -31,17 +31,55 @@ TZ_OFFSET = 8
 # Level 1: 备注时间解析
 # ============================================================
 
-# 常见日期正则模式（按优先级排序）
+# 常见日期正则模式（按优先级排序：长格式优先，避免短格式误匹配）
 _DATE_PATTERNS = [
-    # YYYY-MM-DD / YYYY/MM/DD
-    re.compile(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})'),
+    # YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
+    re.compile(r'(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})'),
     # YYYY年M月D日/号
     re.compile(r'(\d{4})年(\d{1,2})月(\d{1,2})[日号]'),
+    # YYYY年M月D（不带日/号）
+    re.compile(r'(\d{4})年(\d{1,2})月(\d{1,2})(?![日号月])'),
+    # YYYYMMDD 紧凑 8 位
+    re.compile(r'(?<!\d)(\d{4})(\d{2})(\d{2})(?!\d)'),
     # M月D日/号（补当前年）
     re.compile(r'(\d{1,2})月(\d{1,2})[日号]'),
-    # M-D 或 M/D（补当前年，要求月份1-12）
-    re.compile(r'(?<!\d)(\d{1,2})[-/](\d{1,2})(?!\d)'),
+    # M月D（不带日/号，补当前年，要求 D≤31 且后非数字避免误匹配"8月9号"的"9"被吞）
+    re.compile(r'(\d{1,2})月(\d{1,2})(?![日号月\d])'),
+    # M-D 或 M/D 或 M.D（补当前年，要求月份1-12）
+    # 排除金额（后跟元/块/毛/分）和编号（前跟编号/序号/号）
+    re.compile(r'(?<![\d编号序号])(\d{1,2})[-/.](\d{1,2})(?![\d元块毛分号])'),
 ]
+
+# 中文数字映射（用于"八月九日"等中文日期）
+_CN_DIGIT = {'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10,
+             '十一':11,'十二':12,'二十':20,'二十一':21,'二十二':22,'二十三':23,'二十四':24,
+             '二十五':25,'二十六':26,'二十七':27,'二十八':28,'二十九':29,'三十':30,'三十一':31,
+             '初一':1,'初二':2,'初三':3,'初四':4,'初五':5,'初六':6,'初七':7,'初八':8,'初九':9,'初十':10}
+_CN_MONTH_DAY = {v:k for k,v in _CN_DIGIT.items() if 1<=v<=31}
+
+# 中文日期正则：M月D日/号（中文数字）
+_CN_DATE_PATTERN = re.compile(r'([一二两三四五六七八九十]+)月([一二两三四五六七八九十]+)[日号]')
+
+
+def _cn_to_int(s: str) -> Optional[int]:
+    """中文数字转 int（支持 一~三十一、初一~初十）"""
+    if not s:
+        return None
+    if s in _CN_DIGIT:
+        return _CN_DIGIT[s]
+    # 处理"十几""二十几"组合：十一/十二.../二十/二十一...
+    if s.startswith('十'):
+        if len(s) == 1:
+            return 10
+        v = _CN_DIGIT.get(s[1])
+        return 10 + v if v else None
+    if s.startswith('二十') or s.startswith('三十'):
+        base = 20 if s.startswith('二十') else 30
+        if len(s) == 2:
+            return base
+        v = _CN_DIGIT.get(s[2])
+        return base + v if v else None
+    return None
 
 
 def parse_note_date(text: str, today: date | None = None) -> Optional[date]:
@@ -79,6 +117,21 @@ def parse_note_date(text: str, today: date | None = None) -> Optional[date]:
         if candidates:
             # 正则命中即不再用后面的宽泛模式，避免误匹配
             break
+
+    # 中文数字日期兜底（如"八月九日""十月一日"）
+    if not candidates:
+        for m in _CN_DATE_PATTERN.finditer(str(text)):
+            mo = _cn_to_int(m.group(1))
+            d = _cn_to_int(m.group(2))
+            if mo and d and 1 <= mo <= 12 and 1 <= d <= 31:
+                try:
+                    parsed = date(today.year, mo, d)
+                    if parsed <= today:
+                        candidates.append(parsed)
+                    else:
+                        candidates.append(date(today.year - 1, mo, d))
+                except ValueError:
+                    continue
 
     if not candidates:
         return None
@@ -119,6 +172,22 @@ def extract_date_and_purpose(text: str, today: date | None = None) -> tuple[Opti
                 return parsed, remaining
             except ValueError:
                 continue
+
+    # 中文数字日期兜底（如"八月九日 餐饮费"）
+    m = _CN_DATE_PATTERN.search(s)
+    if m:
+        mo = _cn_to_int(m.group(1))
+        d = _cn_to_int(m.group(2))
+        if mo and d and 1 <= mo <= 12 and 1 <= d <= 31:
+            try:
+                parsed = date(today.year, mo, d)
+                if parsed > today:
+                    parsed = date(today.year - 1, mo, d)
+                remaining = (s[:m.start()] + s[m.end():]).strip()
+                remaining = re.sub(r'^[\s,，、|/:-]+|[\s,，、|/:-]+$', '', remaining)
+                return parsed, remaining
+            except ValueError:
+                pass
 
     return None, s.strip()
 

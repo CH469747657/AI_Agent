@@ -268,30 +268,22 @@ def _as_local_date(dt: datetime) -> date:
 # ============================================================
 
 def determine_expense_date(inv: Invoice, today: date | None = None) -> tuple[Optional[date], str]:
-    """三级优先判定费用发生日期
+    """判定费用发生日期（优先用户备注，不使用发票开票日期）
 
-    Returns: (date, source) — source 为 note/issue_date/receipt_date/upload_time
+    测试场景多用老发票，issue_date 可能是几年前，不代表费用发生时间。
+    费用明细日期应以用户上传时备注的日期为准；无备注时用上传时间兜底。
+
+    Returns: (date, source) — source 为 note/upload_time
     """
     today = today or date.today()
 
-    # ── Level 1: 备注时间 ──
+    # ── Level 1: 用户备注时间 ──
     note_text = _collect_note_text(inv)
     d = parse_note_date(note_text, today)
     if d:
         logger.debug(f"Invoice #{inv.id} expense_date=note ({d}) from: {note_text[:80]}")
         return (d, "note")
 
-    # ── Level 2: 凭证识别日期 ──
-    receipt_type_val = inv.receipt_type.value if inv.receipt_type else ""
-    if receipt_type_val in INVOICE_TYPED:
-        d = _parse_date_str(inv.issue_date)
-        if d:
-            return (d, "issue_date")
-    else:
-        d = _parse_receipt_trade_date(inv.receipt_detail)
-        if d:
-            return (d, "receipt_date")
-
-    # ── Level 3: 上传时间兜底 ──
+    # ── Level 2: 上传时间兜底 ──
     d = _as_local_date(inv.created_at)
     return (d, "upload_time")

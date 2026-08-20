@@ -187,6 +187,7 @@ async def aggregate_pending_invoices(
     # 员工端不操作报销单，归集生成后即为终态（员工视角="已关联"）
     now = datetime.now(timezone.utc)
     auto_submitted = 0
+    auto_submitted_ids: list[int] = []
     if reimb_ids:
         result = await db.execute(
             select(Reimbursement).where(
@@ -198,9 +199,19 @@ async def aggregate_pending_invoices(
             reimb.status = ReimbursementStatus.submitted
             reimb.submitted_at = now
             auto_submitted += 1
+            auto_submitted_ids.append(reimb.id)
         if auto_submitted:
             await db.commit()
             logger.info(f"Auto-submitted {auto_submitted} draft reimbursements after aggregation")
+            # 提交后自动生成报表（与 submit_reimbursement 一致的时机）
+            from app.services.report_generator import ReportGenerator
+            gen = ReportGenerator(db)
+            for rid in auto_submitted_ids:
+                try:
+                    await gen.generate_all(rid)
+                    logger.info(f"Report generated for auto-submitted reimbursement #{rid}")
+                except Exception as e:
+                    logger.warning(f"Report generation failed for #{rid}: {e}")
 
     logger.info(
         f"aggregate_pending_invoices: {attached}/{len(invoices)} invoices aggregated "

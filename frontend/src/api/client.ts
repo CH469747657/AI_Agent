@@ -825,6 +825,13 @@ export const dialogApi = {
         body: JSON.stringify(body),
       });
     }
+    if (params.role === "boss") {
+      return bossRequest<DialogAPIResponse>("/dialog/message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    }
     return request<DialogAPIResponse>("/dialog/message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -882,6 +889,9 @@ export const dialogApi = {
     if (params.role === "employee") {
       const token = getPortalToken();
       if (token) headers["Authorization"] = `Bearer ${token}`;
+    } else if (params.role === "boss") {
+      const bossToken = getBossToken();
+      if (bossToken) headers["Authorization"] = `Bearer ${bossToken}`;
     } else {
       const adminToken = getAdminToken();
       if (adminToken) headers["Authorization"] = `Bearer ${adminToken}`;

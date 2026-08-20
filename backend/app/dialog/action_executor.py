@@ -1569,7 +1569,10 @@ class ActionExecutor:
         """
         result = await db.execute(
             select(Invoice)
-            .where(Invoice.user_id == user_id)
+            .where(
+                Invoice.user_id == user_id,
+                Invoice.status != InvoiceStatus.processing,
+            )
             .order_by(Invoice.created_at.desc())
             .limit(limit)
         )
@@ -1584,7 +1587,7 @@ class ActionExecutor:
         total = 0.0
         for idx, inv in enumerate(invoices, 1):
             rt = inv.receipt_type.value if inv.receipt_type else "未知"
-            seller = (inv.seller_name or "无票报销")[:10]
+            seller = (inv.seller_name or "—")[:10]
             amount_str = inv.total_with_tax or "—"
             try:
                 total += self._safe_amount(inv.total_with_tax)

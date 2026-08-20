@@ -963,7 +963,7 @@ class ActionExecutor:
         # 映射字段名到模型属性
         field_map = {
             "金额": "total_with_tax", "amount": "total_with_tax",
-            "日期": "issue_date", "date": "issue_date",
+            "日期": "expense_date", "date": "expense_date",
             "销售方": "seller_name", "seller": "seller_name",
             "税号": "seller_tax_id", "tax_id": "seller_tax_id",
             "发票号": "invoice_number", "invoice_number": "invoice_number",
@@ -973,7 +973,17 @@ class ActionExecutor:
         model_attr = field_map.get(fn.lower() if isinstance(fn, str) else fn, fn)
 
         if hasattr(invoice, model_attr):
-            setattr(invoice, model_attr, fv)
+            if model_attr == "expense_date":
+                parsed = self._parse_expense_date(fv)
+                if not parsed:
+                    return {
+                        "text": f"日期格式无法解析：{fv}，请用 YYYY-MM-DD 或 X月Y日 格式。",
+                        "data": {},
+                    }
+                invoice.expense_date = parsed
+                invoice.expense_date_source = "note"
+            else:
+                setattr(invoice, model_attr, fv)
             await db.commit()
             text = f"✅ 已将发票 #{invoice_id} 的{fn}修改为 {fv}。"
             # 仅返回本次修改的发票详情（场景B：单次操作）
@@ -1165,7 +1175,7 @@ class ActionExecutor:
         # 字段名 → 模型属性映射
         field_map = {
             "金额": "total_with_tax", "amount": "total_with_tax",
-            "日期": "issue_date", "date": "issue_date",
+            "日期": "expense_date", "date": "expense_date",
             "销售方": "seller_name", "seller": "seller_name",
             "税号": "seller_tax_id", "tax_id": "seller_tax_id",
             "发票号": "invoice_number", "invoice_number": "invoice_number",
@@ -1188,7 +1198,14 @@ class ActionExecutor:
             for field_name, field_value in modifications.items():
                 model_attr = field_map.get(field_name.lower() if isinstance(field_name, str) else field_name, field_name)
                 if hasattr(inv, model_attr):
-                    setattr(inv, model_attr, field_value)
+                    if model_attr == "expense_date":
+                        parsed = self._parse_expense_date(field_value)
+                        if not parsed:
+                            continue
+                        inv.expense_date = parsed
+                        inv.expense_date_source = "note"
+                    else:
+                        setattr(inv, model_attr, field_value)
                     updated_count += 1
 
         await db.commit()
@@ -2250,9 +2267,8 @@ class ActionExecutor:
             InvoiceStatus.uploaded: "已上传",
             InvoiceStatus.processing: "处理中",
             InvoiceStatus.reviewing: "待审核",
-            InvoiceStatus.confirmed: "已确认",
-            InvoiceStatus.reimbursed: "已报销",
-            InvoiceStatus.not_reimbursed: "不予报销",
+            InvoiceStatus.reviewed: "已确认",
+            InvoiceStatus.rejected: "已驳回",
         }
         return status_map.get(invoice.status, str(invoice.status))
 
@@ -2261,9 +2277,8 @@ class ActionExecutor:
             InvoiceStatus.uploaded: "📥",
             InvoiceStatus.processing: "⏳",
             InvoiceStatus.reviewing: "🔍",
-            InvoiceStatus.confirmed: "✅",
-            InvoiceStatus.reimbursed: "💰",
-            InvoiceStatus.not_reimbursed: "❌",
+            InvoiceStatus.reviewed: "✅",
+            InvoiceStatus.rejected: "❌",
         }
         return emoji_map.get(invoice.status, "📋")
 

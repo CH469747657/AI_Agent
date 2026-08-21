@@ -96,22 +96,49 @@ async def create_no_receipt(
 async def list_invoices(
     user_id: str = None,
     status: str = None,
+    department: str = None,
+    keyword: str = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """获取发票列表（含上传者信息：员工显示姓名+工号，管理员显示 admin）"""
-    from sqlalchemy import select
+    """获取发票列表（含上传者信息：员工显示姓名+工号，管理员显示 admin）
+
+    支持按部门筛选、按人名/工号模糊搜索（keyword 匹配 name 或 employee_no）。
+    """
+    from sqlalchemy import select, or_
     from app.models.invoice import Invoice, InvoiceStatus
     from app.models.employee import Employee
+
+    # 先按 keyword/department 筛出匹配的 user_id 集合
+    matched_user_ids: list[str] | None = None
+    if keyword or department:
+        emp_q = select(Employee)
+        if keyword:
+            emp_q = emp_q.where(
+                or_(
+                    Employee.name.contains(keyword),
+                    Employee.employee_no.contains(keyword),
+                )
+            )
+        if department:
+            emp_q = emp_q.where(Employee.department == department)
+        emp_result = await db.execute(emp_q)
+        matched_user_ids = [str(e.employee_no) for e in emp_result.scalars().all() if e.employee_no]
+        if not matched_user_ids:
+            return []
 
     # 默认排除 processing 状态（识别中/失败的脏数据），除非用户显式筛选该状态
     query = select(Invoice).where(Invoice.status != InvoiceStatus.processing).order_by(Invoice.created_at.desc())
     if user_id:
         query = query.where(Invoice.user_id == user_id)
+    if matched_user_ids is not None:
+        query = query.where(Invoice.user_id.in_(matched_user_ids))
     if status:
         # 显式筛选指定状态时，覆盖默认过滤
         query = select(Invoice).order_by(Invoice.created_at.desc())
         if user_id:
             query = query.where(Invoice.user_id == user_id)
+        if matched_user_ids is not None:
+            query = query.where(Invoice.user_id.in_(matched_user_ids))
         query = query.where(Invoice.status == InvoiceStatus(status))
     result = await db.execute(query)
     invoices = list(result.scalars().all())

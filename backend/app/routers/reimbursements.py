@@ -65,12 +65,39 @@ async def create_reimbursement(
 @router.get("", response_model=list[ReimbursementResponse])
 async def list_reimbursements(
     applicant_id: str = None,
+    department: str = None,
+    keyword: str = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """获取报销单列表（可按申请人筛选）"""
+    """获取报销单列表（可按申请人/部门/人名工号筛选）"""
+    from sqlalchemy import select, or_
+    from app.models.employee import Employee
+
     query = select(Reimbursement).order_by(Reimbursement.created_at.desc())
+
+    # 按 keyword/department 筛出匹配的 applicant_id 集合
+    matched_ids: list[str] | None = None
+    if keyword or department:
+        emp_q = select(Employee)
+        if keyword:
+            emp_q = emp_q.where(
+                or_(
+                    Employee.name.contains(keyword),
+                    Employee.employee_no.contains(keyword),
+                )
+            )
+        if department:
+            emp_q = emp_q.where(Employee.department == department)
+        emp_result = await db.execute(emp_q)
+        matched_ids = [str(e.employee_no) for e in emp_result.scalars().all() if e.employee_no]
+        if not matched_ids:
+            return []
+
     if applicant_id:
         query = query.where(Reimbursement.applicant_id == applicant_id)
+    if matched_ids is not None:
+        query = query.where(Reimbursement.applicant_id.in_(matched_ids))
+
     result = await db.execute(query)
     return list(result.scalars().all())
 

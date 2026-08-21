@@ -77,6 +77,19 @@ async def sync_from_wecom(
     return result
 
 
+@router.get("/departments/list", response_model=list[str])
+async def list_departments(db: AsyncSession = Depends(get_db)):
+    """获取所有部门列表（去重，用于筛选下拉）"""
+    from sqlalchemy import distinct, func
+    result = await db.execute(
+        select(Employee.department)
+        .where(Employee.department.isnot(None), Employee.department != "")
+        .group_by(Employee.department)
+        .order_by(Employee.department)
+    )
+    return [r[0] for r in result.all()]
+
+
 @router.get("/{employee_id}", response_model=EmployeeResponse)
 async def get_employee(employee_id: int, db: AsyncSession = Depends(get_db)):
     """获取员工详情"""

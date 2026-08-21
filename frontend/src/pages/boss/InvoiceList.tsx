@@ -14,40 +14,48 @@ import { StatusBadge } from "../../components/StatusBadge";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "全部状态" },
-  { value: "UPLOADED", label: "已上传" },
   { value: "REVIEWING", label: "待审核" },
-  { value: "CONFIRMED", label: "已确认" },
-  { value: "REIMBURSED", label: "已报销" },
-  { value: "NOT_REIMBURSED", label: "不予报销" },
+  { value: "REVIEWED", label: "已确认" },
+  { value: "REJECTED", label: "已驳回" },
 ];
 
 export function BossInvoiceList() {
   const navigate = useNavigate();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [departments, setDepartments] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  const [department, setDepartment] = useState("");
   const [keyword, setKeyword] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+
+  // 加载部门列表
+  useEffect(() => {
+    bossApi.listDepartments().then(setDepartments).catch(() => {});
+  }, []);
+
+  // 防抖搜索
+  useEffect(() => {
+    const t = setTimeout(() => setKeyword(searchInput.trim()), 400);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   useEffect(() => {
     setLoading(true);
     setError("");
     bossApi
-      .listInvoices({ status: status || undefined })
+      .listInvoices({
+        status: status || undefined,
+        department: department || undefined,
+        keyword: keyword || undefined,
+      })
       .then(setInvoices)
       .catch((err) =>
         setError(err instanceof Error ? err.message : "加载失败")
       )
       .finally(() => setLoading(false));
-  }, [status]);
-
-  const filtered = keyword
-    ? invoices.filter(
-        (inv) =>
-          inv.seller_name?.toLowerCase().includes(keyword.toLowerCase()) ||
-          inv.invoice_number?.includes(keyword)
-      )
-    : invoices;
+  }, [status, department, keyword]);
 
   if (loading) {
     return (
@@ -69,7 +77,7 @@ export function BossInvoiceList() {
           </p>
         </div>
         <span className="shrink-0 rounded-full bg-muted px-3 py-1 text-xs font-medium text-foreground/70">
-          共 {filtered.length} 张
+          共 {invoices.length} 张
         </span>
       </div>
 
@@ -78,7 +86,7 @@ export function BossInvoiceList() {
         <select
           value={status}
           onChange={(e) => setStatus(e.target.value)}
-          className="rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+          className="min-h-[36px] rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
         >
           {STATUS_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>
@@ -86,17 +94,29 @@ export function BossInvoiceList() {
             </option>
           ))}
         </select>
-        <div className="relative flex-1 min-w-[180px]">
+        <select
+          value={department}
+          onChange={(e) => setDepartment(e.target.value)}
+          className="min-h-[36px] rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+        >
+          <option value="">全部部门</option>
+          {departments.map((d) => (
+            <option key={d} value={d}>
+              {d}
+            </option>
+          ))}
+        </select>
+        <div className="relative min-w-[180px] flex-1">
           <MagnifyingGlass
             size={14}
             className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
           />
           <input
             type="text"
-            placeholder="搜索销售方 / 发票号"
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            className="w-full rounded-md border border-border bg-background py-1.5 pl-8 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+            placeholder="搜索姓名 / 工号"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            className="min-h-[36px] w-full rounded-md border border-border bg-background py-1.5 pl-8 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
           />
         </div>
       </div>
@@ -114,14 +134,14 @@ export function BossInvoiceList() {
         </div>
       )}
 
-      {filtered.length === 0 ? (
+      {invoices.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-background py-16 text-center">
           <Receipt size={48} className="text-muted" />
           <p className="mt-3 text-sm text-muted-foreground">暂无发票</p>
         </div>
       ) : (
         <div className="space-y-3">
-          {filtered.map((inv) => (
+          {invoices.map((inv) => (
             <div
               key={inv.id}
               onClick={() => navigate(`/boss/invoices/${inv.id}`)}

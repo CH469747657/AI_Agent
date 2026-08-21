@@ -8,6 +8,7 @@ import {
   WarningCircle,
   Eye,
   X,
+  MagnifyingGlass,
 } from "@phosphor-icons/react";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
@@ -15,34 +16,48 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "DRAFT", label: "草稿" },
   { value: "SUBMITTED", label: "待审批" },
   { value: "REVIEWED", label: "已批准" },
-  { value: "REIMBURSED", label: "已报销" },
 ];
 
 const statusLabels: Record<ReimbursementStatus, { label: string; color: string }> = {
   DRAFT: { label: "草稿", color: "bg-muted text-muted-foreground" },
   SUBMITTED: { label: "待审批", color: "bg-warning-50 text-warning-700" },
   REVIEWED: { label: "已批准", color: "bg-success-50 text-success-700" },
-  REIMBURSED: { label: "已报销", color: "bg-primary-50 text-primary-700" },
 };
 
 export function BossReimbursementList() {
   const navigate = useNavigate();
   const [reimbs, setReimbs] = useState<Reimbursement[]>([]);
+  const [departments, setDepartments] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [department, setDepartment] = useState("");
+  const [keyword, setKeyword] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+
+  useEffect(() => {
+    bossApi.listDepartments().then(setDepartments).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => setKeyword(searchInput.trim()), 400);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   useEffect(() => {
     setLoading(true);
     setError("");
     bossApi
-      .listReimbursements()
+      .listReimbursements({
+        department: department || undefined,
+        keyword: keyword || undefined,
+      })
       .then(setReimbs)
       .catch((err) =>
         setError(err instanceof Error ? err.message : "加载失败")
       )
       .finally(() => setLoading(false));
-  }, []);
+  }, [department, keyword]);
 
   const filtered = statusFilter
     ? reimbs.filter((r) => r.status === statusFilter)
@@ -76,7 +91,7 @@ export function BossReimbursementList() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+          className="min-h-[36px] rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
         >
           {STATUS_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>
@@ -84,6 +99,31 @@ export function BossReimbursementList() {
             </option>
           ))}
         </select>
+        <select
+          value={department}
+          onChange={(e) => setDepartment(e.target.value)}
+          className="min-h-[36px] rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+        >
+          <option value="">全部部门</option>
+          {departments.map((d) => (
+            <option key={d} value={d}>
+              {d}
+            </option>
+          ))}
+        </select>
+        <div className="relative min-w-[180px] flex-1">
+          <MagnifyingGlass
+            size={14}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+          />
+          <input
+            type="text"
+            placeholder="搜索姓名 / 工号"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            className="min-h-[36px] w-full rounded-md border border-border bg-background py-1.5 pl-8 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+          />
+        </div>
       </div>
 
       {error && (

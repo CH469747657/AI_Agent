@@ -1230,14 +1230,18 @@ export const bossApi = {
     });
   },
 
-  /** 发票列表（穿透全公司） */
+  /** 发票列表（穿透全公司，支持部门筛选 + 人名/工号搜索） */
   listInvoices: (params?: {
     user_id?: string;
     status?: string;
+    department?: string;
+    keyword?: string;
   }): Promise<Invoice[]> => {
     const qs = new URLSearchParams();
     if (params?.user_id) qs.set("user_id", params.user_id);
     if (params?.status) qs.set("status", params.status);
+    if (params?.department) qs.set("department", params.department);
+    if (params?.keyword) qs.set("keyword", params.keyword);
     const q = qs.toString();
     return bossRequest<Invoice[]>(`/invoices${q ? "?" + q : ""}`);
   },
@@ -1246,10 +1250,16 @@ export const bossApi = {
   getInvoice: (id: number): Promise<InvoiceDetail> =>
     bossRequest<InvoiceDetail>(`/invoices/${id}`),
 
-  /** 报销单列表（穿透全公司） */
-  listReimbursements: (params?: { applicant_id?: string }): Promise<Reimbursement[]> => {
+  /** 报销单列表（穿透全公司，支持部门筛选 + 人名/工号搜索） */
+  listReimbursements: (params?: {
+    applicant_id?: string;
+    department?: string;
+    keyword?: string;
+  }): Promise<Reimbursement[]> => {
     const qs = new URLSearchParams();
     if (params?.applicant_id) qs.set("applicant_id", params.applicant_id);
+    if (params?.department) qs.set("department", params.department);
+    if (params?.keyword) qs.set("keyword", params.keyword);
     const q = qs.toString();
     return bossRequest<Reimbursement[]>(`/reimbursements${q ? "?" + q : ""}`);
   },
@@ -1257,6 +1267,10 @@ export const bossApi = {
   /** 报销单详情 */
   getReimbursement: (id: number): Promise<Reimbursement> =>
     bossRequest<Reimbursement>(`/reimbursements/${id}`),
+
+  /** 部门列表（用于筛选下拉） */
+  listDepartments: (): Promise<string[]> =>
+    bossRequest<string[]>(`/employees/departments/list`),
 
   /** 员工列表（用于问数下钻） */
   listEmployees: (): Promise<unknown[]> => bossRequest<unknown[]>(`/employees`),

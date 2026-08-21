@@ -117,23 +117,35 @@ export function BossReimbursementList() {
             </option>
           ))}
         </select>
-        <div className="relative min-w-[180px] flex-1">
-          <MagnifyingGlass
-            size={14}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-          />
-          <input
-            type="text"
-            placeholder="搜索姓名 / 工号"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            onCompositionStart={() => (composingRef.current = true)}
-            onCompositionEnd={(e) => {
-              composingRef.current = false;
-              setSearchInput((e.target as HTMLInputElement).value);
-            }}
-            className="min-h-[36px] w-full rounded-md border border-border bg-background py-1.5 pl-8 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
-          />
+        <div className="flex min-w-[180px] flex-1 items-center gap-1.5">
+          <div className="relative flex-1">
+            <MagnifyingGlass
+              size={14}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+            />
+            <input
+              type="text"
+              placeholder="搜索姓名 / 工号"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") setKeyword(searchInput.trim());
+              }}
+              onCompositionStart={() => (composingRef.current = true)}
+              onCompositionEnd={(e) => {
+                composingRef.current = false;
+                setSearchInput((e.target as HTMLInputElement).value);
+              }}
+              className="min-h-[36px] w-full rounded-md border border-border bg-background py-1.5 pl-8 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setKeyword(searchInput.trim())}
+            className="flex min-h-[36px] shrink-0 items-center rounded-md bg-primary-600 px-3 text-sm font-medium text-white transition-colors hover:bg-primary-500"
+          >
+            搜索
+          </button>
         </div>
       </div>
 

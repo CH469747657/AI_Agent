@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { bossApi } from "../../api/client";
 import type { Reimbursement, ReimbursementStatus } from "../../types";
@@ -29,23 +29,26 @@ export function BossReimbursementList() {
   const [reimbs, setReimbs] = useState<Reimbursement[]>([]);
   const [departments, setDepartments] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [firstLoad, setFirstLoad] = useState(true);
   const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [department, setDepartment] = useState("");
   const [keyword, setKeyword] = useState("");
   const [searchInput, setSearchInput] = useState("");
+  const composingRef = useRef(false);
 
   useEffect(() => {
     bossApi.listDepartments().then(setDepartments).catch(() => {});
   }, []);
 
   useEffect(() => {
+    if (composingRef.current) return;
     const t = setTimeout(() => setKeyword(searchInput.trim()), 400);
     return () => clearTimeout(t);
   }, [searchInput]);
 
   useEffect(() => {
-    setLoading(true);
+    if (!firstLoad) setLoading(true);
     setError("");
     bossApi
       .listReimbursements({
@@ -56,14 +59,17 @@ export function BossReimbursementList() {
       .catch((err) =>
         setError(err instanceof Error ? err.message : "加载失败")
       )
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setLoading(false);
+        setFirstLoad(false);
+      });
   }, [department, keyword]);
 
   const filtered = statusFilter
     ? reimbs.filter((r) => r.status === statusFilter)
     : reimbs;
 
-  if (loading) {
+  if (loading && firstLoad) {
     return (
       <div className="flex items-center justify-center py-20">
         <Spinner size={24} className="animate-spin text-primary-700" />
@@ -121,6 +127,11 @@ export function BossReimbursementList() {
             placeholder="搜索姓名 / 工号"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
+            onCompositionStart={() => (composingRef.current = true)}
+            onCompositionEnd={(e) => {
+              composingRef.current = false;
+              setSearchInput((e.target as HTMLInputElement).value);
+            }}
             className="min-h-[36px] w-full rounded-md border border-border bg-background py-1.5 pl-8 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
           />
         </div>
@@ -142,10 +153,17 @@ export function BossReimbursementList() {
       {filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-background py-16 text-center">
           <Stack size={48} className="text-muted" />
-          <p className="mt-3 text-sm text-muted-foreground">暂无报销单</p>
+          <p className="mt-3 text-sm text-muted-foreground">
+            {loading ? "加载中..." : "暂无报销单"}
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
+          {loading && (
+            <div className="flex items-center justify-center py-2">
+              <Spinner size={16} className="animate-spin text-muted-foreground" />
+            </div>
+          )}
           {filtered.map((r) => {
             const sc = statusLabels[r.status] || statusLabels.DRAFT;
             return (

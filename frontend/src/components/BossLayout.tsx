@@ -13,7 +13,6 @@ const navItems = [
   { to: "/boss/chat", label: "智能问数", icon: ChatCircle },
   { to: "/boss/invoices", label: "发票", icon: Receipt },
   { to: "/boss/reimbursements", label: "报销单", icon: Stack },
-  { to: "/boss/settings", label: "设置", icon: Gear },
 ];
 
 /**
@@ -90,6 +89,17 @@ export function BossLayout() {
               </span>
             </span>
           )}
+          <NavLink
+            to="/boss/settings"
+            className={({ isActive }) =>
+              `flex items-center rounded-lg px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground ${
+                isActive ? "bg-muted text-foreground" : ""
+              }`
+            }
+            title="设置"
+          >
+            <Gear size={16} />
+          </NavLink>
           <button
             onClick={handleLogout}
             className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-error-50 hover:text-error-600"

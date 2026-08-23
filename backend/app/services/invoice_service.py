@@ -123,21 +123,21 @@ class InvoiceService:
         await self.db.commit()
         await self.db.refresh(invoice)
 
-        # 无感上传：receipt_type 为空时，单次 VLM 同时判断类型 + 提取字段
+        # VLM 同时判断类型 + 提取字段（总是跑，用 VLM 结果覆盖前端默认值）
+        # 前端传的 receipt_type 可能是默认值或残留，VLM 看图判断更准
         vlm_fields = None
-        if not receipt_type:
-            try:
-                detected_type, vlm_fields = await self._detect_and_extract_by_vision(file_data, file_type)
-                if detected_type and detected_type != actual_receipt_type:
-                    logger.info(
-                        f"Invoice #{invoice.id} VLM 自动识别票据类型: {actual_receipt_type} → {detected_type}"
-                    )
-                    invoice.receipt_type = ReceiptType(detected_type)
-                    actual_receipt_type = detected_type
-                    await self.db.commit()
-                    await self.db.refresh(invoice)
-            except Exception as e:
-                logger.warning(f"Invoice #{invoice.id} VLM 合并识别失败，回退默认值: {e}")
+        try:
+            detected_type, vlm_fields = await self._detect_and_extract_by_vision(file_data, file_type)
+            if detected_type and detected_type != actual_receipt_type:
+                logger.info(
+                    f"Invoice #{invoice.id} VLM 识别票据类型: {actual_receipt_type} → {detected_type}"
+                )
+                invoice.receipt_type = ReceiptType(detected_type)
+                actual_receipt_type = detected_type
+                await self.db.commit()
+                await self.db.refresh(invoice)
+        except Exception as e:
+            logger.warning(f"Invoice #{invoice.id} VLM 合并识别失败，回退默认值: {e}")
 
         logger.info(f"Invoice #{invoice.id} created, starting processing...")
 

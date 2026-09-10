@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from app.dialog.dialog_engine import get_dialog_engine
 from app.dialog.context_store import RedisContextStore
 from app.dialog.models import UserRole, DialogState
-from app.routers.admin_auth import get_current_admin, get_current_admin_or_boss
+from app.routers.admin_auth import get_current_admin_or_boss
 
 logger = logging.getLogger(__name__)
 
@@ -227,11 +227,12 @@ async def get_state(user_id: str):
 
 
 @router.post("/reset/{user_id}")
-async def reset_context(
-    user_id: str,
-    _admin: dict = Depends(get_current_admin),
-):
-    """重置用户对话上下文"""
+async def reset_context(user_id: str):
+    """重置用户对话上下文
+
+    鉴权由 router 级 `get_current_admin_or_boss` 统一处理，admin 与 boss 均可调用。
+    boss 端"清空对话"按钮走此端点，不能用 `get_current_admin` 否则 boss token 403。
+    """
     engine = get_dialog_engine()
     await engine.reset_user_async(user_id)
     return {"status": "ok", "message": "对话上下文已重置"}

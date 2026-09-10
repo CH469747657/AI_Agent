@@ -134,12 +134,19 @@ async def list_invoices(
         query = query.where(Invoice.user_id.in_(matched_user_ids))
     if status:
         # 显式筛选指定状态时，覆盖默认过滤
+        try:
+            status_enum = InvoiceStatus(status)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid status: {status}. Valid values: {', '.join(s.value for s in InvoiceStatus)}",
+            )
         query = select(Invoice).order_by(Invoice.created_at.desc())
         if user_id:
             query = query.where(Invoice.user_id == user_id)
         if matched_user_ids is not None:
             query = query.where(Invoice.user_id.in_(matched_user_ids))
-        query = query.where(Invoice.status == InvoiceStatus(status))
+        query = query.where(Invoice.status == status_enum)
     result = await db.execute(query)
     invoices = list(result.scalars().all())
 
@@ -455,7 +462,13 @@ async def update_invoice(
         except ValueError:
             raise HTTPException(status_code=422, detail=f"Invalid status: {request.status}. Valid values: {', '.join(s.value for s in InvoiceStatus)}")
     if request.user_description is not None:
-        invoice.user_description = request.user_description
+        # 与 process_upload 行为一致：拆分日期 + 纯用途，更新 expense_date
+        from app.services.expense_date_engine import extract_date_and_purpose
+        parsed_date, clean_purpose = extract_date_and_purpose(request.user_description)
+        invoice.user_description = clean_purpose if parsed_date else request.user_description
+        if parsed_date:
+            invoice.expense_date = parsed_date
+            invoice.expense_date_source = "note"
 
     await db.commit()
     await db.refresh(invoice)

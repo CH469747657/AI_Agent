@@ -287,6 +287,12 @@ async def attach_invoice_to_cycle(
     for old_item in result.scalars().all():
         await db.delete(old_item)
 
+    # 计算下一个 sort_order（同报销单已有明细数 + 0 起步）
+    existing_count_q = await db.execute(
+        select(ReimbursementItem).where(ReimbursementItem.reimbursement_id == reimb.id)
+    )
+    next_sort_order = len(existing_count_q.scalars().all())
+
     item = ReimbursementItem(
         reimbursement_id=reimb.id,
         invoice_id=invoice.id,
@@ -299,6 +305,7 @@ async def attach_invoice_to_cycle(
         description=invoice.user_description,
         is_late_charge=late,
         intended_cycle_key=intended,
+        sort_order=next_sort_order,
     )
     db.add(item)
 

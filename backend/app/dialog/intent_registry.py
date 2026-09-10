@@ -530,6 +530,7 @@ ADMIN_QUERY_INTENTS: list[Intent] = [
         nlu_level=NluLevel.L2_SEMANTIC,
         typical_utterances=[
             "生成报销单", "归集发票", "生成所有人的报销单", "汇总发票到报销单", "把发票生成报销单",
+            "生成员工陈辉的报销单", "给陈辉生成报销单", "为陈辉生成报销单",
         ],
     ),
 ]

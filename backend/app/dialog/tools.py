@@ -220,7 +220,7 @@ class AdminMarkReimbursedTool(_BridgeTool):
 
 class AdminAggregateInvoicesTool(_BridgeTool):
     name = "admin_aggregate_invoices"
-    description = "批量归集游离发票到报销单"
+    description = "批量归集游离发票到报销单（也支持「生成报销单」「为陈辉生成报销单」「把发票汇总到报销单」等说法）。可指定员工或全部员工"
     Parameters = AdminAggregateInvoicesParams
     required_roles = [UserRole.ADMIN]
     handler_method = "_handle_admin_aggregate_invoices"

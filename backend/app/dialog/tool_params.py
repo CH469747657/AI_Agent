@@ -117,7 +117,8 @@ class ModifyFieldParams(BaseModel):
     model_config = {"extra": "allow"}
     field_name: str = Field(description="要修改的字段名：金额/日期/销售方/税号/发票号/用途")
     field_value: str = Field(description="字段新值")
-    invoice_index: Optional[int] = Field(default=None, description="第N张（1-based），缺省时用 pending_invoice_id")
+    invoice_id: Optional[int] = Field(default=None, description="发票编号（如 #896 → 896），精准定位，优先于 invoice_index")
+    invoice_index: Optional[int] = Field(default=None, description="第N张（1-based，按用户发票列表 created_at DESC 排序），缺省时用 pending_invoice_id")
 
 
 class ConfirmCategoryParams(BaseModel):
@@ -209,6 +210,7 @@ class AdminAggregateInvoicesParams(BaseModel):
     """批量归集发票参数"""
     model_config = {"extra": "allow"}
     user_id: Optional[str] = Field(default=None, description="指定员工ID，缺省归集所有人")
+    person: Optional[str] = Field(default=None, description="员工姓名或工号（如「陈辉」「EMP001」），用于定位单个员工归集；与 user_id 二选一")
 
 
 # ============================================================

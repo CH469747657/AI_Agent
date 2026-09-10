@@ -122,7 +122,8 @@ _FALLBACK_PROMPT = """你是AI报销智能体的意图识别引擎。根据用�
 ## 关键语义判别规则（请严格遵守）
 
 1. **角色感知**：员工说"我花了多少"→ self_insight_total（个人开支）；老板说同样的话 → insight_total（公司开支）。绝不能为老板返回 self_insight_* 意图！
-2. **具体人名**：提到具体人名（中文/英文/工号）的费用 → insight_person，而非 insight_total
+2. **具体人名**：提到具体人名（中文/英文/工号）的费用查询 → insight_person，而非 insight_total
+   - **例外（动作优先）**：若同时含动作动词「生成/归集/汇总/把…生成」+ 宾语「报销单」，走 **admin_aggregate_invoices**（admin 专属），并在 person 槽位填该人名。例："生成员工陈辉的报销单"→ admin_aggregate_invoices + person="陈辉"，**不要**走 insight_person
 3. **占比/分布**："占比""分布""各占多少" → insight_by_category 或 self_insight_category
 4. **分类名+金额/明细**：提到单个具体分类名，无论是问金额还是问明细（如"快递费花了多少""哪些是差旅费""差旅费有哪些"）→ insight_category_amount 或 self_insight_category_amount，而非 insight_by_category
 5. **趋势/增长**："增长""波动""趋势""走势" → insight_trend 或 self_insight_trend

@@ -919,8 +919,9 @@ class ActionExecutor:
     ) -> dict:
         """修改发票字段
 
-        支持通过 invoice_index 槽位指定"第N张"（1-based，对应 batch_invoice_ids），
-        未指定时回退到 ctx.pending_invoice_id。
+        支持通过 invoice_index 槽位指定"第N张"（1-based）。
+        invoice_index 对应用户发票列表（按 created_at DESC，与前端发票列表表格一致）。
+        未指定 invoice_index 时回退到 ctx.pending_invoice_id。
         可修改字段：金额、日期、销售方、税号、发票号、用途。
         """
         field_name = ctx.slots.get("field_name")
@@ -928,22 +929,41 @@ class ActionExecutor:
         if not field_name or not field_name.filled or not field_value or not field_value.filled:
             return {"text": "请告诉我要修改哪个字段以及新值。", "data": {}}
 
-        # 解析目标发票：优先 invoice_index 槽位（"第N张"），回退 pending_invoice_id
+        # 解析目标发票：优先 invoice_id 槽位（"#896" → 896 精准定位），
+        # 否则用 invoice_index 槽位（"第N张"，按 created_at DESC 排序），
+        # 都没有则回退 pending_invoice_id
         invoice_id = None
+        id_slot = ctx.slots.get("invoice_id")
+        if id_slot and id_slot.filled:
+            try:
+                invoice_id = int(id_slot.value)
+            except (ValueError, TypeError):
+                return {"text": f"无法解析发票编号「{id_slot.value}」，请用 #编号 或「第N张」。", "data": {}}
+
         index_slot = ctx.slots.get("invoice_index")
-        if index_slot and index_slot.filled:
+        if not invoice_id and index_slot and index_slot.filled:
             try:
                 idx = int(index_slot.value)
                 if idx < 1:
                     return {"text": f"发票序号需大于0，您输入的是 {idx}。", "data": {}}
-                if not ctx.batch_invoice_ids:
-                    return {"text": "您还没有上传任何发票，无法按序号修改。", "data": {}}
-                if idx > len(ctx.batch_invoice_ids):
+                # 查 DB 按前端列表规则排序，取第 idx 张
+                from app.models.invoice import InvoiceStatus
+                list_q = (
+                    select(Invoice.id)
+                    .where(Invoice.user_id == ctx.user_id)
+                    .where(Invoice.status != InvoiceStatus.processing)
+                    .order_by(Invoice.created_at.desc())
+                )
+                list_result = await db.execute(list_q)
+                all_ids = [row[0] for row in list_result.all()]
+                if not all_ids:
+                    return {"text": "您还没有任何发票，无法按序号修改。", "data": {}}
+                if idx > len(all_ids):
                     return {
-                        "text": f"序号超出范围，您当前共 {len(ctx.batch_invoice_ids)} 张发票。",
+                        "text": f"序号超出范围，您当前共 {len(all_ids)} 张发票。",
                         "data": {},
                     }
-                invoice_id = ctx.batch_invoice_ids[idx - 1]
+                invoice_id = all_ids[idx - 1]
             except (ValueError, TypeError):
                 return {"text": f"无法解析发票序号「{index_slot.value}」，请说「第2张」。", "data": {}}
 
@@ -956,6 +976,16 @@ class ActionExecutor:
         invoice = result.scalar_one_or_none()
         if not invoice:
             return {"text": f"未找到发票 #{invoice_id}。", "data": {}}
+
+        # 员工端约束：仅允许修改未关联报销单的发票（与删除接口 portal.py:161 行为一致）
+        if ctx.role == UserRole.EMPLOYEE and invoice.reimbursement_id is not None:
+            return {
+                "text": (
+                    f"发票 #{invoice_id} 已关联到报销单 #{invoice.reimbursement_id}，"
+                    f"无法修改。仅未关联报销单的发票允许修改。"
+                ),
+                "data": {},
+            }
 
         fn = field_name.value
         fv = field_value.value
@@ -1493,7 +1523,7 @@ class ActionExecutor:
             return ""
 
         lines = [
-            "| 序号 | 类型 | 销售方 | 金额 | 用途 | 日期 |",
+            "| 编号 | 类型 | 销售方 | 金额 | 用途 | 日期 |",
             "|------|------|--------|------|------|------|",
         ]
         for idx, inv in enumerate(invoices, 1):
@@ -1502,7 +1532,7 @@ class ActionExecutor:
             amount = f"¥{inv.total_with_tax or '—'}"
             desc = (inv.user_description or "待补充")[:12]
             expense_date = str(inv.expense_date) if inv.expense_date else "—"
-            lines.append(f"| {idx} | {rt} | {seller} | {amount} | {desc} | {expense_date} |")
+            lines.append(f"| #{inv.id} | {rt} | {seller} | {amount} | {desc} | {expense_date} |")
 
         # 合计行
         total = 0.0
@@ -1540,7 +1570,7 @@ class ActionExecutor:
             return ""
 
         lines = [
-            "| 序号 | 类型 | 销售方 | 金额 | 用途 | 日期 |",
+            "| 编号 | 类型 | 销售方 | 金额 | 用途 | 日期 |",
             "|------|------|--------|------|------|------|",
         ]
         total = 0.0
@@ -1554,7 +1584,7 @@ class ActionExecutor:
                 pass
             desc = (inv.user_description or "待补充")[:12]
             expense_date = str(inv.expense_date) if inv.expense_date else "—"
-            lines.append(f"| {idx} | {rt} | {seller} | ¥{amount_str} | {desc} | {expense_date} |")
+            lines.append(f"| #{inv.id} | {rt} | {seller} | ¥{amount_str} | {desc} | {expense_date} |")
 
         lines.append(f"| **合计** | | | **¥{total:.2f}** | {len(invoices)}张 | |")
         return "\n".join(lines)
@@ -1581,7 +1611,7 @@ class ActionExecutor:
             return ""
 
         lines = [
-            "| 序号 | 类型 | 销售方 | 金额 | 用途 | 日期 | 状态 |",
+            "| 编号 | 类型 | 销售方 | 金额 | 用途 | 日期 | 状态 |",
             "|------|------|--------|------|------|------|------|",
         ]
         total = 0.0
@@ -1596,7 +1626,7 @@ class ActionExecutor:
             desc = (inv.user_description or "待补充")[:12]
             expense_date = str(inv.expense_date) if inv.expense_date else "—"
             status = self._status_text(inv)
-            lines.append(f"| {idx} | {rt} | {seller} | ¥{amount_str} | {desc} | {expense_date} | {status} |")
+            lines.append(f"| #{inv.id} | {rt} | {seller} | ¥{amount_str} | {desc} | {expense_date} | {status} |")
 
         lines.append(f"| **合计** | | | **¥{total:.2f}** | {len(invoices)}张 | | |")
         return "\n".join(lines)

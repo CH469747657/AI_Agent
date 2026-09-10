@@ -277,6 +277,10 @@ def determine_expense_date(inv: Invoice, today: date | None = None) -> tuple[Opt
     """
     today = today or date.today()
 
+    # ── Level 0: 已设的 note 日期优先（避免归集时 user_description 已拆走日期后被覆盖） ──
+    if inv.expense_date and inv.expense_date_source == "note":
+        return (inv.expense_date, "note")
+
     # ── Level 1: 用户备注时间 ──
     note_text = _collect_note_text(inv)
     d = parse_note_date(note_text, today)

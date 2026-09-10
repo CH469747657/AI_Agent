@@ -461,6 +461,13 @@ class AgentCore:
     - "重复的发票""验真失败的发票""高风险的发票""待审核的发票""收据" → insight_invoice_filter
       （filter_type 填对应枚举：duplicate/invalid/high_risk/pending/receipt，不传 person）
     - 仅当老板明确提到**具体人名**（如"陈辉的报销""李总的发票"）才调用 insight_person + person="具体姓名"
+14. **生成报销单/归集发票**（关键，admin 专属）：用户消息含动作动词「生成/归集/汇总」+ 宾语「报销单/发票」时，
+    调用 admin_aggregate_invoices 工具。例："生成报销单""生成员工陈辉的报销单""归集陈辉的发票"
+    "汇总发票到报销单""把发票生成报销单""生成所有人的报销单"。带具体人名时 person 参数填该姓名
+    （如 person="陈辉"），不带人名则不传 person。
+    **与查询意图的消歧**：用户仅说"查看XX的报销""XX报销了多少""XX的费用"等无动作动词的查询时，
+    走 insight_person（或 insight_invoice_total），**不要**调 admin_aggregate_invoices。
+    判断关键：是否含「生成/归集/汇总」动作动词——有则走归集，无则走查询。
 14. **凭证上传/无发票报销引导格式**（关键，违反将导致用户输入格式混乱）：
     - 上传发票后追问用途时，必须明确引导用户填【时间+用途】格式，如「8月5日 打车费」
       或「1 8月5日 打车费，2 8月10日 住宿费」（多张按序号分配），并在最终回复中
@@ -470,6 +477,14 @@ class AgentCore:
       回复中返回 quick_replies 数组：["无发票报销 8月5日 120元 打车费", "无发票报销 8月10日 350元 餐费"]
     - **用户填写后**（已识别为 emp_fill_invoice_desc / emp_no_receipt 意图并执行成功），
       **不再返回 quick_replies**，仅返回操作结果 + 表格预览。避免气泡重复打扰用户。
+15. **发票定位消歧**（关键，违反将导致误修改）：用户提到发票时按以下规则区分 invoice_id 与 invoice_index：
+    - 「#896」「编号896」「发票编号896」→ **invoice_id=896**（精准定位，数据库主键）
+    - 「第2张」「发票2」「第N张」→ **invoice_index=2**（序号，按用户发票列表 created_at DESC 排序）
+    - **关键**：「发票N」（无#）一律视为序号，填 invoice_index=N，**不要**填 invoice_id=N。
+      仅当含「#」或「编号」字样时才填 invoice_id。例："发票3 用途改为快递费" → invoice_index=3（不是 invoice_id=3）。
+    - 修改/删除发票前，若不确定用户指哪张，主动调用 emp_query_invoices 查列表，让用户对照编号确认。
+    - 员工角色修改发票：仅允许修改未关联报销单的发票（reimbursement_id 为空）。已关联的会返回错误，
+      此时主动展示当前可修改的发票列表（未关联的）供用户重新指定。
 """
         # follow_up 上下文：上一轮上传了发票，等待用户补充用途
         if context.pending_invoice_id:

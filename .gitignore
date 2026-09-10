@@ -72,3 +72,17 @@ reports/
 .temp/
 tmp/
 *.tmp
+
+# ===== 数据库导出 / 测试产物 / 演示素材 =====
+# 数据库 dump 不入库（含敏感数据，且每环境各异）
+backend/scripts/*.dump
+*.dump
+
+# Playwright/测试运行产物
+test-results/
+frontend/test-results/
+frontend/playwright-report/
+backend/scripts/e2e_*_output.txt
+
+# 演示素材（体积大，不属源码）
+slides/

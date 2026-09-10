@@ -4,9 +4,8 @@ export type InvoiceStatus =
   | "UPLOADED"
   | "PROCESSING"
   | "REVIEWING"
-  | "CONFIRMED"
-  | "REIMBURSED"
-  | "NOT_REIMBURSED";
+  | "REVIEWED"
+  | "REJECTED";
 
 export type VerifyStatus = "PENDING" | "VALID" | "INVALID" | "UNABLE_TO_VERIFY";
 

@@ -988,6 +988,12 @@ export const dialogApi = {
         { method: "POST" }
       );
     }
+    if (role === "boss") {
+      return bossRequest<{ status: string; message: string }>(
+        `/dialog/reset/${encodeURIComponent(userId)}`,
+        { method: "POST" }
+      );
+    }
     return request<{ status: string; message: string }>(
       `/dialog/reset/${encodeURIComponent(userId)}`,
       { method: "POST" }
@@ -1001,6 +1007,11 @@ export const dialogApi = {
   state: (userId: string, role?: DialogRole) => {
     if (role === "employee") {
       return portalRequest<DialogStateInfo>("/dialog/state");
+    }
+    if (role === "boss") {
+      return bossRequest<DialogStateInfo>(
+        `/dialog/state/${encodeURIComponent(userId)}`
+      );
     }
     return request<DialogStateInfo>(
       `/dialog/state/${encodeURIComponent(userId)}`

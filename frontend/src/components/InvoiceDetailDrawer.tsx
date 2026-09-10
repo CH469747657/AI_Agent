@@ -584,9 +584,8 @@ function DetailContent({
                   <option value="UPLOADED">已上传</option>
                   <option value="PROCESSING">处理中</option>
                   <option value="REVIEWING">待审核</option>
-                  <option value="CONFIRMED">已确认</option>
-                  <option value="REIMBURSED">已报销</option>
-                  <option value="NOT_REIMBURSED">不予报销</option>
+                  <option value="REVIEWED">已审核</option>
+                  <option value="REJECTED">审核不通过</option>
                 </select>
               </div>
             </div>

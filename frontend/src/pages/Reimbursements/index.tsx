@@ -293,7 +293,7 @@ function useReimbursementsPageState() {
     return allInvoices.filter(
       (inv) =>
         (inv.is_nonstandard
-          ? inv.status === "CONFIRMED"
+          ? inv.status === "REVIEWED"
           : inv.verify_status === "VALID") &&
         inv.duplicate_status === "UNIQUE" &&
         !inv.reimbursement_id

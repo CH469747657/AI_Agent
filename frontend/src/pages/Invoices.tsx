@@ -31,9 +31,8 @@ const statusOptions: { value: string; label: string }[] = [
   { value: "UPLOADED", label: "已上传" },
   { value: "PROCESSING", label: "处理中" },
   { value: "REVIEWING", label: "待审核" },
-  { value: "CONFIRMED", label: "已确认" },
-  { value: "REIMBURSED", label: "已报销" },
-  { value: "NOT_REIMBURSED", label: "不予报销" },
+  { value: "REVIEWED", label: "已审核" },
+  { value: "REJECTED", label: "审核不通过" },
 ];
 
 const verifyOptions: { value: string; label: string }[] = [

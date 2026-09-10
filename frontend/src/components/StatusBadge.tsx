@@ -21,16 +21,12 @@ const statusConfig: Record<
     label: "待审核",
     className: "bg-warning-50 text-warning-700",
   },
-  CONFIRMED: {
-    label: "已确认",
+  REVIEWED: {
+    label: "已审核",
     className: "bg-success-50 text-success-700",
   },
-  REIMBURSED: {
-    label: "已报销",
-    className: "bg-primary-50 text-primary-700",
-  },
-  NOT_REIMBURSED: {
-    label: "不予报销",
+  REJECTED: {
+    label: "审核不通过",
     className: "bg-error-50 text-error-700",
   },
 };

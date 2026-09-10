@@ -19,7 +19,11 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     # 1. 扩展 receipt_type 枚举（PostgreSQL 需要先加值）
     # 注意：PG ENUM 存储的是 Python 枚举的 name（如 bank_statement），不是中文 value
-    op.execute("ALTER TYPE receipttype ADD VALUE IF NOT EXISTS 'bank_statement'")
+    # 关键：PG 12+ 允许事务内 ALTER TYPE ADD VALUE，但新值在同事务内不可用
+    # 后续 line 55 的 UPDATE ... WHERE receipt_type IN (..., 'bank_statement') 会失败
+    # 必须用 autocommit_block() 让 ADD VALUE 提交，新值才能在后续 UPDATE 中可见
+    with op.get_context().autocommit_block():
+        op.execute("ALTER TYPE receipttype ADD VALUE IF NOT EXISTS 'bank_statement'")
 
     # 2. 新增字段
     op.add_column(
@@ -48,11 +52,12 @@ def upgrade() -> None:
     )
 
     # 3. 回填现有数据（receipt 原为 handwritten_receipt，已改名）
+    # cast 到 text 绕过 PG enum 严格类型检查（空库可能无对应值）
     op.execute("""
         UPDATE invoices
         SET is_nonstandard = true,
             processing_pipeline = 'nonstandard'
-        WHERE receipt_type IN ('receipt', 'payment_screenshot', 'bank_statement')
+        WHERE receipt_type::text IN ('receipt', 'payment_screenshot', 'bank_statement')
     """)
     op.execute("""
         UPDATE invoices

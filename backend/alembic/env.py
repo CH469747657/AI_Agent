@@ -58,6 +58,10 @@ def do_run_migrations(connection: Connection) -> None:
         target_metadata=target_metadata,
         compare_type=True,
         compare_server_default=True,
+        # 每个迁移独立事务 — 让 autocommit_block() 能正常提交 ALTER TYPE ADD VALUE
+        # 否则迁移 0003/0010 的 ALTER TYPE ADD VALUE 在外层事务内，
+        # 新值在同事务不可见，后续 UPDATE ... WHERE receipt_type IN (..., '新值') 会失败
+        transaction_per_migration=True,
     )
     with context.begin_transaction():
         context.run_migrations()

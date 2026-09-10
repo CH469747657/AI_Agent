@@ -49,7 +49,9 @@ services:
 
   # ===== MCP SSE 服务 =====
   mcp-sse:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.mcp
     command:
       - uvicorn
       - app.mcp.server_sse:app
@@ -102,7 +104,10 @@ services:
     restart: unless-stopped
 
   # ===== 企业微信回调网关 =====
+  # 企业微信 MCP 网关 — 暂时关闭（profiles: ["wecom"]）
+  # 需要启用时：docker compose --profile wecom up -d wecom-gateway
   wecom-gateway:
+    profiles: ["wecom"]
     build: ./wecom-gateway
     ports:
       - "18090:8090"

@@ -71,7 +71,17 @@ async def sync_from_wecom(
 
     前置条件：.env 中已配置 WECOM_CORP_ID 和 WECOM_SECRET，
     且企微管理后台为自建应用开通了通讯录读取权限。
+
+    注：企业微信 MCP 功能暂时关闭（main.py 已注释 wecom router 注册）。
+    如需恢复，需在 main.py 取消 wecom import 和 router 注册注释，
+    并在 docker-compose.yml 启用 wecom-gateway profile。
+    本端点当前直接返回 503，不再调企微 API，避免暴露企业密钥或 IP 限制问题。
     """
+    from fastapi import HTTPException
+    raise HTTPException(
+        status_code=503,
+        detail="企业微信功能已暂时关闭。如需启用，请取消 main.py 中 wecom router 注释，并在 docker-compose 启用 wecom-gateway profile。",
+    )
     service = get_contact_service()
     result = await service.sync(db)
     return result

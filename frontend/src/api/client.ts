@@ -1055,6 +1055,25 @@ export const settingsApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     }),
+
+  /** 周期配置（cutoff 日） */
+  cycle: {
+    /** 获取当前周期 cutoff 日与当前周期键 */
+    get: () =>
+      request<{ cycle_cutoff_day: number; next_effective_cycle: string | null }>(
+        "/settings/cycle"
+      ),
+    /** 更新周期 cutoff 日（PUT，下个完整周期生效） */
+    update: (cycle_cutoff_day: number) =>
+      request<{ cycle_cutoff_day: number; next_effective_cycle: string | null }>(
+        "/settings/cycle",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cycle_cutoff_day }),
+        }
+      ),
+  },
 };
 
 // ===== 管理端 Admin API =====

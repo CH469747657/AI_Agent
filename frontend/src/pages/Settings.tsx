@@ -13,6 +13,7 @@ import {
   Key,
   ShieldCheck,
   UserCircle,
+  Calendar,
 } from "@phosphor-icons/react";
 import { settingsApi, adminApi } from "../api/client";
 import type { LlmSettings, LlmProviderInfo, VerifySettings } from "../types";
@@ -31,11 +32,12 @@ const VERIFY_PROVIDER_LABELS: Record<string, string> = {
   baidu: "百度智能云",
 };
 
-type TabKey = "llm" | "verify" | "password";
+type TabKey = "llm" | "verify" | "password" | "cycle";
 
 const TABS: { key: TabKey; label: string; icon: typeof GearSix }[] = [
   { key: "llm", label: "LLM API 参数", icon: Lightning },
   { key: "verify", label: "发票验真 API 参数", icon: ShieldCheck },
+  { key: "cycle", label: "周期配置", icon: Calendar },
   { key: "password", label: "管理员密码修改", icon: Key },
 ];
 
@@ -87,6 +89,7 @@ export function Settings() {
         >
           {activeTab === "llm" && <LlmTab />}
           {activeTab === "verify" && <VerifyTab />}
+          {activeTab === "cycle" && <CycleTab />}
           {activeTab === "password" && <PasswordTab />}
         </motion.div>
       </AnimatePresence>
@@ -812,7 +815,181 @@ function VerifyTab() {
 }
 
 // ============================================================
-// Tab 3: 管理员密码修改
+// Tab 3: 周期配置（cutoff 日）
+// ============================================================
+
+function CycleTab() {
+  const [cycleCutoff, setCycleCutoff] = useState(21);
+  const [savedCutoff, setSavedCutoff] = useState<number | null>(null);
+  const [currentCycle, setCurrentCycle] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+
+  const isDirty = savedCutoff !== null && cycleCutoff !== savedCutoff;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await settingsApi.cycle.get();
+      setCycleCutoff(r.cycle_cutoff_day);
+      setSavedCutoff(r.cycle_cutoff_day);
+      setCurrentCycle(r.next_effective_cycle);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "加载周期配置失败");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleSaveCycle = async () => {
+    if (!Number.isInteger(cycleCutoff) || cycleCutoff < 1 || cycleCutoff > 31) {
+      setError("cutoff 日必须为 1-31 之间的整数");
+      return;
+    }
+    setSaving(true);
+    setSaveMsg(null);
+    setError(null);
+    try {
+      const r = await settingsApi.cycle.update(cycleCutoff);
+      setSavedCutoff(r.cycle_cutoff_day);
+      setCycleCutoff(r.cycle_cutoff_day);
+      setCurrentCycle(r.next_effective_cycle);
+      setSaveMsg("保存成功，下个完整周期生效");
+      setTimeout(() => setSaveMsg(null), 5000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Spinner size={24} className="animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {error && (
+        <div className="flex items-center gap-2 rounded-xl bg-rose-50 p-4 text-sm text-rose-700">
+          <Warning size={18} />
+          {error}
+          <button
+            onClick={() => setError(null)}
+            className="ml-auto text-rose-400 hover:text-rose-600"
+          >
+            &times;
+          </button>
+        </div>
+      )}
+
+      <div className="rounded-2xl border border-border bg-background p-6">
+        <div className="flex items-center gap-2 mb-6">
+          <Calendar size={20} weight="fill" className="text-primary-600" />
+          <h2 className="font-display text-lg font-bold text-foreground">
+            报销周期配置
+          </h2>
+        </div>
+
+        <div className="space-y-5 max-w-2xl">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-foreground">
+              周期 cutoff 日
+              <span className="ml-1 text-xs text-muted-foreground">
+                (1-31 整数)
+              </span>
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={31}
+              step={1}
+              value={cycleCutoff}
+              onChange={(e) => setCycleCutoff(Number(e.target.value))}
+              className="w-24 rounded-lg border border-border bg-muted px-3 py-2.5 text-sm focus:border-primary-400 focus:bg-background"
+            />
+            <p className="text-xs text-muted-foreground">
+              cutoff 日不存在时取该月最后一日。例：21 = 每月 21 日到次月 20 日。修改后下个完整周期生效。
+            </p>
+          </div>
+
+          {currentCycle && (
+            <div className="rounded-lg bg-muted p-3 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">当前周期：</span>
+                <span className="font-mono font-semibold text-foreground">
+                  {currentCycle}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-6 flex items-center gap-3 border-t border-border pt-5">
+          <button
+            onClick={handleSaveCycle}
+            disabled={saving || !isDirty}
+            className="flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:opacity-50"
+          >
+            {saving ? (
+              <Spinner size={16} className="animate-spin" />
+            ) : (
+              <FloppyDisk size={16} />
+            )}
+            {saving ? "保存中..." : "保存配置"}
+          </button>
+
+          <AnimatePresence>
+            {saveMsg && (
+              <motion.span
+                initial={{ opacity: 0, x: -4 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0 }}
+                className="flex items-center gap-1 text-sm text-emerald-600"
+              >
+                <CheckCircle size={16} weight="fill" />
+                {saveMsg}
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-background p-6 max-w-2xl">
+        <h3 className="font-display text-sm font-bold text-foreground mb-3">
+          周期说明
+        </h3>
+        <ul className="space-y-2 text-sm text-muted-foreground">
+          <li className="flex items-start gap-2">
+            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-primary-400" />
+            cutoff 日 = 报销周期的划分日，每月该日 00:00 起为新周期
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-primary-400" />
+            例：cutoff=21，则 9 月 21 日 00:00 ~ 10 月 20 日 23:59 为一个周期
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+            修改 cutoff 仅影响后续生成的周期，当前周期不变
+          </li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Tab 4: 管理员密码修改
 // ============================================================
 
 function PasswordTab() {

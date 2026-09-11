@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # 管理员不受此限制（可代为提交/修改）。
 # ------------------------------------------------------------
 EMPLOYEE_BLOCKED_INTENTS: dict[str, str] = {
-    "emp_submit_reimbursement": "报销单由系统按报销周期自动生成与归集，您无需手动提交。",
+    # emp_submit_reimbursement 已解禁：员工可自生成报销单
 }
 
 

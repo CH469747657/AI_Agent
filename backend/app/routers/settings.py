@@ -5,7 +5,7 @@ import time
 
 from fastapi import APIRouter, Depends
 from openai import OpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -327,4 +327,61 @@ async def update_verify_settings(
         verify_secret_key=_mask_api_key(row.verify_secret_key),
         aliyun_verify_appcode=_mask_api_key(row.aliyun_verify_appcode),
         aliyun_verify_appsecret=_mask_api_key(row.aliyun_verify_appsecret),
+    )
+
+
+# ── 周期 cutoff 配置 ──────────────────────────────────────────
+
+class CycleSettingsRead(BaseModel):
+    cycle_cutoff_day: int
+    next_effective_cycle: str | None = None  # 下次生效周期 YYYY-MM
+
+
+class CycleSettingsUpdate(BaseModel):
+    cycle_cutoff_day: int = Field(ge=1, le=31, description="周期 cutoff 日 1-31")
+
+
+@router.get("/cycle", response_model=CycleSettingsRead)
+async def get_cycle_settings(db: AsyncSession = Depends(get_db)):
+    """读取周期 cutoff 配置"""
+    from app.services.cutoff_service import get_cutoff_day
+    from app.services.cycle_engine import current_cycle_key
+
+    cutoff = await get_cutoff_day(db)
+    # 下次生效周期：用新 cutoff 算今天所属周期
+    next_ck = current_cycle_key(cutoff_day=cutoff)
+    return CycleSettingsRead(cycle_cutoff_day=cutoff, next_effective_cycle=next_ck)
+
+
+@router.put("/cycle", response_model=CycleSettingsRead)
+async def update_cycle_settings(
+    data: CycleSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """更新周期 cutoff 配置
+
+    生效规则：当前周期不动，下个完整周期生效。
+    """
+    from app.services.cutoff_service import invalidate_cache
+    from app.services.cycle_engine import current_cycle_key
+
+    row = (
+        await db.execute(select(SystemSettings).where(SystemSettings.id == 1))
+    ).scalar_one_or_none()
+    if row is None:
+        row = SystemSettings(id=1, cycle_cutoff_day=data.cycle_cutoff_day)
+        db.add(row)
+    else:
+        row.cycle_cutoff_day = data.cycle_cutoff_day
+
+    await db.commit()
+    await db.refresh(row)
+
+    # 失效缓存，让后续请求重新读
+    invalidate_cache()
+
+    next_ck = current_cycle_key(cutoff_day=data.cycle_cutoff_day)
+    return CycleSettingsRead(
+        cycle_cutoff_day=row.cycle_cutoff_day,
+        next_effective_cycle=next_ck,
     )

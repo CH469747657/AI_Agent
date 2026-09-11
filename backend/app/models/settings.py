@@ -31,3 +31,11 @@ class SystemSettings(TimestampMixin, Base):
 
     # 老板端密码哈希（改密后写入此字段；为空时回退到 .env 的 BOSS_PASSWORD_HASH）
     boss_password_hash: Mapped[str] = mapped_column(String(256), default="")
+
+    # 周期 cutoff 日（1-31）。cutoff 日不存在时取该月最后一日。
+    # 周期=上月cutoff日到本月(cutoff-1)日，cutoff=21 → 21-20制
+    cycle_cutoff_day: Mapped[int] = mapped_column(
+        Integer, default=21,
+        comment="周期 cutoff 日（1-31）。cutoff 日不存在时取该月最后一日。"
+                "周期=上月cutoff日到本月(cutoff-1)日，cutoff=21 → 21-20制"
+    )

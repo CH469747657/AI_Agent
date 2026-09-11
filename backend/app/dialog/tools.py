@@ -88,7 +88,7 @@ class SubmitReimbursementTool(_BridgeTool):
     name = "emp_submit_reimbursement"
     description = "提交报销单"
     Parameters = SubmitReimbursementParams
-    required_roles = [UserRole.ADMIN]  # 员工端禁用，由系统自动归集
+    required_roles = [UserRole.EMPLOYEE, UserRole.ADMIN]  # 员工可通过对话直接提交
     handler_method = "_handle_submit_reimbursement"
 
 

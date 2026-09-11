@@ -22,6 +22,7 @@ const statusLabels: Record<ReimbursementStatus, { label: string; color: string }
   DRAFT: { label: "草稿", color: "bg-muted text-muted-foreground" },
   SUBMITTED: { label: "待审批", color: "bg-warning-50 text-warning-700" },
   REVIEWED: { label: "已批准", color: "bg-success-50 text-success-700" },
+  REIMBURSED: { label: "已报销", color: "bg-primary-50 text-primary-700" },
 };
 
 export function BossReimbursementList() {

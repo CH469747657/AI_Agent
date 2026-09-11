@@ -52,8 +52,11 @@ async def _find_or_pending_reimbursement(
         (reimb_or_none, cycle_key)
     """
     today = date.today()
-    expected_cycle_key = current_cycle_key(today)
-    travel_cycle_key = cycle_key_of(travel_date)
+    # 读 cutoff 配置（管理员可改），保证 cycle_engine 用最新 cutoff 而非默认 21
+    from app.services.cutoff_service import get_cutoff_day
+    cutoff = await get_cutoff_day(db)
+    expected_cycle_key = current_cycle_key(today, cutoff_day=cutoff)
+    travel_cycle_key = cycle_key_of(travel_date, cutoff_day=cutoff)
     if travel_cycle_key != expected_cycle_key:
         raise HTTPException(
             status_code=400,

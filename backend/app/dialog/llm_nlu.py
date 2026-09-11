@@ -63,7 +63,7 @@ _FALLBACK_PROMPT = """你是AI报销智能体的意图识别引擎。根据用�
     - "无凭证报销 120 元打车费" → amount=120, description="打车费"
     - "我有一笔 350 元的客户招待餐费需要无票报销" → amount=350, description="客户招待餐费"
     - "无票报销 88.5 元办公文具采购" → amount=88.5, description="办公文具采购"
-- （注意：员工端不提供"提交报销单"功能，报销单由系统按报销周期自动生成与归集。请勿为"提交""完成""报完了""done"等返回 emp_submit_reimbursement）
+- （员工现在可以通过对话提交报销单，如"提交""完成""报完了""done"返回 emp_submit_reimbursement）
 - **emp_batch_upload**: 批量上传，如"还有一张""继续上传""再加一张"
 - **emp_fill_purpose**: 填写报销用途，如"用于差旅""用途是培训""出差"
 - **emp_delete_invoice**: 删除/撤销已上传但未提交的发票，如"删除上一张""撤销上传""删掉第2张""删除那张机票"。注意：只能删除未关联报销单的发票，已提交的不能删
@@ -91,7 +91,7 @@ _FALLBACK_PROMPT = """你是AI报销智能体的意图识别引擎。根据用�
 
 ### admin（管理员）可用意图：
 员工全部意图 + 以下：
-- **emp_submit_reimbursement**: 提交/完成报销单，如"提交""完成""报完了""done"。管理员可代为提交（员工端禁用此意图）
+- **emp_submit_reimbursement**: 提交/完成报销单，如"提交""完成""报完了""done"。员工和管理员均可调用
 - **admin_query_pending**: 待审批列表，如"待审批""还没处理的"
 - **admin_query_person**: 查询指定员工报销，如"查张三的报销""陈辉报销了多少"。功能同 insight_person（管理员专属入口）
 - **admin_query_cycle_summary**: 查询某报销周期汇总（报销单数、费用/补贴分拆、封账状态、各申请人明细），如"这个周期汇总""周期统计""7月周期报销了多少""封账了吗""本月周期情况"

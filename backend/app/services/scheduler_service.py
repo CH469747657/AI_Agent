@@ -226,6 +226,10 @@ def start_scheduler() -> AsyncIOScheduler:
     # TODO: 定时任务 cron day=21 是硬编码的，cutoff 改后下一次重启才生效。
     # 当前实现：管理员改 cutoff 后，定时任务仍按旧 21 日跑（但跑时会读最新 cutoff
     # 配置算刚结束的周期）。完全动态化需要 APScheduler reschedule_job，留待后续优化。
+    # ⚠️ 已知局限：当 cutoff ≠ 21 时，cron 仍在 21 日触发，just_ended_cycle_key
+    #   会用新 cutoff 算"刚结束的周期"——例：cutoff=15 时，21 日执行会算出本月
+    #   cycle_key（应是上月），导致锁错周期。建议管理员改 cutoff 后立即重启后端，
+    #   期间手动调 /api/reimbursements/aggregate 兜底。
     from pytz import timezone as tz
     _scheduler.add_job(
         _cycle_lock_job,

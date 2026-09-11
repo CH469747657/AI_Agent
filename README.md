@@ -103,6 +103,8 @@ WECOM_ENCODING_AES_KEY=...
 - cutoff=15 → 每月 15 日到次月 14 日
 - cutoff=31 → 每月 31 日到次月 30 日（2 月取 28/29 日）
 
+**注意**：修改 cutoff 后需重启后端容器，定时任务才能按新 cutoff 日执行。期间手动调 `/api/reimbursements/aggregate` 兜底归集。
+
 ### 3. 启动服务
 
 ```bash

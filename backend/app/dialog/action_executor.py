@@ -736,9 +736,13 @@ class ActionExecutor:
                 "data": {},
             }
 
-        # 当前周期 key（21-20 制）— 仅允许标当前周期内的日期
+        # 读 cutoff 配置（管理员可改），保证 cycle_engine 用最新 cutoff 而非默认 21
+        from app.services.cutoff_service import get_cutoff_day
+        cutoff = await get_cutoff_day(db)
+
+        # 当前周期 key — 仅允许标当前周期内的日期
         today = date.today()
-        expected_ck = current_cycle_key(today)
+        expected_ck = current_cycle_key(today, cutoff_day=cutoff)
 
         added: list[str] = []
         skipped_dup: list[str] = []
@@ -755,7 +759,7 @@ class ActionExecutor:
                 continue
 
             # 校验日期落在当前周期内
-            travel_ck = cycle_key_of(parsed)
+            travel_ck = cycle_key_of(parsed, cutoff_day=cutoff)
             if travel_ck != expected_ck:
                 rejected_out_of_cycle.append(d_str)
                 continue
@@ -1955,6 +1959,14 @@ class ActionExecutor:
         - current_month / 本月 → 当前周期
         - last_month / 上月 → 上一周期
         - 其他 → 当前周期（兜底）
+
+        ⚠️ 已知局限：此函数为 sync @staticmethod，无法读取 cutoff 配置，
+        默认 cutoff=21。如管理员改了 cutoff 且 ≠ 21，"current_month"/"last_month"
+        解析会按 21-20 制算 cycle_key，可能命中错误周期。
+        影响：_handle_query_my_reimbursement / _handle_admin_cycle_summary
+        在 cutoff≠21 时按 period 槽位筛选可能筛错。
+        修复需要改成 async + 传 db，或加 cutoff 参数，但牵连面较广，
+        留待后续优化（管理员改 cutoff 后建议在重启后端前用 YYYY-MM 格式 period）。
         """
         if not period_val:
             return current_cycle_key()

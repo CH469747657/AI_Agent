@@ -514,11 +514,14 @@ async def get_my_dashboard(
     """
     from datetime import datetime, time, timezone
     from app.services.cycle_engine import current_cycle_key, billing_cycle
+    from app.services.cutoff_service import get_cutoff_day
 
-    # 当前报销周期：上月21日 ~ 本月20日
+    # 读 cutoff 配置，保证 cycle_engine 用最新 cutoff 而非默认 21
+    cutoff = await get_cutoff_day(db)
+    # 当前报销周期：上月 cutoff 日 ~ 本月 (cutoff-1) 日
     today = datetime.utcnow().date()
-    ck = current_cycle_key(today)
-    cycle_start, cycle_end = billing_cycle(ck)
+    ck = current_cycle_key(today, cutoff_day=cutoff)
+    cycle_start, cycle_end = billing_cycle(ck, cutoff_day=cutoff)
     # 转为带时区的 datetime 边界（UTC），与 Invoice.created_at (timestamptz) 对齐
     start_dt = datetime.combine(cycle_start, time.min, tzinfo=timezone.utc)
     end_dt = datetime.combine(cycle_end, time.max, tzinfo=timezone.utc)

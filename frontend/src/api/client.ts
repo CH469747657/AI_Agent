@@ -293,6 +293,14 @@ export const reimbursementApi = {
       method: "DELETE",
     }),
 
+  // 员工端 — 生成我的报销单（POST /api/portal/reimbursements/generate）
+  // 同一周期已有报销单时后端返回原单（幂等）
+  generate: () =>
+    portalRequest<{ id: number; cycle_key: string; status: string } & Partial<PortalReimbursement>>(
+      "/reimbursements/generate",
+      { method: "POST" }
+    ),
+
   // 附件
   uploadAttachment: async (
     reimbursementId: number,

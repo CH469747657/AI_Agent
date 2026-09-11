@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { portalApi } from "../../api/client";
+import { portalApi, reimbursementApi } from "../../api/client";
 import { ConfirmModal } from "../../components/ConfirmModal";
 import type {
   PortalReimbursement,
@@ -32,6 +32,7 @@ import {
   ListChecks,
   Coins,
   CurrencyCny,
+  Sparkle,
 } from "@phosphor-icons/react";
 import {
   weekdayName,
@@ -60,6 +61,7 @@ export function PortalMyReimbursements() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [detailId, setDetailId] = useState<number | null>(null);
+  const [generating, setGenerating] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -120,6 +122,21 @@ export function PortalMyReimbursements() {
     setView("detail");
   };
 
+  // 生成我的报销单（同一周期已有则后端返回原单，幂等）
+  const handleGenerate = async () => {
+    setGenerating(true);
+    setError("");
+    try {
+      const res = await reimbursementApi.generate();
+      // 跳转到该报销单的详情视图（页面内部用 state 切换 view，无独立路由）
+      goDetail(res.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "生成失败");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   // ===== 列表视图 =====
   if (view === "list") {
     if (loading) {
@@ -141,6 +158,18 @@ export function PortalMyReimbursements() {
               查看您的报销单，报销单由系统按周期自动生成与归集
             </p>
           </div>
+          <button
+            onClick={handleGenerate}
+            disabled={generating}
+            className="flex items-center gap-1.5 rounded-lg bg-primary-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-800 disabled:opacity-50"
+          >
+            {generating ? (
+              <Spinner size={16} className="animate-spin" />
+            ) : (
+              <Sparkle size={16} weight="fill" />
+            )}
+            {generating ? "生成中..." : "生成我的报销单"}
+          </button>
         </div>
 
         {error && (

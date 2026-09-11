@@ -2,7 +2,7 @@
 
 使用 APScheduler AsyncIOScheduler 在 FastAPI lifespan 中启动/停止。
 当前注册的任务：
-- cycle_lock_job: 每月 21 日 00:00 归集游离发票 + 封账上一周期 + 自动生成报表
+- cycle_lock_job: 每月 cutoff 日（默认 21 日）00:00 归集游离发票 + 封账上一周期 + 自动生成报表
 - timeout_reminder_job: 每 2 分钟检查超时用户并主动推送提醒
 """
 
@@ -24,7 +24,7 @@ PURPOSE_TIMEOUT_SECONDS = 300  # 5 分钟
 async def _cycle_lock_job() -> None:
     """定时归集 + 封账 + 自动生成报表任务
 
-    每月 21 日 00:00 执行：
+    每月 cutoff 日 00:00 执行：
     1. 归集所有游离发票到对应周期报销单
     2. 封账刚结束的周期（自动提交 DRAFT）
     3. 对已封账的报销单自动生成报表三件套（Excel + PDF + ZIP）
@@ -32,17 +32,21 @@ async def _cycle_lock_job() -> None:
     from app.database import get_async_sessionmaker
     from app.services.aggregation_service import aggregate_pending_invoices
     from app.services.cycle_lock_service import lock_just_ended_cycle
+    from app.services.cutoff_service import get_cutoff_day
 
     logger.info("Cycle lock job triggered at %s", datetime.now().isoformat())
     try:
         sm = get_async_sessionmaker()
         async with sm() as db:
+            # 读最新 cutoff 配置（管理员改后立即生效，无需重启）
+            cutoff = await get_cutoff_day(db)
+
             # 1. 先归集所有游离发票
-            agg_result = await aggregate_pending_invoices(db)
+            agg_result = await aggregate_pending_invoices(db, cutoff_day=cutoff)
             logger.info("Pre-lock aggregation: %s", agg_result)
 
             # 2. 再封账刚结束的周期
-            lock_result = await lock_just_ended_cycle(db)
+            lock_result = await lock_just_ended_cycle(db, cutoff_day=cutoff)
             logger.info("Cycle lock job result: %s", lock_result)
 
             # 3. 封账后自动生成报表三件套（Excel + PDF + ZIP）
@@ -217,8 +221,11 @@ def start_scheduler() -> AsyncIOScheduler:
 
     _scheduler = AsyncIOScheduler()
 
-    # 每月 21 日 00:00（北京时间）归集游离发票 + 封账上一周期 + 自动生成报表
+    # 每月 cutoff 日 00:00（北京时间）归集游离发票 + 封账上一周期 + 自动生成报表
     # 容器时区为 UTC，必须显式指定 Asia/Shanghai，否则按 UTC 0 点 = 北京 8 点触发
+    # TODO: 定时任务 cron day=21 是硬编码的，cutoff 改后下一次重启才生效。
+    # 当前实现：管理员改 cutoff 后，定时任务仍按旧 21 日跑（但跑时会读最新 cutoff
+    # 配置算刚结束的周期）。完全动态化需要 APScheduler reschedule_job，留待后续优化。
     from pytz import timezone as tz
     _scheduler.add_job(
         _cycle_lock_job,

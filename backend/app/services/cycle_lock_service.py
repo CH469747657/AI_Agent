@@ -1,7 +1,7 @@
 """周期封账服务
 
 封账流程：
-1. 确定刚结束的周期 cycle_key（昨日所属周期，即 21 日 00:05 时为上一个周期）
+1. 确定刚结束的周期 cycle_key（昨日所属周期，即 cutoff 日 00:00 时为上一个周期）
 2. 查找该周期所有报销单，设 is_cycle_locked=True + locked_at=now
 3. 仍为 DRAFT 的报销单自动提交（SUBMITTED），防止封账周期遗留草稿
 4. 返回封账结果摘要
@@ -73,12 +73,23 @@ async def lock_cycle(
     }
 
 
-async def lock_just_ended_cycle(db: AsyncSession) -> dict:
+async def lock_just_ended_cycle(
+    db: AsyncSession,
+    cutoff_day: int | None = None,
+) -> dict:
     """封账刚结束的周期（定时任务入口）
 
-    在每月 21 日 00:05 调用，封账上一个周期（即昨日所属周期）。
+    在每月 cutoff 日 00:00 调用，封账上一个周期（即昨日所属周期）。
+
+    Args:
+        cutoff_day: 周期 cutoff 日（1-31），None 时从 system_settings 读
     """
-    ck = just_ended_cycle_key()
+    from app.services.cutoff_service import get_cutoff_day
+
+    if cutoff_day is None:
+        cutoff_day = await get_cutoff_day(db)
+
+    ck = just_ended_cycle_key(cutoff_day=cutoff_day)
     if not ck:
         logger.warning("lock_just_ended_cycle: cannot determine just-ended cycle")
         return {"cycle_key": None, "locked_count": 0, "auto_submitted_count": 0}

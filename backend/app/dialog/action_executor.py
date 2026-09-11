@@ -854,65 +854,61 @@ class ActionExecutor:
     async def _handle_submit_reimbursement(
         self, ctx: DialogContext, db: AsyncSession, _: Optional[dict]
     ) -> dict:
-        """提交报销单 — 聚合已上传发票 + 创建报销单 + 提交"""
-        if not ctx.batch_invoice_ids:
+        """提交报销单 — 聚合已上传发票 + 创建报销单 + 提交
+
+        员工：为自己生成（applicant_id = ctx.user_id）
+        管理员：为指定员工生成（用 ctx.slots 提取的 user_id）
+        """
+        from app.services.cutoff_service import get_cutoff_day
+        from app.services.cycle_engine import current_cycle_key
+        from app.services.aggregation_service import (
+            get_or_create_reimbursement,
+            attach_invoice_to_cycle,
+        )
+        from app.models.reimbursement import ReimbursementStatus
+
+        # 角色判定（DialogContext.role 字段是 UserRole enum）
+        if ctx.role == UserRole.EMPLOYEE:
+            target_user_id = ctx.user_id
+        else:  # ADMIN
+            slot = ctx.slots.get("user_id")
+            target_user_id = (slot.value if slot and slot.filled else None) or ctx.user_id
+
+        if not ctx.batch_invoice_ids and ctx.role == UserRole.EMPLOYEE:
             return {"text": "您还没有上传任何发票。请先发送发票图片或输入「无票」进行无票报销。", "data": {}}
 
-        # 查询发票状态
-        result = await db.execute(
-            select(Invoice).where(Invoice.id.in_(ctx.batch_invoice_ids))
-        )
-        invoices = list(result.scalars().all())
-
-        # 筛选可提交的发票（CONFIRMED 状态）
-        confirmed = [inv for inv in invoices if inv.status == InvoiceStatus.reviewed]
-        reviewing = [inv for inv in invoices if inv.status == InvoiceStatus.reviewing]
-        not_submittable = [inv for inv in invoices if inv.status not in (
-            InvoiceStatus.reviewed, InvoiceStatus.reviewing
-        )]
-
-        if not confirmed and not reviewing:
-            return {
-                "text": f"当前 {len(invoices)} 张发票均未确认，无法提交。\n"
-                        f"请等待发票处理完成后重试。",
-                "data": {},
-            }
-
-        # 确认 REVIEWING 状态的发票
-        for inv in reviewing:
-            inv.status = InvoiceStatus.reviewed
-        if reviewing:
-            await db.flush()
-
-        purpose_slot = ctx.slots.get("purpose")
-        purpose = purpose_slot.value if purpose_slot and purpose_slot.filled else "对话式提交"
-
-        # 创建报销单
-        reimbursement = await create_reimbursement(
+        cutoff = await get_cutoff_day(db)
+        ck = current_cycle_key(cutoff_day=cutoff)
+        reimb = await get_or_create_reimbursement(
             db,
-            applicant_id=ctx.user_id,
-            reason=purpose,
-            invoice_ids=[inv.id for inv in invoices if inv.status == InvoiceStatus.reviewed],
-            allowed_user_filter=ctx.user_id if ctx.role == UserRole.EMPLOYEE else None,
+            applicant_id=target_user_id,
+            cycle_key=ck,
+            auto_generated=False,
         )
 
-        # 提交报销单
-        await submit_reimbursement(db, reimbursement.id)
-        await db.refresh(reimbursement)
+        # 把该员工所有游离发票归集
+        free_invoices = await db.execute(
+            select(Invoice).where(
+                Invoice.user_id == target_user_id,
+                Invoice.reimbursement_id.is_(None),
+            )
+        )
+        attached = 0
+        for inv in free_invoices.scalars():
+            await attach_invoice_to_cycle(db, inv, cutoff_day=cutoff)
+            attached += 1
+
+        # 改状态为 SUBMITTED
+        reimb.status = ReimbursementStatus.submitted
+        await db.commit()
 
         # 清空批量列表
         ctx.batch_invoice_ids = []
 
-        text = (
-            f"✅ 报销单已创建并提交\n\n"
-            f"📋 报销单号：#{reimbursement.id}\n"
-            f"📝 事由：{purpose}\n"
-            f"💰 总金额：¥{reimbursement.total_amount or '计算中'}\n"
-            f"📤 状态：已提交，等待审批\n"
-            f"📅 时间：{reimbursement.submitted_at or reimbursement.created_at}\n\n"
-            f"您可以在对话中输入「查询报销」查看审批进度。"
-        )
-        return {"text": text, "data": {"reimbursement_id": reimbursement.id}}
+        return {
+            "text": f"✅ 已提交报销单 #{reimb.id}（周期 {ck}），归集 {attached} 张发票。",
+            "data": {"reimbursement_id": reimb.id, "cycle_key": ck},
+        }
 
     async def _handle_modify_field(
         self, ctx: DialogContext, db: AsyncSession, _: Optional[dict]

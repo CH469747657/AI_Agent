@@ -20,7 +20,7 @@ from app.models.employee import Employee
 from app.routers.portal_auth import get_current_employee_async
 from app.services import reimbursement_service as svc
 from app.services.invoice_service import InvoiceService
-from app.schemas import InvoiceResponse, SubsidyToggleRequest
+from app.schemas import InvoiceResponse, SubsidyToggleRequest, ReimbursementResponse
 from app.dialog.dialog_engine import get_dialog_engine
 from app.dialog.models import UserRole
 from app.routers.dialog import DialogRequest, DialogAPIResponse, DialogStateResponse
@@ -725,3 +725,52 @@ async def portal_get_state(
         turn_count=state.get("turn_count", 0),
         history=state.get("history", []),
     )
+
+
+# ===== 报销单自生成 =====
+
+@router.post("/reimbursements/generate", response_model=ReimbursementResponse)
+async def generate_my_reimbursement(
+    employee: Employee = Depends(get_current_employee_async),
+    db: AsyncSession = Depends(get_db),
+):
+    """员工生成自己的报销单
+
+    - 幂等：同一员工同一周期已有报销单时直接返回现有
+    - 自动归集当前周期所有游离发票（通过 attach_invoice_to_cycle 自动按费用日归位）
+    - 生成后状态 DRAFT，可继续加减发票、提交、删除
+    - 不接受 applicant_id 参数，从 JWT 解 employee_no 防伪造
+    """
+    from app.services.cutoff_service import get_cutoff_day
+    from app.services.cycle_engine import current_cycle_key
+    from app.services.aggregation_service import (
+        get_or_create_reimbursement,
+        attach_invoice_to_cycle,
+    )
+
+    cutoff = await get_cutoff_day(db)
+    ck = current_cycle_key(cutoff_day=cutoff)
+    # 创建（或复用）当前周期报销单（DRAFT 状态）
+    reimb = await get_or_create_reimbursement(
+        db,
+        applicant_id=employee.employee_no,
+        cycle_key=ck,
+        auto_generated=False,
+    )
+    # 把该员工所有游离发票跑一遍 attach_invoice_to_cycle
+    # 该函数内部按发票费用日算目标周期：
+    #   - 费用日在当前周期 → 归入这份报销单
+    #   - 费用日在其他周期 → 归入对应周期的报销单（可能创建新单）
+    #   - 目标周期已封账 → 归入当前周期并标记 late_charge
+    free_invoices = await db.execute(
+        select(Invoice).where(
+            Invoice.user_id == employee.employee_no,
+            Invoice.reimbursement_id.is_(None),
+        )
+    )
+    for inv in free_invoices.scalars():
+        await attach_invoice_to_cycle(db, inv, cutoff_day=cutoff)
+
+    await db.commit()
+    await db.refresh(reimb)
+    return reimb

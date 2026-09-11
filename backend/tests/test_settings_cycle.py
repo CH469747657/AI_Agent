@@ -6,8 +6,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import select, update
+
 from app.main import app
 from app import database as db_module
+from app.models.settings import SystemSettings
+from app.services import cutoff_service
 
 
 @pytest.fixture(autouse=True)
@@ -18,6 +22,27 @@ def _reset_engine():
     yield
     db_module.get_engine.cache_clear()
     db_module.get_async_sessionmaker.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+async def _reset_cycle_cutoff_after_test():
+    """每个测试后重置 system_settings.cycle_cutoff_day 回默认 21 + 失效缓存
+
+    防止 test_put_cycle_then_get 写入的 15 残留到后续 test_get_cycle_default。
+    """
+    yield
+    # 测试结束后：清 engine 缓存拿新 session，把 DB 里的值改回 21，再清进程缓存
+    db_module.get_engine.cache_clear()
+    db_module.get_async_sessionmaker.cache_clear()
+    session_factory = db_module.get_async_sessionmaker()
+    async with session_factory() as session:
+        await session.execute(
+            update(SystemSettings)
+            .where(SystemSettings.id == 1)
+            .values(cycle_cutoff_day=21)
+        )
+        await session.commit()
+    cutoff_service.invalidate_cache()
 
 
 @pytest.fixture

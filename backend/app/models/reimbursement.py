@@ -44,6 +44,17 @@ class Reimbursement(Base, TimestampMixin):
     is_cycle_locked: Mapped[bool] = mapped_column(Boolean, default=False, comment="周期封账标志")
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="封账时间")
 
+    # 管理员手动 unlock 审计字段（重新 lock 时清空）
+    unlocked_by: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, comment="解锁的管理员用户名"
+    )
+    unlocked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="解锁时间"
+    )
+    unlock_reason: Mapped[str | None] = mapped_column(
+        Text(), nullable=True, comment="解锁原因"
+    )
+
     invoices: Mapped[list] = relationship("Invoice", backref="reimbursement")
     attachments: Mapped[list] = relationship("ReimbursementAttachment", backref="reimbursement", cascade="all, delete-orphan")
     items: Mapped[list] = relationship("ReimbursementItem", backref="reimbursement", cascade="all, delete-orphan", order_by="ReimbursementItem.sort_order")

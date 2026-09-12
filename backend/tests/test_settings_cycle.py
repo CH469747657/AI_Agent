@@ -1,4 +1,4 @@
-"""周期 cutoff 配置端点集成测试（用真实 DB）"""
+"""周期 end_day 配置端点集成测试（用真实 DB）"""
 
 import sys
 import os
@@ -11,7 +11,7 @@ from sqlalchemy import select, update
 from app.main import app
 from app import database as db_module
 from app.models.settings import SystemSettings
-from app.services import cutoff_service
+from app.services import cycle_end_service
 
 
 @pytest.fixture(autouse=True)
@@ -25,13 +25,13 @@ def _reset_engine():
 
 
 @pytest.fixture(autouse=True)
-async def _reset_cycle_cutoff_after_test():
-    """每个测试后重置 system_settings.cycle_cutoff_day 回默认 21 + 失效缓存
+async def _reset_cycle_end_after_test():
+    """每个测试前后重置 system_settings.cycle_end_day 回默认 20 + 失效缓存
 
-    防止 test_put_cycle_then_get 写入的 15 残留到后续 test_get_cycle_default。
+    防止 test_put_cycle_then_get 写入的 15 残留到后续 test_get_cycle_default，
+    也防止历史脏数据导致首个测试失败。
     """
-    yield
-    # 测试结束后：清 engine 缓存拿新 session，把 DB 里的值改回 21，再清进程缓存
+    # 测试开始前：清 engine 缓存拿新 session，把 DB 里的值改回 20，再清进程缓存
     db_module.get_engine.cache_clear()
     db_module.get_async_sessionmaker.cache_clear()
     session_factory = db_module.get_async_sessionmaker()
@@ -39,10 +39,25 @@ async def _reset_cycle_cutoff_after_test():
         await session.execute(
             update(SystemSettings)
             .where(SystemSettings.id == 1)
-            .values(cycle_cutoff_day=21)
+            .values(cycle_end_day=20)
         )
         await session.commit()
-    cutoff_service.invalidate_cache()
+    cycle_end_service.invalidate_cache()
+
+    yield
+
+    # 测试结束后：再次重置
+    db_module.get_engine.cache_clear()
+    db_module.get_async_sessionmaker.cache_clear()
+    session_factory = db_module.get_async_sessionmaker()
+    async with session_factory() as session:
+        await session.execute(
+            update(SystemSettings)
+            .where(SystemSettings.id == 1)
+            .values(cycle_end_day=20)
+        )
+        await session.commit()
+    cycle_end_service.invalidate_cache()
 
 
 @pytest.fixture
@@ -59,26 +74,32 @@ async def test_get_cycle_default(admin_token):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         r = await ac.get("/api/settings/cycle", headers={"Authorization": f"Bearer {admin_token}"})
     assert r.status_code == 200
-    assert r.json()["cycle_cutoff_day"] in (21, None)  # 21 默认或已配置值
+    assert r.json()["cycle_end_day"] in (20, None)  # 20 默认或已配置值
+    assert r.json()["current_cycle_start"]
+    assert r.json()["current_cycle_end"]
 
 
 @pytest.mark.asyncio
 async def test_put_cycle_then_get(admin_token):
     headers = {"Authorization": f"Bearer {admin_token}"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.put("/api/settings/cycle", json={"cycle_cutoff_day": 15}, headers=headers)
+        r = await ac.put("/api/settings/cycle", json={"cycle_end_day": 15}, headers=headers)
         assert r.status_code == 200
-        assert r.json()["cycle_cutoff_day"] == 15
+        assert r.json()["cycle_end_day"] == 15
+        assert r.json()["current_cycle_start"]
+        assert r.json()["current_cycle_end"]
 
         r = await ac.get("/api/settings/cycle", headers=headers)
-        assert r.json()["cycle_cutoff_day"] == 15
+        assert r.json()["cycle_end_day"] == 15
+        assert r.json()["current_cycle_start"]
+        assert r.json()["current_cycle_end"]
 
 
 @pytest.mark.asyncio
 async def test_put_rejects_below_1(admin_token):
     headers = {"Authorization": f"Bearer {admin_token}"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.put("/api/settings/cycle", json={"cycle_cutoff_day": 0}, headers=headers)
+        r = await ac.put("/api/settings/cycle", json={"cycle_end_day": 0}, headers=headers)
         assert r.status_code == 422
 
 
@@ -86,5 +107,5 @@ async def test_put_rejects_below_1(admin_token):
 async def test_put_rejects_above_31(admin_token):
     headers = {"Authorization": f"Bearer {admin_token}"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.put("/api/settings/cycle", json={"cycle_cutoff_day": 32}, headers=headers)
+        r = await ac.put("/api/settings/cycle", json={"cycle_end_day": 32}, headers=headers)
         assert r.status_code == 422

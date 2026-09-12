@@ -514,14 +514,14 @@ async def get_my_dashboard(
     """
     from datetime import datetime, time, timezone
     from app.services.cycle_engine import current_cycle_key, billing_cycle
-    from app.services.cutoff_service import get_cutoff_day
+    from app.services.cycle_end_service import get_cycle_end_day
 
-    # 读 cutoff 配置，保证 cycle_engine 用最新 cutoff 而非默认 21
-    cutoff = await get_cutoff_day(db)
-    # 当前报销周期：上月 cutoff 日 ~ 本月 (cutoff-1) 日
+    # 读 cycle_end_day 配置，保证 cycle_engine 用最新配置而非默认 20
+    cycle_end_day = await get_cycle_end_day(db)
+    # 当前报销周期：上月 (cycle_end_day+1) 日 ~ 本月 cycle_end_day 日
     today = datetime.utcnow().date()
-    ck = current_cycle_key(today, cutoff_day=cutoff)
-    cycle_start, cycle_end = billing_cycle(ck, cutoff_day=cutoff)
+    ck = current_cycle_key(today, cycle_end_day=cycle_end_day)
+    cycle_start, cycle_end = billing_cycle(ck, cycle_end_day=cycle_end_day)
     # 转为带时区的 datetime 边界（UTC），与 Invoice.created_at (timestamptz) 对齐
     start_dt = datetime.combine(cycle_start, time.min, tzinfo=timezone.utc)
     end_dt = datetime.combine(cycle_end, time.max, tzinfo=timezone.utc)
@@ -744,15 +744,15 @@ async def generate_my_reimbursement(
     - 生成后状态 DRAFT，可继续加减发票、提交、删除
     - 不接受 applicant_id 参数，从 JWT 解 employee_no 防伪造
     """
-    from app.services.cutoff_service import get_cutoff_day
+    from app.services.cycle_end_service import get_cycle_end_day
     from app.services.cycle_engine import current_cycle_key
     from app.services.aggregation_service import (
         get_or_create_reimbursement,
         attach_invoice_to_cycle,
     )
 
-    cutoff = await get_cutoff_day(db)
-    ck = current_cycle_key(cutoff_day=cutoff)
+    cycle_end_day = await get_cycle_end_day(db)
+    ck = current_cycle_key(cycle_end_day=cycle_end_day)
     # 创建（或复用）当前周期报销单（DRAFT 状态）
     reimb = await get_or_create_reimbursement(
         db,
@@ -772,7 +772,7 @@ async def generate_my_reimbursement(
         )
     )
     for inv in free_invoices.scalars():
-        await attach_invoice_to_cycle(db, inv, cutoff_day=cutoff)
+        await attach_invoice_to_cycle(db, inv, cycle_end_day=cycle_end_day)
 
     await db.commit()
     await db.refresh(reimb)

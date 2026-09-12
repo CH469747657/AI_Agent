@@ -333,24 +333,29 @@ async def update_verify_settings(
 # ── 周期 cutoff 配置 ──────────────────────────────────────────
 
 class CycleSettingsRead(BaseModel):
-    cycle_cutoff_day: int
-    next_effective_cycle: str | None = None  # 下次生效周期 YYYY-MM
+    cycle_end_day: int
+    current_cycle_start: str  # 新字段，YYYY-MM-DD
+    current_cycle_end: str  # 新字段，YYYY-MM-DD
 
 
 class CycleSettingsUpdate(BaseModel):
-    cycle_cutoff_day: int = Field(ge=1, le=31, description="周期 cutoff 日 1-31")
+    cycle_end_day: int = Field(ge=1, le=31, description="周期截止日 1-31")
 
 
 @router.get("/cycle", response_model=CycleSettingsRead)
 async def get_cycle_settings(db: AsyncSession = Depends(get_db)):
-    """读取周期 cutoff 配置"""
-    from app.services.cutoff_service import get_cutoff_day
-    from app.services.cycle_engine import current_cycle_key
+    """读取周期配置 + 当前周期范围"""
+    from app.services.cycle_end_service import get_cycle_end_day
+    from app.services.cycle_engine import current_cycle_key, billing_cycle
 
-    cutoff = await get_cutoff_day(db)
-    # 下次生效周期：用新 cutoff 算今天所属周期
-    next_ck = current_cycle_key(cutoff_day=cutoff)
-    return CycleSettingsRead(cycle_cutoff_day=cutoff, next_effective_cycle=next_ck)
+    cycle_end_day = await get_cycle_end_day(db)
+    ck = current_cycle_key(cycle_end_day=cycle_end_day)
+    start, end = billing_cycle(ck, cycle_end_day=cycle_end_day)
+    return CycleSettingsRead(
+        cycle_end_day=cycle_end_day,
+        current_cycle_start=start.isoformat(),
+        current_cycle_end=end.isoformat(),
+    )
 
 
 @router.put("/cycle", response_model=CycleSettingsRead)
@@ -358,30 +363,32 @@ async def update_cycle_settings(
     data: CycleSettingsUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    """更新周期 cutoff 配置
+    """更新周期配置
 
     生效规则：当前周期不动，下个完整周期生效。
     """
-    from app.services.cutoff_service import invalidate_cache
-    from app.services.cycle_engine import current_cycle_key
+    from app.services.cycle_end_service import invalidate_cache
+    from app.services.cycle_engine import current_cycle_key, billing_cycle
 
     row = (
         await db.execute(select(SystemSettings).where(SystemSettings.id == 1))
     ).scalar_one_or_none()
     if row is None:
-        row = SystemSettings(id=1, cycle_cutoff_day=data.cycle_cutoff_day)
+        row = SystemSettings(id=1, cycle_end_day=data.cycle_end_day)
         db.add(row)
     else:
-        row.cycle_cutoff_day = data.cycle_cutoff_day
+        row.cycle_end_day = data.cycle_end_day
 
     await db.commit()
     await db.refresh(row)
 
-    # 失效缓存，让后续请求重新读
+    # 失效缓存 + 触发 reschedule_job
     invalidate_cache()
 
-    next_ck = current_cycle_key(cutoff_day=data.cycle_cutoff_day)
+    ck = current_cycle_key(cycle_end_day=data.cycle_end_day)
+    start, end = billing_cycle(ck, cycle_end_day=data.cycle_end_day)
     return CycleSettingsRead(
-        cycle_cutoff_day=row.cycle_cutoff_day,
-        next_effective_cycle=next_ck,
+        cycle_end_day=row.cycle_end_day,
+        current_cycle_start=start.isoformat(),
+        current_cycle_end=end.isoformat(),
     )

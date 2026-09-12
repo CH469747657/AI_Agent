@@ -736,13 +736,13 @@ class ActionExecutor:
                 "data": {},
             }
 
-        # 读 cutoff 配置（管理员可改），保证 cycle_engine 用最新 cutoff 而非默认 21
-        from app.services.cutoff_service import get_cutoff_day
-        cutoff = await get_cutoff_day(db)
+        # 读 cycle_end_day 配置（管理员可改），保证 cycle_engine 用最新配置而非默认 20
+        from app.services.cycle_end_service import get_cycle_end_day
+        cycle_end_day = await get_cycle_end_day(db)
 
         # 当前周期 key — 仅允许标当前周期内的日期
         today = date.today()
-        expected_ck = current_cycle_key(today, cutoff_day=cutoff)
+        expected_ck = current_cycle_key(today, cycle_end_day=cycle_end_day)
 
         added: list[str] = []
         skipped_dup: list[str] = []
@@ -759,7 +759,7 @@ class ActionExecutor:
                 continue
 
             # 校验日期落在当前周期内
-            travel_ck = cycle_key_of(parsed, cutoff_day=cutoff)
+            travel_ck = cycle_key_of(parsed, cycle_end_day=cycle_end_day)
             if travel_ck != expected_ck:
                 rejected_out_of_cycle.append(d_str)
                 continue
@@ -861,7 +861,7 @@ class ActionExecutor:
         员工：为自己生成（applicant_id = ctx.user_id）
         管理员：为指定员工生成（用 ctx.slots 提取的 user_id）
         """
-        from app.services.cutoff_service import get_cutoff_day
+        from app.services.cycle_end_service import get_cycle_end_day
         from app.services.cycle_engine import current_cycle_key
         from app.services.aggregation_service import (
             get_or_create_reimbursement,
@@ -879,8 +879,8 @@ class ActionExecutor:
         if not ctx.batch_invoice_ids and ctx.role == UserRole.EMPLOYEE:
             return {"text": "您还没有上传任何发票。请先发送发票图片或输入「无票」进行无票报销。", "data": {}}
 
-        cutoff = await get_cutoff_day(db)
-        ck = current_cycle_key(cutoff_day=cutoff)
+        cycle_end_day = await get_cycle_end_day(db)
+        ck = current_cycle_key(cycle_end_day=cycle_end_day)
         reimb = await get_or_create_reimbursement(
             db,
             applicant_id=target_user_id,
@@ -897,7 +897,7 @@ class ActionExecutor:
         )
         attached = 0
         for inv in free_invoices.scalars():
-            await attach_invoice_to_cycle(db, inv, cutoff_day=cutoff)
+            await attach_invoice_to_cycle(db, inv, cycle_end_day=cycle_end_day)
             attached += 1
 
         # 改状态为 SUBMITTED
@@ -1960,13 +1960,13 @@ class ActionExecutor:
         - last_month / 上月 → 上一周期
         - 其他 → 当前周期（兜底）
 
-        ⚠️ 已知局限：此函数为 sync @staticmethod，无法读取 cutoff 配置，
-        默认 cutoff=21。如管理员改了 cutoff 且 ≠ 21，"current_month"/"last_month"
-        解析会按 21-20 制算 cycle_key，可能命中错误周期。
+        ⚠️ 已知局限：此函数为 sync @staticmethod，无法读取 cycle_end_day 配置，
+        默认 cycle_end_day=20。如管理员改了 cycle_end_day 且 ≠ 20，"current_month"/"last_month"
+        解析会按 20 日制算 cycle_key，可能命中错误周期。
         影响：_handle_query_my_reimbursement / _handle_admin_cycle_summary
-        在 cutoff≠21 时按 period 槽位筛选可能筛错。
-        修复需要改成 async + 传 db，或加 cutoff 参数，但牵连面较广，
-        留待后续优化（管理员改 cutoff 后建议在重启后端前用 YYYY-MM 格式 period）。
+        在 cycle_end_day≠20 时按 period 槽位筛选可能筛错。
+        修复需要改成 async + 传 db，或加 cycle_end_day 参数，但牵连面较广，
+        留待后续优化（管理员改 cycle_end_day 后建议在重启后端前用 YYYY-MM 格式 period）。
         """
         if not period_val:
             return current_cycle_key()

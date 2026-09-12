@@ -391,7 +391,13 @@ class InsightEngine:
             }
 
         try:
-            return await handler(context, db)
+            result = await handler(context, db)
+            # 为所有 insight 结果附加当前周期范围（cycle_start / cycle_end）
+            if isinstance(result, dict) and isinstance(result.get("data"), dict):
+                cycle_start, cycle_end = self._current_cycle_range()
+                result["data"]["cycle_start"] = cycle_start
+                result["data"]["cycle_end"] = cycle_end
+            return result
         except Exception as e:
             logger.exception("Insight execution failed: intent=%s error=%s", intent_name, e)
             return {
@@ -1615,6 +1621,30 @@ class InsightEngine:
         period_slot = ctx.slots.get("period")
         period_val = period_slot.value if period_slot and period_slot.filled else None
         return PeriodResolver.resolve(period_val, ctx.current_text)
+
+    @staticmethod
+    def _current_cycle_range() -> tuple[str | None, str | None]:
+        """返回当前周期范围 (cycle_start, cycle_end) ISO 字符串
+
+        洞察结果中若未关联具体报销单，或跨多个周期，用当前周期兜底。
+        """
+        from datetime import date as _date
+        from app.services.cycle_engine import current_cycle_key, billing_cycle
+        try:
+            ck = current_cycle_key(_date.today())
+            start, end = billing_cycle(ck)
+            return start.isoformat(), end.isoformat()
+        except Exception:
+            return None, None
+
+    @staticmethod
+    def _cycle_range_from_reimbursements(reimbs: list[Reimbursement]) -> tuple[str | None, str | None]:
+        """从报销单列表提取统一 cycle_start/cycle_end；跨周期时回退到当前周期"""
+        starts = {r.cycle_start for r in reimbs if r.cycle_start}
+        ends = {r.cycle_end for r in reimbs if r.cycle_end}
+        if len(starts) == 1 and len(ends) == 1:
+            return list(starts)[0].isoformat(), list(ends)[0].isoformat()
+        return InsightEngine._current_cycle_range()
 
     @staticmethod
     async def _resolve_person_to_user_ids(

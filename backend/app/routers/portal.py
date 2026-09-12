@@ -257,6 +257,7 @@ async def update_my_reimbursement(
     if reimbursement.applicant_id != employee.employee_no:
         raise HTTPException(status_code=403, detail="无权操作该报销单")
     await svc.assert_draft(reimbursement)
+    await svc.assert_not_locked(reimbursement)
 
     if "reason" in body:
         new_reason = body["reason"]

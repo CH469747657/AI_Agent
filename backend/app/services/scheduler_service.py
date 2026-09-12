@@ -12,6 +12,7 @@ from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from pytz import timezone as tz
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +234,7 @@ def start_scheduler() -> AsyncIOScheduler:
     from pytz import timezone as tz
     _scheduler.add_job(
         _cycle_lock_job,
-        trigger=CronTrigger(day=21, hour=0, minute=0, timezone=tz("Asia/Shanghai")),
+        trigger=CronTrigger(day=20, hour=0, minute=0, timezone=tz("Asia/Shanghai")),
         id="cycle_lock_job",
         name="归集+封账+报表",
         replace_existing=True,
@@ -262,3 +263,23 @@ async def stop_scheduler() -> None:
         _scheduler.shutdown(wait=False)
         logger.info("Scheduler stopped")
     _scheduler = None
+
+
+def reschedule_cycle_lock_job() -> None:
+    """重新注册 cycle_lock_job 的 cron trigger（动态生效，不需重启）
+
+    当管理员修改 cycle_end_day 后，由 cycle_end_service.invalidate_cache 调用。
+    当前为占位实现，Task 4 会补充基于 cycle_end_day 重新计算 cron day 的逻辑。
+    """
+    global _scheduler
+    if _scheduler is None or not _scheduler.running:
+        logger.warning("Scheduler not running, cannot reschedule cycle_lock_job")
+        return
+    try:
+        _scheduler.reschedule_job(
+            "cycle_lock_job",
+            trigger=CronTrigger(day=20, hour=0, minute=0, timezone=tz("Asia/Shanghai")),
+        )
+        logger.info("Rescheduled cycle_lock_job")
+    except Exception:
+        logger.exception("Failed to reschedule cycle_lock_job")

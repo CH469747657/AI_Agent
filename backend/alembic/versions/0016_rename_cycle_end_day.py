@@ -46,7 +46,7 @@ def upgrade() -> None:
         SET
             cycle_start = (r.cycle_key::text || '-01')::date
                            - make_interval(months => 1)
-                           + make_interval(days => s.cycle_end_day + 1),
+                           + make_interval(days => s.cycle_end_day),
             cycle_end = (r.cycle_key::text || '-01')::date
                         + make_interval(days => s.cycle_end_day - 1)
         FROM system_settings s

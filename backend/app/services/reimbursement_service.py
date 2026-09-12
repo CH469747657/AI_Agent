@@ -73,6 +73,27 @@ async def assert_draft(reimbursement: Reimbursement) -> None:
         )
 
 
+async def assert_not_locked(reimbursement: Reimbursement) -> None:
+    """校验报销单未封账，否则抛 409
+
+    封账后员工不能 submit/withdraw/update/delete/link/unlink/toggle subsidy。
+    管理员手动 unlock 后才能继续操作。
+    """
+    if reimbursement.is_cycle_locked:
+        locked_at_str = (
+            reimbursement.locked_at.strftime("%Y-%m-%d %H:%M")
+            if reimbursement.locked_at else "未知时间"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"报销单 #{reimbursement.id} 所在周期已封账"
+                f"（封账于 {locked_at_str}），无法操作。"
+                "如需修改请联系管理员解锁。"
+            ),
+        )
+
+
 def _assert_invoice_linkable(inv: Invoice) -> None:
     """校验发票是否可关联到报销单
 
@@ -308,6 +329,7 @@ async def link_invoices(
     """
     reimbursement = await get_reimbursement_or_404(db, reimbursement_id)
     await assert_draft(reimbursement)
+    await assert_not_locked(reimbursement)
 
     if not invoice_ids:
         raise HTTPException(status_code=400, detail="请选择至少一张发票")
@@ -346,6 +368,7 @@ async def unlink_invoice(
     """从报销单移除发票（仅草稿状态）"""
     reimbursement = await get_reimbursement_or_404(db, reimbursement_id)
     await assert_draft(reimbursement)
+    await assert_not_locked(reimbursement)
 
     result = await db.execute(
         select(Invoice).where(
@@ -383,6 +406,7 @@ async def submit_reimbursement(
     """
     reimbursement = await get_reimbursement_or_404(db, reimbursement_id)
     await assert_draft(reimbursement)
+    await assert_not_locked(reimbursement)
     reimbursement.status = ReimbursementStatus.submitted
     reimbursement.submitted_at = datetime.now(timezone.utc)
     await db.commit()
@@ -406,6 +430,7 @@ async def withdraw_reimbursement(
     仅已提交状态可撤回，撤回后恢复为草稿可继续编辑。
     """
     reimbursement = await get_reimbursement_or_404(db, reimbursement_id)
+    await assert_not_locked(reimbursement)
     if reimbursement.status != ReimbursementStatus.submitted:
         raise HTTPException(
             status_code=409,
@@ -652,6 +677,7 @@ async def toggle_day_subsidy(
     """
     reimbursement = await get_reimbursement_or_404(db, reimbursement_id)
     await assert_draft(reimbursement)
+    await assert_not_locked(reimbursement)
 
     result = await db.execute(
         select(ReimbursementDaySubsidy).where(
@@ -761,6 +787,7 @@ async def delete_reimbursement(
     """
     reimbursement = await get_reimbursement_or_404(db, reimbursement_id)
     await assert_draft(reimbursement)
+    await assert_not_locked(reimbursement)
 
     # 解除关联发票
     inv_result = await db.execute(

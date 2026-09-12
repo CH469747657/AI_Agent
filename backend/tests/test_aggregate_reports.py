@@ -60,7 +60,7 @@ class TestAggregateGeneratesReports:
         mock_db.commit = AsyncMock()
 
         # mock attach_invoice_to_cycle 返回报销单
-        async def fake_attach(db, inv, today=None, cutoff_day=None):
+        async def fake_attach(db, inv, today=None, cycle_end_day=None):
             return reimb1 if inv.id == 101 else reimb2
 
         # mock ReportGenerator.generate_all
@@ -72,7 +72,7 @@ class TestAggregateGeneratesReports:
 
         with patch("app.services.aggregation_service.attach_invoice_to_cycle", fake_attach), \
              patch("app.services.report_generator.ReportGenerator.generate_all", generate_all_mock):
-            result = await aggregate_pending_invoices(mock_db, user_id="EMP002", cutoff_day=21)
+            result = await aggregate_pending_invoices(mock_db, user_id="EMP002", cycle_end_day=21)
 
         # 关键断言：generate_all 对每个报销单调用一次
         assert generate_all_mock.call_count == 2
@@ -94,7 +94,7 @@ class TestAggregateGeneratesReports:
         generate_all_mock = AsyncMock()
 
         with patch("app.services.report_generator.ReportGenerator.generate_all", generate_all_mock):
-            result = await aggregate_pending_invoices(mock_db, user_id="EMP002", cutoff_day=21)
+            result = await aggregate_pending_invoices(mock_db, user_id="EMP002", cycle_end_day=21)
 
         assert result["total"] == 0
         generate_all_mock.assert_not_called()
@@ -117,7 +117,7 @@ class TestAggregateGeneratesReports:
         mock_db.execute = AsyncMock(side_effect=[inv_result, reimb_result])
         mock_db.commit = AsyncMock()
 
-        async def fake_attach(db, inv, today=None, cutoff_day=None):
+        async def fake_attach(db, inv, today=None, cycle_end_day=None):
             return reimb1
 
         # generate_all 抛异常
@@ -125,7 +125,7 @@ class TestAggregateGeneratesReports:
 
         with patch("app.services.aggregation_service.attach_invoice_to_cycle", fake_attach), \
              patch("app.services.report_generator.ReportGenerator.generate_all", generate_all_mock):
-            result = await aggregate_pending_invoices(mock_db, user_id="EMP002", cutoff_day=21)
+            result = await aggregate_pending_invoices(mock_db, user_id="EMP002", cycle_end_day=21)
 
         # 关键断言：报表错误记录到 errors，不影响归集结果
         assert result["attached"] == 1

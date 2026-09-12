@@ -75,21 +75,21 @@ async def lock_cycle(
 
 async def lock_just_ended_cycle(
     db: AsyncSession,
-    cutoff_day: int | None = None,
+    cycle_end_day: int | None = None,
 ) -> dict:
     """封账刚结束的周期（定时任务入口）
 
     在每月 cutoff 日 00:00 调用，封账上一个周期（即昨日所属周期）。
 
     Args:
-        cutoff_day: 周期 cutoff 日（1-31），None 时从 system_settings 读
+        cycle_end_day: 周期 cutoff 日（1-31），None 时从 system_settings 读
     """
-    from app.services.cutoff_service import get_cutoff_day
+    from app.services.cycle_end_service import get_cycle_end_day
 
-    if cutoff_day is None:
-        cutoff_day = await get_cutoff_day(db)
+    if cycle_end_day is None:
+        cycle_end_day = await get_cycle_end_day(db)
 
-    ck = just_ended_cycle_key(cutoff_day=cutoff_day)
+    ck = just_ended_cycle_key(cycle_end_day=cycle_end_day)
     if not ck:
         logger.warning("lock_just_ended_cycle: cannot determine just-ended cycle")
         return {"cycle_key": None, "locked_count": 0, "auto_submitted_count": 0}

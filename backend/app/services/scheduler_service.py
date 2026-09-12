@@ -2,7 +2,7 @@
 
 使用 APScheduler AsyncIOScheduler 在 FastAPI lifespan 中启动/停止。
 当前注册的任务：
-- cycle_lock_job: 每月 cutoff 日（默认 21 日）00:00 归集游离发票 + 封账上一周期 + 自动生成报表
+- cycle_lock_job: 每月 cycle_end_day 日 00:00 归集游离发票 + 封账上一周期 + 自动生成报表
 - timeout_reminder_job: 每 2 分钟检查超时用户并主动推送提醒
 """
 
@@ -25,7 +25,7 @@ PURPOSE_TIMEOUT_SECONDS = 300  # 5 分钟
 async def _cycle_lock_job() -> None:
     """定时归集 + 封账 + 自动生成报表任务
 
-    每月 cutoff 日 00:00 执行：
+    每月 cycle_end_day 日 00:00 执行：
     1. 归集所有游离发票到对应周期报销单
     2. 封账刚结束的周期（自动提交 DRAFT）
     3. 对已封账的报销单自动生成报表三件套（Excel + PDF + ZIP）
@@ -33,21 +33,21 @@ async def _cycle_lock_job() -> None:
     from app.database import get_async_sessionmaker
     from app.services.aggregation_service import aggregate_pending_invoices
     from app.services.cycle_lock_service import lock_just_ended_cycle
-    from app.services.cutoff_service import get_cutoff_day
+    from app.services.cycle_end_service import get_cycle_end_day
 
     logger.info("Cycle lock job triggered at %s", datetime.now().isoformat())
     try:
         sm = get_async_sessionmaker()
         async with sm() as db:
-            # 读最新 cutoff 配置（管理员改后立即生效，无需重启）
-            cutoff = await get_cutoff_day(db)
+            # 读最新 cycle_end_day 配置（管理员改后立即生效，无需重启）
+            cycle_end_day = await get_cycle_end_day(db)
 
             # 1. 先归集所有游离发票
-            agg_result = await aggregate_pending_invoices(db, cutoff_day=cutoff)
+            agg_result = await aggregate_pending_invoices(db, cycle_end_day=cycle_end_day)
             logger.info("Pre-lock aggregation: %s", agg_result)
 
             # 2. 再封账刚结束的周期
-            lock_result = await lock_just_ended_cycle(db, cutoff_day=cutoff)
+            lock_result = await lock_just_ended_cycle(db, cycle_end_day=cycle_end_day)
             logger.info("Cycle lock job result: %s", lock_result)
 
             # 3. 封账后自动生成报表三件套（Excel + PDF + ZIP）
@@ -222,19 +222,26 @@ def start_scheduler() -> AsyncIOScheduler:
 
     _scheduler = AsyncIOScheduler()
 
-    # 每月 cutoff 日 00:00（北京时间）归集游离发票 + 封账上一周期 + 自动生成报表
+    # 读 cycle_end_day 作为初始 cron day
+    from sqlalchemy import create_engine, text
+    from app.config import settings as app_settings
+    sync_url = app_settings.database_url.replace("+asyncpg", "+psycopg2")
+    engine = create_engine(sync_url)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT cycle_end_day FROM system_settings WHERE id=1")
+            ).fetchone()
+            initial_cycle_end_day = row[0] if row else 20
+    finally:
+        engine.dispose()
+
+    # 每月 cycle_end_day 日 00:00（北京时间）归集游离发票 + 封账上一周期 + 自动生成报表
     # 容器时区为 UTC，必须显式指定 Asia/Shanghai，否则按 UTC 0 点 = 北京 8 点触发
-    # TODO: 定时任务 cron day=21 是硬编码的，cutoff 改后下一次重启才生效。
-    # 当前实现：管理员改 cutoff 后，定时任务仍按旧 21 日跑（但跑时会读最新 cutoff
-    # 配置算刚结束的周期）。完全动态化需要 APScheduler reschedule_job，留待后续优化。
-    # ⚠️ 已知局限：当 cutoff ≠ 21 时，cron 仍在 21 日触发，just_ended_cycle_key
-    #   会用新 cutoff 算"刚结束的周期"——例：cutoff=15 时，21 日执行会算出本月
-    #   cycle_key（应是上月），导致锁错周期。建议管理员改 cutoff 后立即重启后端，
-    #   期间手动调 /api/reimbursements/aggregate 兜底。
     from pytz import timezone as tz
     _scheduler.add_job(
         _cycle_lock_job,
-        trigger=CronTrigger(day=20, hour=0, minute=0, timezone=tz("Asia/Shanghai")),
+        trigger=CronTrigger(day=initial_cycle_end_day, hour=0, minute=0, timezone=tz("Asia/Shanghai")),
         id="cycle_lock_job",
         name="归集+封账+报表",
         replace_existing=True,
@@ -266,20 +273,32 @@ async def stop_scheduler() -> None:
 
 
 def reschedule_cycle_lock_job() -> None:
-    """重新注册 cycle_lock_job 的 cron trigger（动态生效，不需重启）
+    """管理员改 cycle_end_day 后调，重新注册 cron trigger
 
-    当管理员修改 cycle_end_day 后，由 cycle_end_service.invalidate_cache 调用。
-    当前为占位实现，Task 4 会补充基于 cycle_end_day 重新计算 cron day 的逻辑。
+    从 DB 同步读最新 cycle_end_day，reschedule_job 更新 cron。
     """
     global _scheduler
-    if _scheduler is None or not _scheduler.running:
-        logger.warning("Scheduler not running, cannot reschedule cycle_lock_job")
-        return
+    if not _scheduler or not _scheduler.running:
+        return  # scheduler 未启动（首次加载时），跳过
+
+    from sqlalchemy import create_engine, text
+    from app.config import settings as app_settings
+    sync_url = app_settings.database_url.replace("+asyncpg", "+psycopg2")
+    engine = create_engine(sync_url)
     try:
-        _scheduler.reschedule_job(
-            "cycle_lock_job",
-            trigger=CronTrigger(day=20, hour=0, minute=0, timezone=tz("Asia/Shanghai")),
-        )
-        logger.info("Rescheduled cycle_lock_job")
-    except Exception:
-        logger.exception("Failed to reschedule cycle_lock_job")
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT cycle_end_day FROM system_settings WHERE id=1")
+            ).fetchone()
+            cycle_end_day = row[0] if row else 20
+    finally:
+        engine.dispose()
+
+    _scheduler.reschedule_job(
+        "cycle_lock_job",
+        trigger=CronTrigger(
+            day=cycle_end_day, hour=0, minute=0,
+            timezone=tz("Asia/Shanghai"),
+        ),
+    )
+    logger.info(f"Cycle lock job rescheduled to day={cycle_end_day}")

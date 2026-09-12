@@ -127,7 +127,7 @@ async def aggregate_pending_invoices(
     db: AsyncSession,
     user_id: Optional[str] = None,
     user_ids: Optional[list[str]] = None,
-    cutoff_day: int | None = None,
+    cycle_end_day: int | None = None,
 ) -> dict:
     """批量归集所有游离发票到对应周期的报销单
 
@@ -143,7 +143,7 @@ async def aggregate_pending_invoices(
         user_ids: 可选，指定多个用户ID（employee_no + wecom_user_id 等），
                   用 .in_() 查询，避免 set→list 顺序不确定导致漏匹配。
                   优先于 user_id。
-        cutoff_day: 周期 cutoff 日（1-31），None 时从 system_settings 读
+        cycle_end_day: 周期 cutoff 日（1-31），None 时从 system_settings 读
 
     Returns:
         {total, attached, reimb_ids, errors}
@@ -151,9 +151,9 @@ async def aggregate_pending_invoices(
     from app.models.invoice import InvoiceStatus
 
     # 读 cutoff 配置（如果调用方没传）
-    if cutoff_day is None:
-        from app.services.cutoff_service import get_cutoff_day
-        cutoff_day = await get_cutoff_day(db)
+    if cycle_end_day is None:
+        from app.services.cycle_end_service import get_cycle_end_day
+        cycle_end_day = await get_cycle_end_day(db)
 
     # 查找游离发票（reimbursement_id IS NULL + 非 processing）
     query = (
@@ -180,7 +180,7 @@ async def aggregate_pending_invoices(
 
     for inv in invoices:
         try:
-            reimb = await attach_invoice_to_cycle(db, inv, cutoff_day=cutoff_day)
+            reimb = await attach_invoice_to_cycle(db, inv, cycle_end_day=cycle_end_day)
             reimb_ids.add(reimb.id)
             attached += 1
             logger.info(f"Aggregated invoice #{inv.id} → reimbursement #{reimb.id}")
@@ -237,7 +237,7 @@ async def attach_invoice_to_cycle(
     db: AsyncSession,
     invoice: Invoice,
     today: date | None = None,
-    cutoff_day: int | None = None,
+    cycle_end_day: int | None = None,
 ) -> Reimbursement:
     """将发票归入所属周期的报销单
 
@@ -249,16 +249,16 @@ async def attach_invoice_to_cycle(
     5. recompute_all → 重算补贴与总额
 
     Args:
-        cutoff_day: 周期 cutoff 日（1-31），None 时从 system_settings 读
+        cycle_end_day: 周期 cutoff 日（1-31），None 时从 system_settings 读
 
     Returns: 归入的报销单
     """
     today = today or date.today()
 
     # 读 cutoff 配置（如果调用方没传）
-    if cutoff_day is None:
-        from app.services.cutoff_service import get_cutoff_day
-        cutoff_day = await get_cutoff_day(db)
+    if cycle_end_day is None:
+        from app.services.cycle_end_service import get_cycle_end_day
+        cycle_end_day = await get_cycle_end_day(db)
 
     # 1. 判定费用发生日期
     edate, src = determine_expense_date(invoice, today)
@@ -266,8 +266,8 @@ async def attach_invoice_to_cycle(
     invoice.expense_date_source = src
 
     # 2. 判定目标周期
-    target_ck = cycle_key_of(edate, cutoff_day) if edate else current_cycle_key(today, cutoff_day)
-    curr_ck = current_cycle_key(today, cutoff_day)
+    target_ck = cycle_key_of(edate, cycle_end_day) if edate else current_cycle_key(today, cycle_end_day)
+    curr_ck = current_cycle_key(today, cycle_end_day)
 
     # 检查目标周期是否已封账
     target_reimb = await db.execute(

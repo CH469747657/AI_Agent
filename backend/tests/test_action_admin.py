@@ -72,8 +72,8 @@ class TestHandleSubmitReimbursement:
 
     @pytest.fixture(autouse=True)
     def _reset_cutoff_cache(self):
-        """清 cutoff_service 进程级缓存，避免被其他用例的 MagicMock 污染"""
-        from app.services.cutoff_service import invalidate_cache
+        """清 cycle_end_service 进程级缓存，避免被其他用例的 MagicMock 污染"""
+        from app.services.cycle_end_service import invalidate_cache
         invalidate_cache()
         yield
         invalidate_cache()
@@ -105,7 +105,7 @@ class TestHandleSubmitReimbursement:
         fake_reimb = _mock_reimbursement(reimb_id=200, status=ReimbursementStatus.draft)
 
         with patch(
-            "app.services.cutoff_service.get_cutoff_day",
+            "app.services.cycle_end_service.get_cycle_end_day",
             AsyncMock(return_value=21),
         ), patch(
             "app.services.cycle_engine.current_cycle_key",
@@ -152,7 +152,7 @@ class TestHandleSubmitReimbursement:
             return fake_reimb
 
         with patch(
-            "app.services.cutoff_service.get_cutoff_day",
+            "app.services.cycle_end_service.get_cycle_end_day",
             AsyncMock(return_value=21),
         ), patch(
             "app.services.cycle_engine.current_cycle_key",

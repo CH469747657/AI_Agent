@@ -33,6 +33,7 @@ from datetime import date
 from typing import Any, Optional
 
 from dateutil.relativedelta import relativedelta
+from fastapi import HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -619,6 +620,10 @@ class ActionExecutor:
         service = InvoiceService(db)
         try:
             await service.delete_invoice(target_invoice.id, user_id=ctx.user_id)
+        except HTTPException as e:
+            if e.status_code == 409:
+                return {"text": f"❌ {e.detail}", "data": {}}
+            raise
         except Exception as e:
             return {
                 "text": f"删除失败：{e}",
@@ -812,7 +817,14 @@ class ActionExecutor:
 
             # 报销单存在时才重算补贴；否则等报销单生成时挂载后重算
             if reimb:
-                await recompute_all(db, reimb, holidays)
+                try:
+                    await recompute_all(db, reimb, holidays)
+                except HTTPException as e:
+                    if e.status_code == 409:
+                        rejected_locked.append(d_str)
+                        await db.rollback()
+                        continue
+                    raise
             else:
                 pending_count += 1
             added.append(d_str)
@@ -881,28 +893,33 @@ class ActionExecutor:
 
         cycle_end_day = await get_cycle_end_day(db)
         ck = current_cycle_key(cycle_end_day=cycle_end_day)
-        reimb = await get_or_create_reimbursement(
-            db,
-            applicant_id=target_user_id,
-            cycle_key=ck,
-            auto_generated=False,
-        )
-
-        # 把该员工所有游离发票归集
-        free_invoices = await db.execute(
-            select(Invoice).where(
-                Invoice.user_id == target_user_id,
-                Invoice.reimbursement_id.is_(None),
+        try:
+            reimb = await get_or_create_reimbursement(
+                db,
+                applicant_id=target_user_id,
+                cycle_key=ck,
+                auto_generated=False,
             )
-        )
-        attached = 0
-        for inv in free_invoices.scalars():
-            await attach_invoice_to_cycle(db, inv, cycle_end_day=cycle_end_day)
-            attached += 1
 
-        # 改状态为 SUBMITTED
-        reimb.status = ReimbursementStatus.submitted
-        await db.commit()
+            # 把该员工所有游离发票归集
+            free_invoices = await db.execute(
+                select(Invoice).where(
+                    Invoice.user_id == target_user_id,
+                    Invoice.reimbursement_id.is_(None),
+                )
+            )
+            attached = 0
+            for inv in free_invoices.scalars():
+                await attach_invoice_to_cycle(db, inv, cycle_end_day=cycle_end_day)
+                attached += 1
+
+            # 改状态为 SUBMITTED
+            reimb.status = ReimbursementStatus.submitted
+            await db.commit()
+        except HTTPException as e:
+            if e.status_code == 409:
+                return {"text": f"❌ {e.detail}", "data": {}}
+            raise
 
         # 清空批量列表
         ctx.batch_invoice_ids = []
@@ -985,6 +1002,16 @@ class ActionExecutor:
                 "data": {},
             }
 
+        # 封账检查：发票所属报销单已锁定则禁止修改
+        if invoice.reimbursement_id:
+            from app.models.reimbursement import Reimbursement
+            reimb = await db.get(Reimbursement, invoice.reimbursement_id)
+            if reimb and reimb.is_cycle_locked:
+                return {
+                    "text": f"❌ 发票所属报销单 #{reimb.id} 已封账，无法修改。",
+                    "data": {},
+                }
+
         fn = field_name.value
         fv = field_value.value
 
@@ -1001,26 +1028,31 @@ class ActionExecutor:
         model_attr = field_map.get(fn.lower() if isinstance(fn, str) else fn, fn)
 
         if hasattr(invoice, model_attr):
-            if model_attr == "expense_date":
-                parsed = self._parse_expense_date(fv)
-                if not parsed:
-                    return {
-                        "text": f"日期格式无法解析：{fv}，请用 YYYY-MM-DD 或 X月Y日 格式。",
-                        "data": {},
-                    }
-                invoice.expense_date = parsed
-                invoice.expense_date_source = "note"
-                # 同步更新已生成报销单明细行的 item_date（item 是 invoice 的快照，需联动）
-                from app.models.reimbursement import ReimbursementItem
-                items_result = await db.execute(
-                    select(ReimbursementItem).where(ReimbursementItem.invoice_id == invoice.id)
-                )
-                for item in items_result.scalars().all():
-                    item.item_date = parsed
-                    item.item_date_source = "note"
-            else:
-                setattr(invoice, model_attr, fv)
-            await db.commit()
+            try:
+                if model_attr == "expense_date":
+                    parsed = self._parse_expense_date(fv)
+                    if not parsed:
+                        return {
+                            "text": f"日期格式无法解析：{fv}，请用 YYYY-MM-DD 或 X月Y日 格式。",
+                            "data": {},
+                        }
+                    invoice.expense_date = parsed
+                    invoice.expense_date_source = "note"
+                    # 同步更新已生成报销单明细行的 item_date（item 是 invoice 的快照，需联动）
+                    from app.models.reimbursement import ReimbursementItem
+                    items_result = await db.execute(
+                        select(ReimbursementItem).where(ReimbursementItem.invoice_id == invoice.id)
+                    )
+                    for item in items_result.scalars().all():
+                        item.item_date = parsed
+                        item.item_date_source = "note"
+                else:
+                    setattr(invoice, model_attr, fv)
+                await db.commit()
+            except HTTPException as e:
+                if e.status_code == 409:
+                    return {"text": f"❌ {e.detail}", "data": {}}
+                raise
             text = f"✅ 已将发票 #{invoice_id} 的{fn}修改为 {fv}。"
             # 仅返回本次修改的发票详情（场景B：单次操作）
             text += "\n\n" + self._build_single_invoice_table(invoice)

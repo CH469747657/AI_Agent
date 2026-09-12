@@ -32,10 +32,12 @@ class SystemSettings(TimestampMixin, Base):
     # 老板端密码哈希（改密后写入此字段；为空时回退到 .env 的 BOSS_PASSWORD_HASH）
     boss_password_hash: Mapped[str] = mapped_column(String(256), default="")
 
-    # 周期 cutoff 日（1-31）。cutoff 日不存在时取该月最后一日。
-    # 周期=上月cutoff日到本月(cutoff-1)日，cutoff=21 → 21-20制
-    cycle_cutoff_day: Mapped[int] = mapped_column(
-        Integer, default=21,
-        comment="周期 cutoff 日（1-31）。cutoff 日不存在时取该月最后一日。"
-                "周期=上月cutoff日到本月(cutoff-1)日，cutoff=21 → 21-20制"
+    # 周期截止日（1-31）。该日为本周期最后一天（含）。
+    # 例：cycle_end_day=25 → 8/26~9/25；cycle_end_day=20 → 7/21~8/20（默认 21-20 制）。
+    # cycle_end_day 不存在时取该月最后一日。
+    cycle_end_day: Mapped[int] = mapped_column(
+        Integer, default=20,
+        comment="周期截止日（1-31）。该日为本周期最后一天（含）。"
+                "例：cycle_end_day=25 → 8/26~9/25；cycle_end_day=20 → 7/21~8/20（默认 21-20 制）。"
+                "cycle_end_day 不存在时取该月最后一日。"
     )

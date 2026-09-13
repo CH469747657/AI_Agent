@@ -22,6 +22,7 @@ from app.schemas import (
     SubsidyToggleRequest,
     AggregateRequest,
 )
+from pydantic import BaseModel, Field
 from app.services import reimbursement_service as svc
 
 router = APIRouter(dependencies=[Depends(get_current_admin_or_boss)])
@@ -335,3 +336,62 @@ async def download_attachment(
         filename=attachment.filename,
         media_type=attachment.file_type or "application/octet-stream",
     )
+
+
+# ===== 管理员手动 unlock/lock 报销单 =====
+
+class UnlockRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500, description="解锁原因")
+
+
+@router.post("/{reimbursement_id}/unlock", response_model=ReimbursementResponse)
+async def unlock_reimbursement(
+    reimbursement_id: int,
+    request: UnlockRequest,
+    admin: dict = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """管理员手动解锁报销单（让员工能修改）
+
+    解锁后 is_cycle_locked=False，员工可撤回（withdraw）后再修改。
+    审计字段 unlocked_by/unlocked_at/unlock_reason 填上。
+    重新 lock 时清空审计字段。
+    """
+    from datetime import datetime, timezone
+    reimbursement = await svc.get_reimbursement_or_404(db, reimbursement_id)
+    if not reimbursement.is_cycle_locked:
+        raise HTTPException(status_code=400, detail="该报销单未封账，无需解锁")
+    reimbursement.is_cycle_locked = False
+    reimbursement.unlocked_by = admin["username"]
+    reimbursement.unlocked_at = datetime.now(timezone.utc)
+    reimbursement.unlock_reason = request.reason
+    # 不重置 status，保持封账时状态（通常 SUBMITTED）
+    # 员工需自己撤回才能改（撤回此时不被 assert_not_locked 阻拦）
+    await db.commit()
+    await db.refresh(reimbursement)
+    return reimbursement
+
+
+@router.post("/{reimbursement_id}/lock", response_model=ReimbursementResponse)
+async def lock_reimbursement(
+    reimbursement_id: int,
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(get_current_admin),
+):
+    """管理员手动重新封账
+
+    清空 unlock 审计字段（重新封账后旧解锁记录不再有意义）。
+    """
+    from datetime import datetime, timezone
+    reimbursement = await svc.get_reimbursement_or_404(db, reimbursement_id)
+    if reimbursement.is_cycle_locked:
+        raise HTTPException(status_code=400, detail="该报销单已封账")
+    reimbursement.is_cycle_locked = True
+    reimbursement.locked_at = datetime.now(timezone.utc)
+    # 清空 unlock 审计字段
+    reimbursement.unlocked_by = None
+    reimbursement.unlocked_at = None
+    reimbursement.unlock_reason = None
+    await db.commit()
+    await db.refresh(reimbursement)
+    return reimbursement

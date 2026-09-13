@@ -105,6 +105,9 @@ class ReimbursementResponse(BaseModel):
     auto_generated: bool = False
     is_cycle_locked: bool = False
     locked_at: datetime | None = None
+    unlocked_by: str | None = None
+    unlocked_at: datetime | None = None
+    unlock_reason: str | None = None
     submitted_at: datetime | None = None
     confirmed_at: datetime | None = None
     excel_path: str | None = None

@@ -191,11 +191,11 @@ async def create_reimbursement(
 
     # period 兼容字段 = cycle_key；未传入时按当前周期推导
     from app.services.cycle_engine import cycle_key_of, billing_cycle
-    from app.services.cutoff_service import get_cutoff_day
+    from app.services.cycle_end_service import get_cycle_end_day
     from datetime import date as _date
-    cutoff = await get_cutoff_day(db)
-    cycle_key = period or cycle_key_of(_date.today(), cutoff_day=cutoff)
-    cycle_start, cycle_end = billing_cycle(cycle_key, cutoff_day=cutoff)
+    cycle_end_day = await get_cycle_end_day(db)
+    cycle_key = period or cycle_key_of(_date.today(), cycle_end_day=cycle_end_day)
+    cycle_start, cycle_end = billing_cycle(cycle_key, cycle_end_day=cycle_end_day)
 
     # 幂等：UNIQUE(applicant_id, cycle_key) 保证一员工一周期单份
     # 已存在则直接返回，不重复创建（避免 IntegrityError）

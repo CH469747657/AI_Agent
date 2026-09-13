@@ -394,7 +394,7 @@ class InsightEngine:
             result = await handler(context, db)
             # 为所有 insight 结果附加当前周期范围（cycle_start / cycle_end）
             if isinstance(result, dict) and isinstance(result.get("data"), dict):
-                cycle_start, cycle_end = self._current_cycle_range()
+                cycle_start, cycle_end = await self._current_cycle_range(db)
                 result["data"]["cycle_start"] = cycle_start
                 result["data"]["cycle_end"] = cycle_end
             return result
@@ -1623,11 +1623,35 @@ class InsightEngine:
         return PeriodResolver.resolve(period_val, ctx.current_text)
 
     @staticmethod
-    def _current_cycle_range() -> tuple[str | None, str | None]:
+    async def _current_cycle_range(db: AsyncSession) -> tuple[str | None, str | None]:
         """返回当前周期范围 (cycle_start, cycle_end) ISO 字符串
 
         洞察结果中若未关联具体报销单，或跨多个周期，用当前周期兜底。
+        读 DB 配置的 cycle_end_day（管理员可改）而非默认 20。
         """
+        from datetime import date as _date
+        from app.services.cycle_engine import current_cycle_key, billing_cycle
+        from app.services.cycle_end_service import get_cycle_end_day
+        try:
+            cycle_end_day = await get_cycle_end_day(db)
+            ck = current_cycle_key(_date.today(), cycle_end_day=cycle_end_day)
+            start, end = billing_cycle(ck, cycle_end_day=cycle_end_day)
+            return start.isoformat(), end.isoformat()
+        except Exception:
+            return None, None
+
+    @staticmethod
+    def _cycle_range_from_reimbursements(reimbs: list[Reimbursement]) -> tuple[str | None, str | None]:
+        """从报销单列表提取统一 cycle_start/cycle_end；跨周期时回退到当前周期
+
+        注意：跨周期回退路径不读 DB（同步函数，无 db 上下文），用默认 20。
+        调用方若有 db 上下文应优先用 _current_cycle_range(db)。
+        """
+        starts = {r.cycle_start for r in reimbs if r.cycle_start}
+        ends = {r.cycle_end for r in reimbs if r.cycle_end}
+        if len(starts) == 1 and len(ends) == 1:
+            return list(starts)[0].isoformat(), list(ends)[0].isoformat()
+        # 跨周期回退：用默认 20（无法读 DB，调用方需自行覆盖）
         from datetime import date as _date
         from app.services.cycle_engine import current_cycle_key, billing_cycle
         try:
@@ -1636,15 +1660,6 @@ class InsightEngine:
             return start.isoformat(), end.isoformat()
         except Exception:
             return None, None
-
-    @staticmethod
-    def _cycle_range_from_reimbursements(reimbs: list[Reimbursement]) -> tuple[str | None, str | None]:
-        """从报销单列表提取统一 cycle_start/cycle_end；跨周期时回退到当前周期"""
-        starts = {r.cycle_start for r in reimbs if r.cycle_start}
-        ends = {r.cycle_end for r in reimbs if r.cycle_end}
-        if len(starts) == 1 and len(ends) == 1:
-            return list(starts)[0].isoformat(), list(ends)[0].isoformat()
-        return InsightEngine._current_cycle_range()
 
     @staticmethod
     async def _resolve_person_to_user_ids(

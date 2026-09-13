@@ -428,7 +428,7 @@ from app.models.reimbursement import (  # noqa: E402
     ReimbursementTravelDay,
 )
 from app.models.settings import SystemSettings  # noqa: E402
-from app.services import cutoff_service  # noqa: E402
+from app.services import cycle_end_service  # noqa: E402
 from app.services.auth_service import hash_password  # noqa: E402
 
 
@@ -449,7 +449,7 @@ def _reset_engine_for_cycle():
 
 @pytest.fixture(autouse=False)
 async def _restore_cutoff_after_cycle_test():
-    """测试后把 system_settings.cycle_cutoff_day 重置回 21 + 失效缓存"""
+    """测试后把 system_settings.cycle_end_day 重置回 20 + 失效缓存"""
     yield
     db_module.get_engine.cache_clear()
     db_module.get_async_sessionmaker.cache_clear()
@@ -458,10 +458,10 @@ async def _restore_cutoff_after_cycle_test():
         await session.execute(
             update(SystemSettings)
             .where(SystemSettings.id == 1)
-            .values(cycle_cutoff_day=21)
+            .values(cycle_end_day=20)
         )
         await session.commit()
-    cutoff_service.invalidate_cache()
+    cycle_end_service.invalidate_cache()
 
 
 async def _cycle_ensure_enum_compat():
@@ -550,16 +550,16 @@ async def _cycle_get_employee_token(ac: AsyncClient) -> str:
 
 
 async def _cycle_set_cutoff(ac: AsyncClient, admin_token: str, cutoff: int):
-    """PUT /api/settings/cycle — 设 cutoff_day"""
+    """PUT /api/settings/cycle — 设 cycle_end_day"""
     headers = {"Authorization": f"Bearer {admin_token}"}
     r = await ac.put(
         "/api/settings/cycle",
-        json={"cycle_cutoff_day": cutoff},
+        json={"cycle_end_day": cutoff},
         headers=headers,
     )
     assert r.status_code == 200, r.text
     # 失效进程缓存（确保 GET 后立即生效）
-    cutoff_service.invalidate_cache()
+    cycle_end_service.invalidate_cache()
 
 
 class TestCycleChangeTakesEffectNextPeriod:

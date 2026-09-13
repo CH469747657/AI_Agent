@@ -1153,6 +1153,7 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
                   accept="image/*,.pdf,.ofd"
                   onChange={handleFileSelect}
                   multiple
+                  data-testid="chat-file-input"
                   className="sr-only"
                 />
                 <button
@@ -1194,6 +1195,7 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
                   onKeyDown={handleKeyDown}
                   disabled={isTyping}
                   rows={1}
+                  data-testid="chat-input"
                   placeholder={
                     isTyping
                       ? "助手正在回复…"
@@ -1210,6 +1212,7 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
                 <button
                   onClick={() => handleSend()}
                   disabled={isTyping || (!inputText.trim() && !selectedFile && pendingFiles.length === 0)}
+                  data-testid="chat-send"
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-600 text-white transition-all hover:bg-primary-700 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
                   title="发送"
                 >

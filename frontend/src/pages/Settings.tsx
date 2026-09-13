@@ -819,24 +819,26 @@ function VerifyTab() {
 // ============================================================
 
 function CycleTab() {
-  const [cycleCutoff, setCycleCutoff] = useState(21);
-  const [savedCutoff, setSavedCutoff] = useState<number | null>(null);
-  const [currentCycle, setCurrentCycle] = useState<string | null>(null);
+  const [cycleEndDay, setCycleEndDay] = useState(20);
+  const [savedEndDay, setSavedEndDay] = useState<number | null>(null);
+  const [currentCycleStart, setCurrentCycleStart] = useState<string | null>(null);
+  const [currentCycleEnd, setCurrentCycleEnd] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
-  const isDirty = savedCutoff !== null && cycleCutoff !== savedCutoff;
+  const isDirty = savedEndDay !== null && cycleEndDay !== savedEndDay;
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const r = await settingsApi.cycle.get();
-      setCycleCutoff(r.cycle_cutoff_day);
-      setSavedCutoff(r.cycle_cutoff_day);
-      setCurrentCycle(r.next_effective_cycle);
+      setCycleEndDay(r.cycle_end_day);
+      setSavedEndDay(r.cycle_end_day);
+      setCurrentCycleStart(r.current_cycle_start);
+      setCurrentCycleEnd(r.current_cycle_end);
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载周期配置失败");
     } finally {
@@ -849,18 +851,19 @@ function CycleTab() {
   }, [load]);
 
   const handleSaveCycle = async () => {
-    if (!Number.isInteger(cycleCutoff) || cycleCutoff < 1 || cycleCutoff > 31) {
-      setError("cutoff 日必须为 1-31 之间的整数");
+    if (!Number.isInteger(cycleEndDay) || cycleEndDay < 1 || cycleEndDay > 31) {
+      setError("截止日必须为 1-31 之间的整数");
       return;
     }
     setSaving(true);
     setSaveMsg(null);
     setError(null);
     try {
-      const r = await settingsApi.cycle.update(cycleCutoff);
-      setSavedCutoff(r.cycle_cutoff_day);
-      setCycleCutoff(r.cycle_cutoff_day);
-      setCurrentCycle(r.next_effective_cycle);
+      const r = await settingsApi.cycle.update(cycleEndDay);
+      setSavedEndDay(r.cycle_end_day);
+      setCycleEndDay(r.cycle_end_day);
+      setCurrentCycleStart(r.current_cycle_start);
+      setCurrentCycleEnd(r.current_cycle_end);
       setSaveMsg("保存成功，下个完整周期生效");
       setTimeout(() => setSaveMsg(null), 5000);
     } catch (e) {
@@ -904,7 +907,7 @@ function CycleTab() {
         <div className="space-y-5 max-w-2xl">
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-foreground">
-              周期 cutoff 日
+              周期截止日
               <span className="ml-1 text-xs text-muted-foreground">
                 (1-31 整数)
               </span>
@@ -914,25 +917,19 @@ function CycleTab() {
               min={1}
               max={31}
               step={1}
-              value={cycleCutoff}
-              onChange={(e) => setCycleCutoff(Number(e.target.value))}
+              value={cycleEndDay}
+              onChange={(e) => setCycleEndDay(Number(e.target.value))}
               className="w-24 rounded-lg border border-border bg-muted px-3 py-2.5 text-sm focus:border-primary-400 focus:bg-background"
             />
+            {currentCycleStart && currentCycleEnd && (
+              <p className="text-sm text-gray-600 mt-2">
+                当前周期：{currentCycleStart} ~ {currentCycleEnd}
+              </p>
+            )}
             <p className="text-xs text-muted-foreground">
-              cutoff 日不存在时取该月最后一日。例：21 = 每月 21 日到次月 20 日。修改后下个完整周期生效。
+              截止日不存在时取该月最后一日。例：20 = 每月 20 日到次月 19 日。修改后下个完整周期生效。
             </p>
           </div>
-
-          {currentCycle && (
-            <div className="rounded-lg bg-muted p-3 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">当前周期：</span>
-                <span className="font-mono font-semibold text-foreground">
-                  {currentCycle}
-                </span>
-              </div>
-            </div>
-          )}
         </div>
 
         <div className="mt-6 flex items-center gap-3 border-t border-border pt-5">
@@ -972,15 +969,15 @@ function CycleTab() {
         <ul className="space-y-2 text-sm text-muted-foreground">
           <li className="flex items-start gap-2">
             <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-primary-400" />
-            cutoff 日 = 报销周期的划分日，每月该日 00:00 起为新周期
+            周期截止日 = 报销周期的结束日，次日 00:00 起为新周期
           </li>
           <li className="flex items-start gap-2">
             <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-primary-400" />
-            例：cutoff=21，则 9 月 21 日 00:00 ~ 10 月 20 日 23:59 为一个周期
+            例：截止日=20，则 9 月 20 日 00:00 ~ 10 月 19 日 23:59 为一个周期
           </li>
           <li className="flex items-start gap-2">
             <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-            修改 cutoff 仅影响后续生成的周期，当前周期不变
+            修改截止日仅影响后续生成的周期，当前周期不变
           </li>
         </ul>
       </div>

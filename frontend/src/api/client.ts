@@ -1064,23 +1064,26 @@ export const settingsApi = {
       body: JSON.stringify(data),
     }),
 
-  /** 周期配置（cutoff 日） */
+  /** 周期配置（截止日） */
   cycle: {
-    /** 获取当前周期 cutoff 日与当前周期键 */
+    /** 获取当前周期截止日与当前周期起止 */
     get: () =>
-      request<{ cycle_cutoff_day: number; next_effective_cycle: string | null }>(
-        "/settings/cycle"
-      ),
-    /** 更新周期 cutoff 日（PUT，下个完整周期生效） */
-    update: (cycle_cutoff_day: number) =>
-      request<{ cycle_cutoff_day: number; next_effective_cycle: string | null }>(
-        "/settings/cycle",
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cycle_cutoff_day }),
-        }
-      ),
+      request<{
+        cycle_end_day: number;
+        current_cycle_start: string; // YYYY-MM-DD
+        current_cycle_end: string; // YYYY-MM-DD
+      }>("/settings/cycle"),
+    /** 更新周期截止日（PUT，下个完整周期生效） */
+    update: (cycle_end_day: number) =>
+      request<{
+        cycle_end_day: number;
+        current_cycle_start: string; // YYYY-MM-DD
+        current_cycle_end: string; // YYYY-MM-DD
+      }>("/settings/cycle", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cycle_end_day }),
+      }),
   },
 };
 

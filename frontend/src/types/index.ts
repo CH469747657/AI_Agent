@@ -277,6 +277,9 @@ export interface DialogMessage {
   batchSummary?: BatchInvoiceSummary[];
   /** 追问状态（如 waiting_purpose） */
   followUpState?: string;
+  /** Insight 结果附带的周期范围 */
+  cycleStart?: string;
+  cycleEnd?: string;
 }
 
 export interface BatchInvoiceSummary {

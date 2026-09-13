@@ -91,19 +91,22 @@ WECOM_TOKEN=...
 WECOM_ENCODING_AES_KEY=...
 ```
 
-### 周期 cutoff 配置
+### 周期配置（cycle_end_day）
 
-报销周期默认按 21-20 制（每月 21 日到次月 20 日）。管理员可在系统设置页面修改 cutoff 日（1-31），cutoff 日不存在时取该月最后一日。
+报销周期默认按 21-20 制（每月 21 日到次月 20 日，20 号是本月最后一天）。管理员可在系统设置页面修改 cycle_end_day（1-31），该日为本周期最后一天（含）。cycle_end_day 不存在时取该月最后一日。
 
-修改后从下个完整周期生效，当前周期内不动。
+修改后从下个完整周期生效，当前周期内不动。定时任务会动态更新 cron trigger，无需重启后端。
 
 例：
-- cutoff=21（默认）→ 每月 21 日到次月 20 日
-- cutoff=1  → 自然月（1 日到月末）
-- cutoff=15 → 每月 15 日到次月 14 日
-- cutoff=31 → 每月 31 日到次月 30 日（2 月取 28/29 日）
+- cycle_end_day=20（默认）→ 每月 21 日到次月 20 日（21-20 制）
+- cycle_end_day=25 → 每月 26 日到次月 25 日
+- cycle_end_day=1  → 上月 2 日到本月 1 日（自然月偏移）
+- cycle_end_day=31 → 每月 1 日到该月最后一天（自然月，2 月取 28/29 日）
 
-**注意**：修改 cutoff 后需重启后端容器，定时任务才能按新 cutoff 日执行。期间手动调 `/api/reimbursements/aggregate` 兜底归集。
+**封账规则**：
+- 每月 cycle_end_day 00:00 定时任务自动归集游离发票 + 封账上一周期
+- 封账后员工不能 submit/withdraw/update/delete/link/unlink/toggle subsidy
+- 管理员可在管理端报销单详情页手动 unlock（需填原因），员工改完后管理员重新 lock
 
 ### 3. 启动服务
 

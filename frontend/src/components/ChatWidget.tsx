@@ -381,6 +381,12 @@ function MessageBubble({
             </div>
           </div>
         )}
+        {/* Insight 结果周期范围 */}
+        {!isUser && msg.cycleStart && msg.cycleEnd && (
+          <p className="mt-1 text-xs text-gray-500">
+            周期范围：{msg.cycleStart} ~ {msg.cycleEnd}
+          </p>
+        )}
         {/* 撤销上传按钮（仅上传成功消息显示） */}
         {!isUser && !msg.undone && msg.invoiceId && onUndo && (
           <motion.button
@@ -774,7 +780,8 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
                 error: res.error,
                 invoiceId: res.data?.invoice_id as number | undefined,
                 batchSummary: followUp?.batch_summary,
-                followUpState: followUp?.state,
+                cycleStart: res.data?.cycle_start as string | undefined,
+                cycleEnd: res.data?.cycle_end as string | undefined,
               };
               setMessages((prev) => [...prev.filter((m) => m.id !== thinkingId), assistantMsg]);
               // 执行了实际操作（上传/删除/修改发票）→ 通知其他组件刷新统计数据

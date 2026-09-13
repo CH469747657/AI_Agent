@@ -208,6 +208,11 @@ export function PortalMyReimbursements() {
                     </div>
                     <div className="flex items-center gap-4 text-xs text-muted-foreground">
                       <span>{r.reason || "未填写"}</span>
+                      {r.cycle_start && r.cycle_end && (
+                        <span className="text-sm text-gray-600">
+                          {r.cycle_start} ~ {r.cycle_end}
+                        </span>
+                      )}
                       {r.cycle_key && <span className="text-primary-600">{r.cycle_key}</span>}
                       {r.is_cycle_locked && (
                         <span className="inline-flex items-center gap-0.5 text-error-600">
@@ -568,9 +573,20 @@ function ReimbursementDetail({
   if (!detail) return null;
 
   const st = statusLabels[detail.status] || { label: detail.status, color: "bg-muted text-foreground/70" };
+  const cycleLocked = detail.is_cycle_locked;
+  const lockTitle = cycleLocked ? "周期已封账，无法操作" : "";
 
   return (
     <div className="space-y-6">
+      {detail.cycle_start && detail.cycle_end && (
+        <div className="mb-4 p-3 bg-gray-50 rounded">
+          <span className="text-sm">周期范围：{detail.cycle_start} ~ {detail.cycle_end}</span>
+          {cycleLocked && (
+            <span className="ml-2 text-red-600 text-sm font-medium">🔒 已封账</span>
+          )}
+        </div>
+      )}
+
       {/* 顶部导航 */}
       <div className="flex items-center justify-between">
         <button onClick={onBack} className="flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground">
@@ -581,7 +597,9 @@ function ReimbursementDetail({
           {isDraft && !editMode && (
             <button
               onClick={handleStartEdit}
-              className="flex items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground/70 transition-colors hover:bg-muted"
+              disabled={cycleLocked}
+              title={lockTitle}
+              className="flex items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground/70 transition-colors hover:bg-muted disabled:opacity-50"
             >
               <PencilSimple size={14} />
               编辑
@@ -590,7 +608,8 @@ function ReimbursementDetail({
           {isSubmitted && !editMode && (
             <button
               onClick={handleWithdraw}
-              disabled={withdrawing}
+              disabled={withdrawing || cycleLocked}
+              title={lockTitle}
               className="flex items-center gap-1 rounded-lg bg-primary-700 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-800 disabled:opacity-50"
             >
               {withdrawing ? <Spinner size={14} className="animate-spin" /> : <ArrowUUpLeft size={14} />}
@@ -601,14 +620,16 @@ function ReimbursementDetail({
             <>
               <button
                 onClick={() => setEditMode(false)}
-                disabled={saving}
-                className="rounded-lg px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+                disabled={saving || cycleLocked}
+                title={lockTitle}
+                className="rounded-lg px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
               >
                 取消
               </button>
               <button
                 onClick={handleSaveEdit}
-                disabled={saving}
+                disabled={saving || cycleLocked}
+                title={lockTitle}
                 className="flex items-center gap-1 rounded-lg bg-primary-700 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-800 disabled:opacity-50"
               >
                 {saving ? <Spinner size={14} className="animate-spin" /> : <Check size={14} />}
@@ -831,7 +852,7 @@ function ReimbursementDetail({
                       {td.note || "—"} · 当日发票 {invoiceCount} 张
                     </p>
                   </div>
-                  {isDraft && !detail.is_cycle_locked && (
+                  {isDraft && (
                     <button
                       onClick={async () => {
                         try {
@@ -842,8 +863,9 @@ function ReimbursementDetail({
                           setError(err instanceof Error ? err.message : "删除失败");
                         }
                       }}
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-error-50 hover:text-error-600"
-                      title="删除出差日"
+                      disabled={cycleLocked}
+                      title={cycleLocked ? lockTitle : "删除出差日"}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-error-50 hover:text-error-600 disabled:opacity-50"
                     >
                       <X size={14} />
                     </button>
@@ -893,11 +915,11 @@ function ReimbursementDetail({
                       {isDraft ? (
                         <button
                           onClick={() => handleToggleSubsidy(ds.subsidy_date, !ds.included)}
-                          disabled={togglingSubsidyDate === ds.subsidy_date}
+                          disabled={togglingSubsidyDate === ds.subsidy_date || cycleLocked}
+                          title={cycleLocked ? lockTitle : ds.included ? "点击取消补贴" : "点击计入补贴"}
                           className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
                             ds.included ? "bg-emerald-500" : "bg-border"
                           } disabled:opacity-50`}
-                          title={ds.included ? "点击取消补贴" : "点击计入补贴"}
                         >
                           {togglingSubsidyDate === ds.subsidy_date ? (
                             <Spinner size={12} className="absolute left-1 animate-spin text-white" />
@@ -936,7 +958,9 @@ function ReimbursementDetail({
           {isDraft && !showLinkPanel && (
             <button
               onClick={() => { setShowLinkPanel(true); loadAvailableInvoices(); }}
-              className="flex items-center gap-1 rounded-lg bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-100"
+              disabled={cycleLocked}
+              title={lockTitle}
+              className="flex items-center gap-1 rounded-lg bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-100 disabled:opacity-50"
             >
               <LinkIcon size={14} />
               添加发票
@@ -980,9 +1004,9 @@ function ReimbursementDetail({
                   {isDraft && (
                     <button
                       onClick={() => handleUnlink(inv.id)}
-                      disabled={unlinking === inv.id}
+                      disabled={unlinking === inv.id || cycleLocked}
+                      title={cycleLocked ? lockTitle : "移除发票"}
                       className="flex items-center gap-1 rounded-lg bg-muted px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                      title="移除发票"
                     >
                       {unlinking === inv.id ? <Spinner size={12} className="animate-spin" /> : <LinkBreak size={14} />}
                       移除
@@ -999,7 +1023,9 @@ function ReimbursementDetail({
             {isDraft && !showLinkPanel && (
               <button
                 onClick={() => { setShowLinkPanel(true); loadAvailableInvoices(); }}
-                className="mt-2 text-sm font-medium text-primary-600 hover:text-primary-700"
+                disabled={cycleLocked}
+                title={lockTitle}
+                className="mt-2 text-sm font-medium text-primary-600 hover:text-primary-700 disabled:opacity-50"
               >
                 添加发票
               </button>
@@ -1016,7 +1042,8 @@ function ReimbursementDetail({
                 {linkSelectedIds.size > 0 && (
                   <button
                     onClick={handleLinkInvoices}
-                    disabled={linking}
+                    disabled={linking || cycleLocked}
+                    title={cycleLocked ? lockTitle : ""}
                     className="flex items-center gap-1 rounded-lg bg-primary-700 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-800 disabled:opacity-50"
                   >
                     {linking ? <Spinner size={12} className="animate-spin" /> : <Check size={12} />}
@@ -1087,7 +1114,8 @@ function ReimbursementDetail({
           {isDraft && (
             <button
               onClick={() => attachmentInputRef.current?.click()}
-              disabled={uploadingAttachment}
+              disabled={uploadingAttachment || cycleLocked}
+              title={lockTitle}
               className="flex items-center gap-1 rounded-lg bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-100 disabled:opacity-50"
             >
               {uploadingAttachment ? <Spinner size={14} className="animate-spin" /> : <Plus size={14} />}
@@ -1136,9 +1164,9 @@ function ReimbursementDetail({
                   {isDraft && (
                     <button
                       onClick={() => handleDeleteAttachment(att.id)}
-                      disabled={deletingAttachment === att.id}
+                      disabled={deletingAttachment === att.id || cycleLocked}
+                      title={cycleLocked ? lockTitle : "删除"}
                       className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                      title="删除"
                     >
                       {deletingAttachment === att.id ? <Spinner size={14} className="animate-spin" /> : <Trash size={16} />}
                     </button>
@@ -1154,7 +1182,8 @@ function ReimbursementDetail({
             {isDraft && (
               <button
                 onClick={() => attachmentInputRef.current?.click()}
-                disabled={uploadingAttachment}
+                disabled={uploadingAttachment || cycleLocked}
+                title={lockTitle}
                 className="mt-2 text-sm font-medium text-primary-600 hover:text-primary-700 disabled:opacity-50"
               >
                 上传附件

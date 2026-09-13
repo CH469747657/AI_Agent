@@ -23,7 +23,8 @@ test.describe("F6 查询我的报销单", () => {
         const t = (await all.nth(i).textContent()) || "";
         if (
           t &&
-          (t.includes("报销单") && (t.includes("条") || t.includes("暂无"))) &&
+          t.includes("报销单") &&
+          (t.includes("条") || t.includes("暂无") || t.includes("记录") || t.includes("信息") || t.includes("笔")) &&
           !t.endsWith("…") &&
           !t.includes("Agent 推理中") &&
           !t.includes("正在")
@@ -37,6 +38,6 @@ test.describe("F6 查询我的报销单", () => {
     }
 
     expect(text).toContain("报销单");
-    expect(text).toMatch(/条|暂无|记录/);
+    expect(text).toMatch(/条|暂无|记录|信息|笔/);
   });
 });

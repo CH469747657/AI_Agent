@@ -433,6 +433,7 @@ function QuickReplyChips({
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: i * 0.05 }}
           onClick={() => onSelect(reply)}
+          data-quick-reply
           className="rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100 active:scale-95"
         >
           {reply}
@@ -672,6 +673,7 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
         fileType?: string;
         preview?: string;
         skipPending?: boolean;  // 内部调用时跳过批量分支，避免循环
+        skipUserMessage?: boolean;  // 内部调用时跳过追加 user message（避免与外层重复）
       }
     ) => {
       const content = (text ?? inputText).trim();
@@ -721,15 +723,18 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
         attachmentBase64 = await fileToBase64(attachFile);
       }
 
-      const userMsg: DialogMessage = {
-        id: genId(),
-        role: "user",
-        text: content || (attachFile ? "（发票附件）" : ""),
-        timestamp: Date.now(),
-        attachmentPreview: attachmentPreview || undefined,
-      };
+      // 跳过追加 user message（外层 batch 路径已显示过用户消息，避免重复）
+      if (!opts?.skipUserMessage) {
+        const userMsg: DialogMessage = {
+          id: genId(),
+          role: "user",
+          text: content || (attachFile ? "（发票附件）" : ""),
+          timestamp: Date.now(),
+          attachmentPreview: attachmentPreview || undefined,
+        };
 
-      setMessages((prev) => [...prev, userMsg]);
+        setMessages((prev) => [...prev, userMsg]);
+      }
       setInputText("");
       setSelectedFile(null);
       setFilePreview("");
@@ -925,15 +930,18 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
         const file = filesToUpload[i];
         const fileType = deriveFileType(file);
         const preview = previews[i] || "";
-        // 第一张已在 handleSend 中显示了用户文本消息，这里 caption 留空避免重复
-        const caption = "";
+        // 第一张已在 handleSend 外层追加了 user message（带 purpose + 预览），
+        // 这里 skipUserMessage 避免重复追加 "（发票附件）"
+        // 后续张才需要追加 "（发票附件）" 消息（默认行为）
+        const isFirst = i === 0;
         // 每张都传 purpose，后端 _handle_upload_invoice 用它做批量描述解析
         // skipPending=true 跳过 handleSend 的批量分支，避免循环调用
-        await handleSend(caption, file, {
+        await handleSend("", file, {
           fileType,
           preview,
           purpose: purpose || undefined,
           skipPending: true,
+          skipUserMessage: isFirst,  // 第一张外层已显示
         });
       }
     },

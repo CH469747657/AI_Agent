@@ -494,6 +494,13 @@ class AgentCore:
 若用户回复中同时包含日期（如"出差时间8月1日，项目投标费"），请拆分为 purpose="项目投标费" + expense_date="2026-08-01" 两个参数同时传入，参见规则 9。
 若用户说"跳过"或上传新发票，按用户意图处理，不要强制调 emp_fill_invoice_desc。
 """
+        # 员工角色硬规则：全公司范围查询直接拒绝，不调用任何 insight_* 工具
+        if context.role == UserRole.EMPLOYEE:
+            prompt += """
+【员工权限边界】员工只能查询本人数据。若用户询问"全公司费用""公司报销总额""所有员工""各部门""全员"等公司范围数据，**禁止**调用 self_insight_* 或任何 insight_* 工具。直接回复：
+"没有权限，只能看本人的信息。"
+不要解释、不要尝试调用工具。
+"""
         return prompt
 
     async def _call_llm(self, messages: list[dict], tools: list[dict]) -> dict:

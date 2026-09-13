@@ -27,6 +27,7 @@ class FeeCategory(str, enum.Enum):
 
 
 class InvoiceStatus(str, enum.Enum):
+    # value 与前端 type 定义一致（大写）；DB enum 是小写 — SQLAlchemy 默认用 .name（小写）写入 DB，能匹配
     uploaded = "UPLOADED"
     processing = "PROCESSING"
     reviewing = "REVIEWING"
@@ -35,6 +36,7 @@ class InvoiceStatus(str, enum.Enum):
 
 
 class VerifyStatus(str, enum.Enum):
+    # value 与 DB enum verifystatus（大写）一致 — 加 values_callable 让 SQLAlchemy 传 .value 而非 .name（小写）
     pending = "PENDING"
     valid = "VALID"
     invalid = "INVALID"
@@ -42,6 +44,7 @@ class VerifyStatus(str, enum.Enum):
 
 
 class DuplicateStatus(str, enum.Enum):
+    # value 与 DB enum duplicatestatus（大写）一致 — 加 values_callable
     pending = "PENDING"
     unique = "UNIQUE"
     duplicate = "DUPLICATE"
@@ -100,9 +103,16 @@ class Invoice(Base, TimestampMixin):
     classify_source: Mapped[str | None] = mapped_column(String(20), nullable=True, comment="分类来源 rule/llm/manual")
     classify_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    # 验真查重
-    verify_status: Mapped[VerifyStatus] = mapped_column(Enum(VerifyStatus), default=VerifyStatus.pending)
-    duplicate_status: Mapped[DuplicateStatus] = mapped_column(Enum(DuplicateStatus), default=DuplicateStatus.pending)
+    # 验真查重 — values_callable 让 SQLAlchemy 传 .value（大写）给 DB enum（大写）
+    # 不加 values_callable 时 SQLAlchemy 用 .name（小写 "pending"），DB enum 不接受
+    verify_status: Mapped[VerifyStatus] = mapped_column(
+        Enum(VerifyStatus, values_callable=lambda x: [e.value for e in x]),
+        default=VerifyStatus.pending,
+    )
+    duplicate_status: Mapped[DuplicateStatus] = mapped_column(
+        Enum(DuplicateStatus, values_callable=lambda x: [e.value for e in x]),
+        default=DuplicateStatus.pending,
+    )
     image_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True, comment="感知哈希值")
     verify_cross_check: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="验真返回票面与OCR/LLM的差异")
     verify_message: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="验真结果说明")

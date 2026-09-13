@@ -17,6 +17,12 @@ test.describe("F2 上传后无用途追问", () => {
     test.setTimeout(180_000);
     await loginAsEmployee(page, "EMP001", "123456");
     await page.goto("/portal/home");
+    await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => {});
+    // 重置对话，避免上次跑遗留消息污染
+    const resetBtn = page.locator('button:has-text("重置对话")');
+    await resetBtn.waitFor({ state: "visible", timeout: 10_000 }).catch(() => {});
+    await resetBtn.click().catch(() => {});
+    await page.waitForTimeout(1000);
 
     await page.setInputFiles('[data-testid="chat-file-input"]', FIXTURE);
     await expect(page.locator('[data-testid="chat-send"]')).toBeEnabled({ timeout: 5_000 });

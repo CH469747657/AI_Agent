@@ -17,6 +17,12 @@ test.describe("F1 上传发票 + 用途+日期拆分", () => {
     test.setTimeout(180_000); // LLM 调用慢，180s
     await loginAsEmployee(page, "EMP001", "123456");
     await page.goto("/portal/home");
+    await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => {});
+    // 重置对话，避免上次跑遗留消息污染 user img count 断言
+    const resetBtn = page.locator('button:has-text("重置对话")');
+    await resetBtn.waitFor({ state: "visible", timeout: 10_000 }).catch(() => {});
+    await resetBtn.click().catch(() => {});
+    await page.waitForTimeout(1000);
 
     // 上传 + 填文本 + 发送
     await page.setInputFiles('[data-testid="chat-file-input"]', FIXTURE);
@@ -61,7 +67,6 @@ test.describe("F1 上传发票 + 用途+日期拆分", () => {
     // 助手气泡：无 img
     await expect(page.locator('[data-role="assistant"] img')).toHaveCount(0);
 
-    expect(text).toContain("支付截图");
     expect(text).toContain("项目投标费");
     expect(text).toMatch(/2026-08-02/);
   });

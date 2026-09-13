@@ -626,6 +626,25 @@ class LlmNlu:
             NluResult 识别结果
         """
         role = context.role.value
+
+        # 硬规则：员工询问"全公司/公司全员"范围时直接拦截
+        # 避免 LLM 误识别为 self_insight_* 而绕过权限检查
+        if role == "employee":
+            _COMPANY_WIDE_KEYWORDS = (
+                "全公司", "公司全员", "公司所有", "公司全部",
+                "所有员工", "各部门", "全部门", "全员",
+                "全公司费用", "公司费用", "公司总额", "公司报销",
+            )
+            text_lower = text.lower()
+            if any(kw in text_lower for kw in _COMPANY_WIDE_KEYWORDS):
+                return NluResult(
+                    intent_name="emp_permission_denied",
+                    confidence=0.95,
+                    level=NluLevel.L1_KEYWORD,
+                    raw_text=text,
+                    extracted_slots={},
+                )
+
         # 解析当前任务对应的 model，用于缓存隔离（避免跨模型污染）
         model = self._resolve_model()
         # Step 2.2.3：缓存 key 加入 history_hash，避免相同文本在不同历史下命中错误结果

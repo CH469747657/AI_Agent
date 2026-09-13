@@ -125,6 +125,52 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
 
   const [togglingSubsidyDate, setTogglingSubsidyDate] = useState<string | null>(null);
   const [downloadingReportType, setDownloadingReportType] = useState<string | null>(null);
+  const [showUnlockDialog, setShowUnlockDialog] = useState(false);
+  const [unlockReason, setUnlockReason] = useState("");
+  const [unlocking, setUnlocking] = useState(false);
+  const [locking, setLocking] = useState(false);
+
+  const loadDetail = async () => {
+    if (!reimb) return;
+    try {
+      const updated = await reimbursementApi.detail(reimb.id);
+      setDetailReimb(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "加载失败");
+    }
+  };
+
+  const handleUnlock = async () => {
+    if (!reimb) return;
+    if (!unlockReason.trim()) return;
+    setUnlocking(true);
+    setError(null);
+    try {
+      await reimbursementApi.unlock(reimb.id, unlockReason.trim());
+      setShowUnlockDialog(false);
+      setUnlockReason("");
+      await loadDetail();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "解锁失败");
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
+  const handleLock = async () => {
+    if (!reimb) return;
+    if (!window.confirm("确认重新封账？")) return;
+    setLocking(true);
+    setError(null);
+    try {
+      await reimbursementApi.lock(reimb.id);
+      await loadDetail();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "封账失败");
+    } finally {
+      setLocking(false);
+    }
+  };
 
   const handleDownloadReport = async (fileType: string) => {
     if (!reimb) return;
@@ -299,7 +345,51 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
                 </div>
               </div>
             )}
+
+            {/* 解锁审计信息 */}
+            {reimb.unlocked_at && (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+                <p className="text-sm text-amber-800">
+                  🔓 已解锁 by <strong>{reimb.unlocked_by ?? "未知"}</strong> on {" "}
+                  {new Date(reimb.unlocked_at).toLocaleString("zh-CN")}
+                </p>
+                <p className="mt-1 text-sm text-amber-700">
+                  原因：{reimb.unlock_reason ?? "—"}
+                </p>
+              </div>
+            )}
           </motion.div>
+
+          {/* 管理员操作：解锁 / 重新封账 */}
+          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-background p-4">
+            {reimb.is_cycle_locked && (
+              <button
+                onClick={() => setShowUnlockDialog(true)}
+                className="flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-rose-700 disabled:opacity-50"
+              >
+                {unlocking ? (
+                  <Spinner size={16} className="animate-spin" />
+                ) : (
+                  <span>🔓</span>
+                )}
+                解锁报销单
+              </button>
+            )}
+            {!reimb.is_cycle_locked && reimb.unlocked_at && (
+              <button
+                onClick={handleLock}
+                disabled={locking}
+                className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {locking ? (
+                  <Spinner size={16} className="animate-spin" />
+                ) : (
+                  <span>🔒</span>
+                )}
+                重新封账
+              </button>
+            )}
+          </div>
 
           {/* 费用明细 */}
           {reimb.items && reimb.items.length > 0 && (
@@ -996,6 +1086,41 @@ export function ReimbursementDetail({ state }: { state: ReimbursementsPageState 
             )}
           </div>
         </>
+      )}
+      {showUnlockDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-background p-6 shadow-xl">
+            <h3 className="mb-4 font-display text-lg font-semibold text-foreground">
+              解锁报销单
+            </h3>
+            <textarea
+              value={unlockReason}
+              onChange={(e) => setUnlockReason(e.target.value)}
+              placeholder="请输入解锁原因（1-500 字）"
+              maxLength={500}
+              rows={3}
+              className="w-full rounded-xl border border-border bg-background p-3 text-sm text-foreground outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setShowUnlockDialog(false);
+                  setUnlockReason("");
+                }}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleUnlock}
+                disabled={!unlockReason.trim() || unlocking}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:opacity-50"
+              >
+                {unlocking ? "解锁中..." : "确认解锁"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       <DeleteConfirmModal
         target={deleteTarget}

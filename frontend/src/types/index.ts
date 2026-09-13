@@ -122,6 +122,9 @@ export interface Reimbursement {
   locked_at: string | null;
   submitted_at: string | null;
   confirmed_at: string | null;
+  unlocked_by: string | null;
+  unlocked_at: string | null;
+  unlock_reason: string | null;
   excel_path: string | null;
   pdf_path: string | null;
   zip_path: string | null;

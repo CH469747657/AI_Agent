@@ -276,6 +276,16 @@ export const reimbursementApi = {
       method: "PUT",
     }),
 
+  unlock: (id: number, reason: string) =>
+    request<Reimbursement>(`/reimbursements/${id}/unlock`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason }),
+    }),
+
+  lock: (id: number) =>
+    request<Reimbursement>(`/reimbursements/${id}/lock`, { method: "POST" }),
+
   // 节假日
   syncHolidays: (year: number) =>
     request<{ year: number; holidays_added: number; workdays_added: number; total: number }>(

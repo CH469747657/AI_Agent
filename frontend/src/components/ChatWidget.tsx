@@ -332,6 +332,7 @@ function MessageBubble({
       animate={{ opacity: 1, y: 0 }}
       transition={{ type: "spring", stiffness: 300, damping: 24 }}
       className={`flex gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}
+      data-role={isUser ? "user" : "assistant"}
     >
       {/* 头像 */}
       <div

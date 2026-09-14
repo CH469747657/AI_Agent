@@ -23,8 +23,8 @@ test.describe("员工 Portal 周期范围展示", () => {
     await page.goto("/portal/reimbursements", { waitUntil: "domcontentloaded" });
     await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => {});
 
-    // 2. 列表里至少一行有周期范围文字（实际渲染为 "2026-08-21 ~ 2026-09-20"）
-    const cycleRangeText = page.locator("text=2026-08-21 ~ 2026-09-20").first();
+    // 2. 列表里至少一行有周期范围文字（cycle_end_day=25 时本月周期 = 2026-08-26 ~ 2026-09-25）
+    const cycleRangeText = page.locator("text=2026-08-26 ~ 2026-09-25").first();
     await expect(cycleRangeText).toBeVisible({ timeout: 30_000 });
 
     // 3. 点进详情（如果有可点的报销单行）

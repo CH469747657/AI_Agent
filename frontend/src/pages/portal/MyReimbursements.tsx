@@ -239,6 +239,16 @@ export function PortalMyReimbursements() {
                         </button>
                       </div>
                     )}
+                    {r.status === "DRAFT" && !r.is_cycle_locked && (
+                      <button
+                        onClick={() => setDeleteTarget(r)}
+                        className="flex items-center gap-1 rounded-lg bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-100"
+                        title="删除报销单（仅草稿状态可删）"
+                      >
+                        <Trash size={14} />
+                        删除
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -603,6 +613,17 @@ function ReimbursementDetail({
             >
               <PencilSimple size={14} />
               编辑
+            </button>
+          )}
+          {isDraft && !editMode && !cycleLocked && (
+            <button
+              onClick={() => setDeleteTarget(true)}
+              disabled={deleting}
+              title="删除报销单（仅草稿状态可删）"
+              className="flex items-center gap-1 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+            >
+              <Trash size={14} />
+              删除
             </button>
           )}
           {isSubmitted && !editMode && (

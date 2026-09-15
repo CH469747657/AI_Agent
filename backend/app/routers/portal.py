@@ -481,6 +481,55 @@ async def delete_my_reimbursement(
     return {"message": f"报销单 #{reimbursement_id} 已删除", "deleted": True}
 
 
+# ===== 报表下载（员工仅自己的报销单） =====
+
+@router.post("/reimbursements/{reimbursement_id}/reports/generate")
+async def generate_my_reports(
+    reimbursement_id: int,
+    employee: Employee = Depends(get_current_employee_async),
+    db: AsyncSession = Depends(get_db),
+):
+    """生成报销单报表包（Excel + PDF + ZIP）— 员工仅自己的报销单"""
+    reimbursement = await svc.get_reimbursement_or_404(db, reimbursement_id)
+    if reimbursement.applicant_id != employee.employee_no:
+        raise HTTPException(status_code=403, detail="无权操作该报销单")
+    from app.services.report_generator import ReportGenerator
+    generator = ReportGenerator(db)
+    paths = await generator.generate_all(reimbursement_id)
+    return {"status": "ok", "files": paths}
+
+
+@router.get("/reimbursements/{reimbursement_id}/reports/download/{file_type}")
+async def download_my_report(
+    reimbursement_id: int,
+    file_type: str,  # xlsx / pdf / zip
+    employee: Employee = Depends(get_current_employee_async),
+    db: AsyncSession = Depends(get_db),
+):
+    """下载报表文件 — 员工仅自己的报销单"""
+    reimbursement = await svc.get_reimbursement_or_404(db, reimbursement_id)
+    if reimbursement.applicant_id != employee.employee_no:
+        raise HTTPException(status_code=403, detail="无权操作该报销单")
+
+    path_map = {
+        "xlsx": reimbursement.excel_path,
+        "pdf": reimbursement.pdf_path,
+        "zip": reimbursement.zip_path,
+    }
+    file_path = path_map.get(file_type)
+    if not file_path:
+        raise HTTPException(status_code=404, detail=f"{file_type} 文件尚未生成，请先点「生成报表」")
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="报表文件不存在，请重新生成")
+
+    return FileResponse(
+        file_path,
+        filename=f"reimbursement_{reimbursement_id}.{file_type}",
+        media_type="application/octet-stream",
+    )
+
+
 # ===== 个人信息 =====
 
 @router.get("/profile")

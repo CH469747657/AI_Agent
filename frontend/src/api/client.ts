@@ -659,6 +659,16 @@ export const portalApi = {
       { method: "DELETE" }
     ),
 
+  // 报表生成 + 下载（员工仅自己的报销单）
+  generateReports: (id: number) =>
+    portalRequest<{ status: string; files: { excel?: string; pdf?: string; zip?: string } }>(
+      `/reimbursements/${id}/reports/generate`,
+      { method: "POST" }
+    ),
+
+  downloadReportUrl: (id: number, fileType: "xlsx" | "pdf" | "zip") =>
+    `${PORTAL_BASE}/reimbursements/${id}/reports/download/${fileType}`,
+
   // 报销单附件
   uploadAttachment: async (
     reimbursementId: number,

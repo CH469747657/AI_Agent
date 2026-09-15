@@ -359,6 +359,11 @@ function ReimbursementDetail({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
+  // 报表下载相关
+  const [generatingReports, setGeneratingReports] = useState(false);
+  const [downloadingReport, setDownloadingReport] = useState<"xlsx" | "pdf" | "zip" | null>(null);
+  const [reportError, setReportError] = useState("");
+
   // 关联发票相关
   const [showLinkPanel, setShowLinkPanel] = useState(false);
   const [availableInvoices, setAvailableInvoices] = useState<Invoice[]>([]);
@@ -454,6 +459,50 @@ function ReimbursementDetail({
       setDeleteError(err instanceof Error ? err.message : "删除失败");
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleGenerateReports = async () => {
+    setGeneratingReports(true);
+    setReportError("");
+    try {
+      await portalApi.generateReports(reimbursementId);
+      // 刷新详情以更新 excel_path/pdf_path/zip_path
+      const updated = await portalApi.myReimbursementDetail(reimbursementId);
+      setDetail(updated);
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : "报表生成失败");
+    } finally {
+      setGeneratingReports(false);
+    }
+  };
+
+  const handleDownloadReport = async (fileType: "xlsx" | "pdf" | "zip") => {
+    setDownloadingReport(fileType);
+    setReportError("");
+    try {
+      const token = localStorage.getItem("portal_token");
+      const url = portalApi.downloadReportUrl(reimbursementId, fileType);
+      const resp = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => null);
+        throw new Error(data?.detail || `下载失败（HTTP ${resp.status}）`);
+      }
+      const blob = await resp.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = `reimbursement_${reimbursementId}.${fileType}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : "下载失败");
+    } finally {
+      setDownloadingReport(null);
     }
   };
 
@@ -809,6 +858,65 @@ function ReimbursementDetail({
               ¥{(detail.total_amount ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
             </p>
           </div>
+        </div>
+
+        {/* 报表下载 */}
+        <div className="mt-4 rounded-xl border border-border bg-muted/30 p-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <FileText size={16} className="text-primary-600" />
+              <span className="text-sm font-medium text-foreground">报销单报表</span>
+              <span className="text-xs text-muted-foreground">
+                （Excel 费用清单 / PDF 发票汇总 / ZIP 完整包）
+              </span>
+            </div>
+            <button
+              onClick={handleGenerateReports}
+              disabled={generatingReports}
+              className="flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground/70 transition-colors hover:bg-muted disabled:opacity-50"
+              title="生成或刷新报表包"
+            >
+              {generatingReports ? <Spinner size={14} className="animate-spin" /> : <Sparkle size={14} />}
+              生成报表
+            </button>
+          </div>
+          {reportError && (
+            <p className="mt-2 text-xs text-red-600">{reportError}</p>
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              onClick={() => handleDownloadReport("xlsx")}
+              disabled={!detail.excel_path || downloadingReport === "xlsx"}
+              title={detail.excel_path ? "下载 Excel 费用清单" : "尚未生成，请先点「生成报表」"}
+              className="flex items-center gap-1 rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {downloadingReport === "xlsx" ? <Spinner size={14} className="animate-spin" /> : <DownloadSimple size={14} />}
+              下载 Excel
+            </button>
+            <button
+              onClick={() => handleDownloadReport("pdf")}
+              disabled={!detail.pdf_path || downloadingReport === "pdf"}
+              title={detail.pdf_path ? "下载 PDF 发票汇总" : "尚未生成，请先点「生成报表」"}
+              className="flex items-center gap-1 rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 transition-colors hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {downloadingReport === "pdf" ? <Spinner size={14} className="animate-spin" /> : <DownloadSimple size={14} />}
+              下载 PDF
+            </button>
+            <button
+              onClick={() => handleDownloadReport("zip")}
+              disabled={!detail.zip_path || downloadingReport === "zip"}
+              title={detail.zip_path ? "下载 ZIP 完整包" : "尚未生成，请先点「生成报表」"}
+              className="flex items-center gap-1 rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {downloadingReport === "zip" ? <Spinner size={14} className="animate-spin" /> : <DownloadSimple size={14} />}
+              下载 ZIP
+            </button>
+          </div>
+          {!detail.excel_path && !detail.pdf_path && !detail.zip_path && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              尚未生成报表，请先点上方「生成报表」按钮
+            </p>
+          )}
         </div>
       </div>
 

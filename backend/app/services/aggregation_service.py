@@ -362,9 +362,8 @@ async def detach_invoice_from_cycle(
     await db.delete(item)
 
     # 解除发票关联
+    # 注意：不清空 expense_date / expense_date_source — 用户填的费用发生日期与报销单关联无关
     invoice.reimbursement_id = None
-    invoice.expense_date = None
-    invoice.expense_date_source = None
 
     # 获取报销单并重算
     result = await db.execute(

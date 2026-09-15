@@ -380,9 +380,8 @@ async def unlink_invoice(
     if not invoice:
         raise HTTPException(status_code=404, detail="发票未关联到此报销单")
 
+    # 解除关联（不清空 expense_date — 用户填的费用发生日期与报销单关联无关）
     invoice.reimbursement_id = None
-    invoice.expense_date = None
-    invoice.expense_date_source = None
 
     # 删除对应的明细行
     item_result = await db.execute(
@@ -793,13 +792,13 @@ async def delete_reimbursement(
     await assert_not_locked(reimbursement)
 
     # 解除关联发票
+    # 注意：不清空 expense_date / expense_date_source — 那是用户填的费用发生日期，
+    # 与报销单关联无关，删除报销单不应丢失用户已填的日期
     inv_result = await db.execute(
         select(Invoice).where(Invoice.reimbursement_id == reimbursement_id)
     )
     for inv in inv_result.scalars().all():
         inv.reimbursement_id = None
-        inv.expense_date = None
-        inv.expense_date_source = None
 
     # 删除附件
     att_result = await db.execute(

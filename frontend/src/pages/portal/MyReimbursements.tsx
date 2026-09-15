@@ -241,6 +241,17 @@ export function PortalMyReimbursements() {
                     )}
                     {r.status === "DRAFT" && !r.is_cycle_locked && (
                       <button
+                        onClick={() => handleSubmit(r.id)}
+                        disabled={submitting === r.id}
+                        className="flex items-center gap-1 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-700 disabled:opacity-50"
+                        title="提交报销单（提交后仍可撤回至草稿）"
+                      >
+                        {submitting === r.id ? <Spinner size={14} className="animate-spin" /> : <PaperPlaneRight size={14} />}
+                        提交
+                      </button>
+                    )}
+                    {r.status === "DRAFT" && !r.is_cycle_locked && (
+                      <button
                         onClick={() => setDeleteTarget(r)}
                         className="flex items-center gap-1 rounded-lg bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-100"
                         title="删除报销单（仅草稿状态可删）"
@@ -604,6 +615,17 @@ function ReimbursementDetail({
           返回列表
         </button>
         <div className="flex items-center gap-2">
+          {isDraft && !editMode && !cycleLocked && (
+            <button
+              onClick={handleSubmit}
+              disabled={submitting}
+              title="提交报销单（提交后仍可撤回至草稿）"
+              className="flex items-center gap-1 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-700 disabled:opacity-50"
+            >
+              {submitting ? <Spinner size={14} className="animate-spin" /> : <PaperPlaneRight size={14} />}
+              提交报销单
+            </button>
+          )}
           {isDraft && !editMode && (
             <button
               onClick={handleStartEdit}

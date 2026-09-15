@@ -323,41 +323,30 @@ function LlmTab() {
                 (用于发票 OCR 识别)
               </span>
             </label>
-            {currentModels.length > 0 ? (
-              <select
-                value={form.llm_model}
-                onChange={(e) =>
-                  setForm({ ...form, llm_model: e.target.value })
-                }
-                className="w-full rounded-lg border border-border bg-muted px-3 py-2.5 text-sm focus:border-primary-400 focus:bg-background"
-              >
-                {currentModels.filter(isVisionModel).map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-                {currentModels.filter((m) => !isVisionModel(m)).length > 0 && (
-                  <optgroup label="纯文本模型（不推荐用于OCR）">
-                    {currentModels
-                      .filter((m) => !isVisionModel(m))
-                      .map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                  </optgroup>
-                )}
-              </select>
-            ) : (
-              <input
-                value={form.llm_model}
-                onChange={(e) =>
-                  setForm({ ...form, llm_model: e.target.value })
-                }
-                placeholder="如 qwen3-vl-plus"
-                className="w-full rounded-lg border border-border bg-muted px-3 py-2.5 text-sm focus:border-primary-400 focus:bg-background"
-              />
-            )}
+            <input
+              value={form.llm_model}
+              onChange={(e) =>
+                setForm({ ...form, llm_model: e.target.value })
+              }
+              list="llm-model-options"
+              placeholder="如 qwen3-vl-plus 或 vlt_mm_31_vis"
+              className="w-full rounded-lg border border-border bg-muted px-3 py-2.5 text-sm font-mono focus:border-primary-400 focus:bg-background"
+            />
+            <datalist id="llm-model-options">
+              {currentModels.filter(isVisionModel).map((m) => (
+                <option key={m} value={m}>
+                  推荐
+                </option>
+              ))}
+              {currentModels.filter((m) => !isVisionModel(m)).map((m) => (
+                <option key={m} value={m}>
+                  纯文本（不推荐用于OCR）
+                </option>
+              ))}
+            </datalist>
+            <p className="text-xs text-muted-foreground">
+              直接输入模型名，或从下拉选项选；支持自定义网关私有模型（如 vlt_mm_31_vis）
+            </p>
           </div>
 
           <div className="space-y-1.5">
@@ -367,44 +356,32 @@ function LlmTab() {
                 (用于意图识别、项目提取)
               </span>
             </label>
-            {currentModels.length > 0 ? (
-              <select
-                value={form.llm_text_model}
-                onChange={(e) =>
-                  setForm({ ...form, llm_text_model: e.target.value })
-                }
-                className="w-full rounded-lg border border-border bg-muted px-3 py-2.5 text-sm focus:border-primary-400 focus:bg-background"
-              >
-                <option value="">自动推导（推荐）</option>
-                {currentModels
-                  .filter((m) => !isVisionModel(m))
-                  .map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                {currentModels.filter((m) => isVisionModel(m)).length > 0 && (
-                  <optgroup label="视觉模型（可用但较慢）">
-                    {currentModels
-                      .filter((m) => isVisionModel(m))
-                      .map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                  </optgroup>
-                )}
-              </select>
-            ) : (
-              <input
-                value={form.llm_text_model}
-                onChange={(e) =>
-                  setForm({ ...form, llm_text_model: e.target.value })
-                }
-                placeholder="留空则自动推导（如 qwen-plus）"
-                className="w-full rounded-lg border border-border bg-muted px-3 py-2.5 text-sm focus:border-primary-400 focus:bg-background"
-              />
-            )}
+            <input
+              value={form.llm_text_model}
+              onChange={(e) =>
+                setForm({ ...form, llm_text_model: e.target.value })
+              }
+              list="llm-text-model-options"
+              placeholder="留空则自动推导（如 qwen-plus）"
+              className="w-full rounded-lg border border-border bg-muted px-3 py-2.5 text-sm font-mono focus:border-primary-400 focus:bg-background"
+            />
+            <datalist id="llm-text-model-options">
+              <option value="">自动推导（推荐）</option>
+              {currentModels
+                .filter((m) => !isVisionModel(m))
+                .map((m) => (
+                  <option key={m} value={m}>
+                    纯文本，推荐
+                  </option>
+                ))}
+              {currentModels
+                .filter((m) => isVisionModel(m))
+                .map((m) => (
+                  <option key={m} value={m}>
+                    视觉，较慢
+                  </option>
+                ))}
+            </datalist>
             <p className="text-xs text-muted-foreground">
               留空时服务端会从视觉模型名自动推导：qwen3-vl-plus → qwen-plus
             </p>

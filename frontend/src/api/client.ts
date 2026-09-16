@@ -797,6 +797,10 @@ export const portalApi = {
   listTravelDays: (): Promise<TravelDay[]> =>
     portalRequest<TravelDay[]>("/travel-days"),
 
+  /** 读取发票验真开关状态（员工端只读，用于前端过滤可关联发票） */
+  getVerifyEnabled: (): Promise<{ verify_enabled: boolean }> =>
+    portalRequest<{ verify_enabled: boolean }>("/settings/verify-enabled"),
+
   createTravelDay: async (
     travel_date: string,
     note?: string

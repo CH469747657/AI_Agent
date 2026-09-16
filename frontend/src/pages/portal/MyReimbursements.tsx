@@ -373,6 +373,8 @@ function ReimbursementDetail({
   const [linkSelectedIds, setLinkSelectedIds] = useState<Set<number>>(new Set());
   const [linking, setLinking] = useState(false);
   const [unlinking, setUnlinking] = useState<number | null>(null);
+  // 发票验真开关（False 时放宽过滤：标准发票无需 verify_status=VALID 也可关联）
+  const [verifyEnabled, setVerifyEnabled] = useState(true);
 
   // 附件相关
   const attachmentInputRef = useRef<HTMLInputElement>(null);
@@ -511,17 +513,31 @@ function ReimbursementDetail({
 
   const loadAvailableInvoices = async () => {
     try {
+      // 先读验真开关状态（失败时默认 true，按严格规则过滤）
+      let verifyEnabledNow = true;
+      try {
+        const r = await portalApi.getVerifyEnabled();
+        verifyEnabledNow = r.verify_enabled;
+        setVerifyEnabled(verifyEnabledNow);
+      } catch {
+        // 接口不可用时保持原行为
+      }
       const all = await portalApi.myInvoices();
       // 可关联条件：
-      // - 标准发票：验真通过（VALID）+ 查重唯一 + 未关联其他报销单
+      // - 标准发票：
+      //   - 验真开关开启：verify_status=VALID（验真通过）+ 查重唯一 + 未关联其他报销单
+      //   - 验真开关关闭（账户欠费等场景）：放宽 verify_status 检查，全部非 processing 均可关联，
+      //     由管理员人工审核；与后端 _assert_invoice_linkable 规则一致
       // - 非标票据（支付截图/收据等）：已处理完成（非 processing）+ 查重唯一 + 未关联其他报销单
-      //   与归集任务规则一致：reviewing/reviewed 都允许关联，提交报销单时由管理员审核
+      //   与归集任务规则一致：reviewing/reviewed 都允许关联
       setAvailableInvoices(
         all.filter(
           (inv) =>
             (inv.is_nonstandard
               ? inv.status && inv.status !== "PROCESSING"
-              : inv.verify_status === "VALID") &&
+              : verifyEnabledNow
+                ? inv.verify_status === "VALID"
+                : inv.status && inv.status !== "PROCESSING") &&
             inv.duplicate_status === "UNIQUE" &&
             !inv.reimbursement_id
         )

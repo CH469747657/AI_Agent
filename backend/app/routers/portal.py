@@ -551,6 +551,27 @@ async def get_my_profile(
     }
 
 
+@router.get("/settings/verify-enabled")
+async def get_verify_enabled(
+    employee: Employee = Depends(get_current_employee_async),
+    db: AsyncSession = Depends(get_db),
+):
+    """读取发票验真开关状态（员工端只读，用于前端过滤可关联发票）
+
+    返回 {verify_enabled: bool}。开关关闭时（账户欠费等场景），员工端「添加发票」
+    面板放宽过滤：标准发票无需 verify_status=VALID 也可关联报销单，由管理员人工审核。
+    """
+    from app.models.settings import SystemSettings
+    row = (
+        await db.execute(select(SystemSettings).where(SystemSettings.id == 1))
+    ).scalar_one_or_none()
+    if row:
+        return {"verify_enabled": bool(row.verify_enabled)}
+    # 无配置行 → 用 .env 默认值（true）
+    from app.config import settings as _settings
+    return {"verify_enabled": bool(_settings.verify_enabled)}
+
+
 # ===== 统计概览 =====
 
 @router.get("/dashboard")

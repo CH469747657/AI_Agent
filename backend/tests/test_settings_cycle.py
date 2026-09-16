@@ -1,4 +1,4 @@
-"""周期 end_day 配置端点集成测试（用真实 DB）"""
+"""周期配置端点集成测试（简化版）"""
 
 import sys
 import os
@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy import select, update
+from sqlalchemy import update
 
 from app.main import app
 from app import database as db_module
@@ -26,12 +26,7 @@ def _reset_engine():
 
 @pytest.fixture(autouse=True)
 async def _reset_cycle_end_after_test():
-    """每个测试前后重置 system_settings.cycle_end_day + pending + transition_start + 失效缓存
-
-    防止 test_put_cycle_then_get 写入的 pending 残留到后续测试，
-    也防止历史脏数据导致首个测试失败。
-    """
-    # 测试开始前：清 engine 缓存拿新 session，把 DB 里的值改回 20，再清进程缓存
+    """每个测试前后重置 system_settings.cycle_end_day + next_cycle_end_day + 失效缓存"""
     db_module.get_engine.cache_clear()
     db_module.get_async_sessionmaker.cache_clear()
     session_factory = db_module.get_async_sessionmaker()
@@ -39,14 +34,13 @@ async def _reset_cycle_end_after_test():
         await session.execute(
             update(SystemSettings)
             .where(SystemSettings.id == 1)
-            .values(cycle_end_day=20, pending_cycle_end_day=None, cycle_transition_start=None)
+            .values(cycle_end_day=20, next_cycle_end_day=None)
         )
         await session.commit()
     cycle_end_service.invalidate_cache()
 
     yield
 
-    # 测试结束后：再次重置
     db_module.get_engine.cache_clear()
     db_module.get_async_sessionmaker.cache_clear()
     session_factory = db_module.get_async_sessionmaker()
@@ -54,7 +48,7 @@ async def _reset_cycle_end_after_test():
         await session.execute(
             update(SystemSettings)
             .where(SystemSettings.id == 1)
-            .values(cycle_end_day=20, pending_cycle_end_day=None, cycle_transition_start=None)
+            .values(cycle_end_day=20, next_cycle_end_day=None)
         )
         await session.commit()
     cycle_end_service.invalidate_cache()
@@ -74,56 +68,62 @@ async def test_get_cycle_default(admin_token):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         r = await ac.get("/api/settings/cycle", headers={"Authorization": f"Bearer {admin_token}"})
     assert r.status_code == 200
-    assert r.json()["cycle_end_day"] in (20, None)  # 20 默认或已配置值
-    assert r.json()["current_cycle_start"]
-    assert r.json()["current_cycle_end"]
-    assert r.json()["cycle_transition_start"] is None  # 无过渡周期
+    body = r.json()
+    assert body["cycle_end_day"] == 20  # fixture 重置
+    assert body["next_cycle_end_day"] is None  # 无下个周期配置
+    assert body["current_cycle_start"]
+    assert body["current_cycle_end"]
+    assert body["next_cycle_start"]  # 下个周期范围始终返回
+    assert body["next_cycle_end"]
 
 
 @pytest.mark.asyncio
 async def test_put_cycle_then_get(admin_token):
-    """PUT cycle_end_day=15 应写入 pending_cycle_end_day，cycle_end_day 不变，无 transition_start"""
+    """PUT next_cycle_end_day=15 应写入 next_cycle_end_day，cycle_end_day 不变"""
     headers = {"Authorization": f"Bearer {admin_token}"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.put("/api/settings/cycle", json={"cycle_end_day": 15}, headers=headers)
+        r = await ac.put("/api/settings/cycle", json={"next_cycle_end_day": 15}, headers=headers)
         assert r.status_code == 200
         body = r.json()
-        # cycle_end_day 不变（保持 20），pending_cycle_end_day 写入 15
+        # cycle_end_day 不变（保持 20），next_cycle_end_day 写入 15
         assert body["cycle_end_day"] == 20
-        assert body["pending_cycle_end_day"] == 15
-        # transition_start 不应在 PUT 时设置（封账任务触发时才设）
-        assert body["cycle_transition_start"] is None
+        assert body["next_cycle_end_day"] == 15
         assert body["current_cycle_start"]
         assert body["current_cycle_end"]
+        # 下个周期范围用 next_cycle_end_day=15 算
+        assert body["next_cycle_start"]
+        assert body["next_cycle_end"]
 
-        # GET 也返回 pending 值
+        # GET 也返回 next 值
         r = await ac.get("/api/settings/cycle", headers=headers)
         body = r.json()
         assert body["cycle_end_day"] == 20
-        assert body["pending_cycle_end_day"] == 15
-        assert body["cycle_transition_start"] is None
+        assert body["next_cycle_end_day"] == 15
         assert body["current_cycle_start"]
         assert body["current_cycle_end"]
 
 
 @pytest.mark.asyncio
-async def test_put_same_value_clears_pending(admin_token):
-    """PUT 与当前 cycle_end_day 相同值时，pending 应为 None（或保持 None）"""
+async def test_put_change_next_back_to_current(admin_token):
+    """改回原值场景：cycle_end_day=20，PUT 15，再 PUT 20 — 都应成功"""
     headers = {"Authorization": f"Bearer {admin_token}"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        # 当前 cycle_end_day=20（fixture 重置），PUT 20 应保持 pending=None
-        r = await ac.put("/api/settings/cycle", json={"cycle_end_day": 20}, headers=headers)
+        # 第一步：PUT 15
+        r = await ac.put("/api/settings/cycle", json={"next_cycle_end_day": 15}, headers=headers)
         assert r.status_code == 200
-        assert r.json()["cycle_end_day"] == 20
-        # pending 可以是 None 或 20（实现允许写入 pending=20，但通常实现会直接保存）
-        # 这里只检查不抛错
+        assert r.json()["next_cycle_end_day"] == 15
+
+        # 第二步：再 PUT 20（改回原值）
+        r = await ac.put("/api/settings/cycle", json={"next_cycle_end_day": 20}, headers=headers)
+        assert r.status_code == 200
+        assert r.json()["next_cycle_end_day"] == 20
 
 
 @pytest.mark.asyncio
 async def test_put_rejects_below_1(admin_token):
     headers = {"Authorization": f"Bearer {admin_token}"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.put("/api/settings/cycle", json={"cycle_end_day": 0}, headers=headers)
+        r = await ac.put("/api/settings/cycle", json={"next_cycle_end_day": 0}, headers=headers)
         assert r.status_code == 422
 
 
@@ -131,5 +131,5 @@ async def test_put_rejects_below_1(admin_token):
 async def test_put_rejects_above_31(admin_token):
     headers = {"Authorization": f"Bearer {admin_token}"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        r = await ac.put("/api/settings/cycle", json={"cycle_end_day": 32}, headers=headers)
+        r = await ac.put("/api/settings/cycle", json={"next_cycle_end_day": 32}, headers=headers)
         assert r.status_code == 422

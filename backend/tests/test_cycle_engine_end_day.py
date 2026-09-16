@@ -44,21 +44,44 @@ class TestBillingCycle:
         assert end == date(2024, 2, 29)
         assert start == date(2024, 2, 1)
 
-    def test_transition_start_overrides_formula_start(self):
-        """方案A：transition_start 覆盖公式起点，end 仍按 cycle_end_day 算
+    def test_start_override_for_short_cycle(self):
+        """简化方案：start_override 覆盖公式起点，用于下个周期短周期场景
 
-        例：cycle_end_day 25→21，9/26 封账后切换，transition_start=9/26
-        新周期 2026-10 应为 9/26~10/21（而非公式算的 9/22~10/21）
+        例：当前周期 9/25 结束，下个周期截止日设为 20
+        新周期 2026-10 应为 9/26~10/20（26 天短周期，而非公式算的 9/21~10/20）
         """
-        start, end = billing_cycle("2026-10", cycle_end_day=21, transition_start=date(2026, 9, 26))
-        assert start == date(2026, 9, 26)  # 过渡起点覆盖公式
-        assert end == date(2026, 10, 21)   # end 仍按 cycle_end_day 算
+        start, end = billing_cycle("2026-10", cycle_end_day=20, start_override=date(2026, 9, 26))
+        assert start == date(2026, 9, 26)  # 显式起点覆盖公式
+        assert end == date(2026, 10, 20)   # end 仍按 cycle_end_day 算
 
-    def test_transition_start_none_uses_formula(self):
-        """无 transition_start 时用公式（end+1day-1月）"""
+    def test_no_start_override_uses_formula(self):
+        """无 start_override 时用公式（end+1day-1月）"""
         start, end = billing_cycle("2026-10", cycle_end_day=21)
         assert start == date(2026, 9, 22)
         assert end == date(2026, 10, 21)
+
+
+class TestComputeNextCycleRange:
+    def test_short_cycle_25_to_20(self):
+        """当前周期 9/25 结束，下个截止日 20 → 9/26~10/20（26 天短周期）"""
+        from app.services.cycle_engine import compute_next_cycle_range
+        start, end = compute_next_cycle_range(date(2026, 9, 25), 20)
+        assert start == date(2026, 9, 26)
+        assert end == date(2026, 10, 20)
+
+    def test_normal_cycle_25_to_25(self):
+        """当前周期 9/25 结束，下个截止日 25 → 9/26~10/25（30 天正常周期）"""
+        from app.services.cycle_engine import compute_next_cycle_range
+        start, end = compute_next_cycle_range(date(2026, 9, 25), 25)
+        assert start == date(2026, 9, 26)
+        assert end == date(2026, 10, 25)
+
+    def test_long_cycle_20_to_25(self):
+        """当前周期 9/20 结束，下个截止日 25 → 9/21~10/25（35 天长周期）"""
+        from app.services.cycle_engine import compute_next_cycle_range
+        start, end = compute_next_cycle_range(date(2026, 9, 20), 25)
+        assert start == date(2026, 9, 21)
+        assert end == date(2026, 10, 25)
 
 
 class TestCycleKeyOf:

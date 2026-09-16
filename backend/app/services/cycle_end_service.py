@@ -1,12 +1,14 @@
-"""cycle_end_day + cycle_transition_start 配置的进程级缓存层
+"""cycle_end_day + next_cycle_end_day 配置的进程级缓存层
 
 避免每次 cycle_engine 调用都查 system_settings 表。
 管理员改完 cycle_end_day 后调 invalidate_cache() 让下次读时重新加载，
 同时触发 scheduler.reschedule_job 动态更新 cron trigger。
 
-方案A 过渡周期机制：
-- pending_cycle_end_day 切换后，下个周期用 cycle_transition_start 作起点
-- 该周期封账后清空 transition_start，后续周期恢复正常公式计算
+简化后的规则：
+- cycle_end_day: 当前周期截止日（1-31）
+- next_cycle_end_day: 下个周期截止日（可选，None 表示沿用 cycle_end_day）
+- 封账任务触发后：若 next_cycle_end_day 不为 None，切换 cycle_end_day = next_cycle_end_day，
+  next_cycle_end_day = None；新周期起点 = 上个周期截止的次日
 """
 
 import logging
@@ -20,8 +22,19 @@ from app.models.settings import SystemSettings
 
 logger = logging.getLogger(__name__)
 
-# 缓存：(cycle_end_day, transition_start) 或 None = 未加载
-_cache: Optional[Tuple[int, Optional[date]]] = None
+# 缓存：(cycle_end_day, next_cycle_end_day) 或 None = 未加载
+_cache: Optional[Tuple[int, Optional[int]]] = None
+
+
+async def _load(db: AsyncSession) -> Tuple[int, Optional[int]]:
+    row = (
+        await db.execute(
+            select(SystemSettings).where(SystemSettings.id == 1)
+        )
+    ).scalar_one_or_none()
+    if row:
+        return (row.cycle_end_day, row.next_cycle_end_day)
+    return (20, None)
 
 
 async def get_cycle_end_day(db: AsyncSession) -> int:
@@ -32,42 +45,26 @@ async def get_cycle_end_day(db: AsyncSession) -> int:
     """
     global _cache
     if _cache is None:
-        row = (
-            await db.execute(
-                select(SystemSettings).where(SystemSettings.id == 1)
-            )
-        ).scalar_one_or_none()
-        if row:
-            _cache = (row.cycle_end_day, row.cycle_transition_start)
-        else:
-            _cache = (20, None)
+        _cache = await _load(db)
     return _cache[0]
 
 
-async def get_cycle_transition_start(db: AsyncSession) -> Optional[date]:
-    """读取过渡周期起点（缓存层）
+async def get_next_cycle_end_day(db: AsyncSession) -> Optional[int]:
+    """读取下个周期截止日（缓存层）
 
     Returns:
-        cycle_transition_start（date）或 None（无过渡周期）
+        next_cycle_end_day（1-31）或 None（沿用 cycle_end_day）
     """
     global _cache
     if _cache is None:
-        row = (
-            await db.execute(
-                select(SystemSettings).where(SystemSettings.id == 1)
-            )
-        ).scalar_one_or_none()
-        if row:
-            _cache = (row.cycle_end_day, row.cycle_transition_start)
-        else:
-            _cache = (20, None)
+        _cache = await _load(db)
     return _cache[1]
 
 
 def invalidate_cache() -> None:
-    """让下次 get_cycle_end_day / get_cycle_transition_start 重新读库 + 触发 cron 重新注册
+    """让下次 get_cycle_end_day / get_next_cycle_end_day 重新读库 + 触发 cron 重新注册
 
-    管理员保存 cycle_end_day 后必须调用。
+    管理员保存 cycle_end_day / next_cycle_end_day 后必须调用。
     """
     global _cache
     _cache = None

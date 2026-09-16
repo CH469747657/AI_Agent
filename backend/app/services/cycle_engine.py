@@ -6,14 +6,14 @@ cycle_end_day 不存在时（如 2/29、2/30、2/31）取该月最后一日。
 设计依据：周期以结算月（结束月）为标识，上月 (cycle_end_day+1) 日到本月 cycle_end_day 日。
 默认 cycle_end_day=20 → 21-20 制（21 号属下月，20 号是本月最后一天）。
 
-方案A 过渡周期机制：
-- 当 pending_cycle_end_day 切换后，下个周期用 cycle_transition_start 作起点
-- 该周期封账后清空 transition_start，后续周期恢复正常公式计算
-- 消除 cycle_end_day 变更时的日期重叠/真空期
+简化后的规则：
+- 当前周期：cycle_end_day 决定（跨月，如 25 → 8/26~9/25）
+- 下个周期：可设 next_cycle_end_day 覆盖，起点 = 上个周期截止的次日（自动算）
+- 封账任务触发后：next_cycle_end_day 切换为 cycle_end_day 并清空
 """
 
 import calendar
-from datetime import date
+from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
 
 # 时区：遵循中国习惯 UTC+8
@@ -33,26 +33,28 @@ def _actual_end_day(year: int, month: int, cycle_end_day: int) -> int:
 def billing_cycle(
     cycle_key: str,
     cycle_end_day: int = 20,
-    transition_start: date | None = None,
+    *,
+    start_override: date | None = None,
 ) -> tuple[date, date]:
     """cycle_key(结束月YYYY-MM) → (周期起, 周期末)
 
     cycle_end_day 是本周期最后一天（含）。
-    transition_start 是过渡周期起点（仅 pending 切换后的下个周期用），覆盖公式起点。
+    start_override 是显式起点（仅当下个周期起点 ≠ 公式起点时传入），
+    例如：上个周期 9/25 结束，下个周期截止日设为 20 → 起点 9/26，终点 10/20（26 天短周期）。
 
     例：
       billing_cycle("2026-09") → (date(2026,8,21), date(2026,9,20))  # 默认 21-20 制
       billing_cycle("2026-09", cycle_end_day=25) → (date(2026,8,26), date(2026,9,25))
       billing_cycle("2026-09", cycle_end_day=1) → (date(2026,8,2), date(2026,9,1))
-      billing_cycle("2026-10", cycle_end_day=21, transition_start=date(2026,9,26)) → (date(2026,9,26), date(2026,10,21))  # 过渡周期
+      billing_cycle("2026-10", cycle_end_day=20, start_override=date(2026,9,26)) → (date(2026,9,26), date(2026,10,20))
     """
     y, m = map(int, cycle_key.split("-"))
     # 周期末 = 本月 cycle_end_day（如果该月没有这天，取月末）
     end_actual = _actual_end_day(y, m, cycle_end_day)
     end = date(y, m, end_actual)
-    if transition_start is not None:
-        # 过渡周期：起点用显式 transition_start，终点不变（仍按 cycle_end_day 算）
-        start = transition_start
+    if start_override is not None:
+        # 显式起点（下个周期用 next_cycle_end_day 时，起点 = 上个周期截止的次日）
+        start = start_override
     else:
         # 周期起 = end + 1 day - 1 month（用 relativedelta 安全处理跨月/2月）
         start = end + relativedelta(days=1) - relativedelta(months=1)
@@ -62,10 +64,11 @@ def billing_cycle(
 def cycle_display(
     cycle_key: str,
     cycle_end_day: int = 20,
-    transition_start: date | None = None,
+    *,
+    start_override: date | None = None,
 ) -> str:
     """cycle_key → 显示名，如「2026年8月21日–9月20日」"""
-    start, end = billing_cycle(cycle_key, cycle_end_day, transition_start=transition_start)
+    start, end = billing_cycle(cycle_key, cycle_end_day, start_override=start_override)
     if start.year == end.year:
         return f"{start.year}年{start.month}月{start.day}日–{end.month}月{end.day}日"
     return f"{start.year}年{start.month}月{start.day}日–{end.year}年{end.month}月{end.day}日"
@@ -110,7 +113,35 @@ def just_ended_cycle_key(on_date: date | None = None, cycle_end_day: int = 20) -
     用 cycle_key_of(on_date - 1) 算周期 cycle_key，正确处理跨月。
     """
     on_date = on_date or date.today()
-    from datetime import timedelta
     yesterday = on_date - timedelta(days=1)
     return cycle_key_of(yesterday, cycle_end_day=cycle_end_day)
+
+
+def compute_next_cycle_range(
+    current_end: date,
+    next_cycle_end_day: int,
+) -> tuple[date, date]:
+    """计算下个周期范围
+
+    起点 = current_end + 1 天（上个周期截止的次日）
+    终点 = 起点所属月份的下一个月，用 next_cycle_end_day 算
+
+    例：current_end=2026-09-25, next_cycle_end_day=20
+        → 起点 2026-09-26，终点 2026-10-20（26 天短周期）
+        current_end=2026-09-25, next_cycle_end_day=25
+        → 起点 2026-09-26，终点 2026-10-25（30 天正常周期）
+        current_end=2026-09-20, next_cycle_end_day=25
+        → 起点 2026-09-21，终点 2026-10-25（35 天长周期，起点 9 月，终点 10 月）
+    """
+    start = current_end + timedelta(days=1)
+    # 终点：起点所属月份的下一个月，用 next_cycle_end_day 算
+    end_year = start.year
+    end_month = start.month + 1
+    if end_month > 12:
+        end_month = 1
+        end_year += 1
+    end_actual = _actual_end_day(end_year, end_month, next_cycle_end_day)
+    end = date(end_year, end_month, end_actual)
+    return (start, end)
+
 

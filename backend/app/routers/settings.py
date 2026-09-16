@@ -348,50 +348,37 @@ async def update_verify_settings(
 # ── 周期 cutoff 配置 ──────────────────────────────────────────
 
 class CycleSettingsRead(BaseModel):
-    cycle_end_day: int
-    pending_cycle_end_day: int | None = None  # 下个周期起生效的值，None 表示无待生效变更
-    cycle_transition_start: str | None = None  # 过渡周期起点（YYYY-MM-DD），None 表示无过渡
+    cycle_end_day: int  # 当前周期截止日
+    next_cycle_end_day: int | None = None  # 下个周期截止日，None 表示沿用 cycle_end_day
     current_cycle_start: str  # YYYY-MM-DD
     current_cycle_end: str  # YYYY-MM-DD
-    # 下个周期实际范围（用 pending 值算；无 pending 时等于当前周期，便于前端展示）
-    next_cycle_start: str | None = None  # YYYY-MM-DD
-    next_cycle_end: str | None = None  # YYYY-MM-DD
+    # 下个周期实际范围（基于 next_cycle_end_day 算，None 时沿用 cycle_end_day）
+    next_cycle_start: str  # YYYY-MM-DD
+    next_cycle_end: str  # YYYY-MM-DD
 
 
 class CycleSettingsUpdate(BaseModel):
-    cycle_end_day: int = Field(ge=1, le=31, description="周期截止日 1-31（写入 pending_cycle_end_day，下个周期开始时生效）")
+    next_cycle_end_day: int = Field(ge=1, le=31, description="下个周期截止日 1-31（封账任务触发后切换为 cycle_end_day）")
 
 
 @router.get("/cycle", response_model=CycleSettingsRead)
 async def get_cycle_settings(db: AsyncSession = Depends(get_db)):
-    """读取周期配置 + 当前周期范围 + 待生效值 + 过渡周期起点 + 下个周期范围"""
-    from app.services.cycle_end_service import get_cycle_end_day, get_cycle_transition_start
-    from app.services.cycle_engine import current_cycle_key, billing_cycle, cycle_key_of
-    from datetime import date, timedelta
+    """读取周期配置 + 当前周期范围 + 下个周期截止日 + 下个周期范围"""
+    from app.services.cycle_end_service import get_cycle_end_day, get_next_cycle_end_day
+    from app.services.cycle_engine import current_cycle_key, billing_cycle, compute_next_cycle_range
 
     cycle_end_day = await get_cycle_end_day(db)
-    transition_start = await get_cycle_transition_start(db)
+    next_cycle_end_day = await get_next_cycle_end_day(db)
     ck = current_cycle_key(cycle_end_day=cycle_end_day)
-    start, end = billing_cycle(ck, cycle_end_day=cycle_end_day, transition_start=transition_start)
+    start, end = billing_cycle(ck, cycle_end_day=cycle_end_day)
 
-    row = (
-        await db.execute(select(SystemSettings).where(SystemSettings.id == 1))
-    ).scalar_one_or_none()
-    pending = row.pending_cycle_end_day if row else None
-
-    # 算下个周期范围：用 pending 值（如有），否则用当前 cycle_end_day
-    # 下个周期的 cycle_key = 当前周期 cycle_end_day + 1 天所属周期
-    next_end_day = pending if pending is not None else cycle_end_day
-    today = date.today()
-    # 下个周期起点 = 当前周期 end + 1 天
-    next_start_date = end + timedelta(days=1)
-    next_ck = cycle_key_of(next_start_date, cycle_end_day=next_end_day)
-    next_start, next_end = billing_cycle(next_ck, cycle_end_day=next_end_day)
+    # 下个周期范围：起点 = 当前周期 end + 1 天，终点 = 用 next_cycle_end_day 算（或沿用 cycle_end_day）
+    next_end_day = next_cycle_end_day if next_cycle_end_day is not None else cycle_end_day
+    next_start, next_end = compute_next_cycle_range(end, next_end_day)
 
     return CycleSettingsRead(
         cycle_end_day=cycle_end_day,
-        pending_cycle_end_day=pending,
-        cycle_transition_start=transition_start.isoformat() if transition_start else None,
+        next_cycle_end_day=next_cycle_end_day,
         current_cycle_start=start.isoformat(),
         current_cycle_end=end.isoformat(),
         next_cycle_start=next_start.isoformat(),
@@ -404,50 +391,41 @@ async def update_cycle_settings(
     data: CycleSettingsUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    """更新周期配置
+    """设置下个周期截止日
 
-    生效规则：写入 pending_cycle_end_day，下个周期开始时切换到 cycle_end_day。
-    当前周期不变（用旧 cycle_end_day 算）。
-    transition_start 由 _cycle_lock_job 封账切换 pending 时自动写入。
+    生效规则：写入 next_cycle_end_day，封账任务触发后切换为 cycle_end_day 并清空。
+    当前周期不变。
     """
-    from app.services.cycle_end_service import invalidate_cache, get_cycle_transition_start
-    from app.services.cycle_engine import current_cycle_key, billing_cycle, cycle_key_of
-    from datetime import date, timedelta
+    from app.services.cycle_end_service import invalidate_cache, get_cycle_end_day
+    from app.services.cycle_engine import current_cycle_key, billing_cycle, compute_next_cycle_range
 
     row = (
         await db.execute(select(SystemSettings).where(SystemSettings.id == 1))
     ).scalar_one_or_none()
     if row is None:
-        # 首次配置（无配置行）：无当前周期，直接生效
-        row = SystemSettings(id=1, cycle_end_day=data.cycle_end_day, pending_cycle_end_day=None)
+        # 首次配置：直接设 cycle_end_day=data.next_cycle_end_day（无当前周期）
+        row = SystemSettings(id=1, cycle_end_day=data.next_cycle_end_day, next_cycle_end_day=None)
         db.add(row)
     else:
-        # 不直接改 cycle_end_day（当前周期不变），写入 pending_cycle_end_day
-        # 下个周期开始时（封账任务触发后）切换到 cycle_end_day
-        row.pending_cycle_end_day = data.cycle_end_day
+        # 不改 cycle_end_day（当前周期不变），写入 next_cycle_end_day
+        row.next_cycle_end_day = data.next_cycle_end_day
 
     await db.commit()
     await db.refresh(row)
 
-    # 失效缓存（让 cycle_end_service 下次读 DB 拿 pending 值，但当前周期仍用旧 cycle_end_day）
     invalidate_cache()
 
-    # 返回当前周期（用旧 cycle_end_day 算，不变）+ pending 值（前端显示「下个周期生效」）+ transition_start（如有）
-    current_end_day = row.cycle_end_day
-    transition_start = await get_cycle_transition_start(db)
-    ck = current_cycle_key(cycle_end_day=current_end_day)
-    start, end = billing_cycle(ck, cycle_end_day=current_end_day, transition_start=transition_start)
+    # 返回当前周期（用 cycle_end_day 算）+ 下个周期范围（用 next_cycle_end_day 算）
+    cycle_end_day = await get_cycle_end_day(db)
+    ck = current_cycle_key(cycle_end_day=cycle_end_day)
+    start, end = billing_cycle(ck, cycle_end_day=cycle_end_day)
 
-    # 下个周期范围：用 pending 值算
-    next_end_day = row.pending_cycle_end_day if row.pending_cycle_end_day is not None else current_end_day
-    next_start_date = end + timedelta(days=1)
-    next_ck = cycle_key_of(next_start_date, cycle_end_day=next_end_day)
-    next_start, next_end = billing_cycle(next_ck, cycle_end_day=next_end_day)
+    next_end_day = row.next_cycle_end_day if row.next_cycle_end_day is not None else cycle_end_day
+    next_start, next_end = compute_next_cycle_range(end, next_end_day)
 
     return CycleSettingsRead(
-        cycle_end_day=current_end_day,
-        pending_cycle_end_day=row.pending_cycle_end_day,
-        cycle_transition_start=transition_start.isoformat() if transition_start else None,
+        cycle_end_day=cycle_end_day,
+        next_cycle_end_day=row.next_cycle_end_day,
         current_cycle_start=start.isoformat(),
         current_cycle_end=end.isoformat(),
         next_cycle_start=next_start.isoformat(),

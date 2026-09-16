@@ -1627,16 +1627,15 @@ class InsightEngine:
         """返回当前周期范围 (cycle_start, cycle_end) ISO 字符串
 
         洞察结果中若未关联具体报销单，或跨多个周期，用当前周期兜底。
-        读 DB 配置的 cycle_end_day + transition_start（管理员可改）而非默认 20。
+        读 DB 配置的 cycle_end_day（管理员可改）而非默认 20。
         """
         from datetime import date as _date
         from app.services.cycle_engine import current_cycle_key, billing_cycle
-        from app.services.cycle_end_service import get_cycle_end_day, get_cycle_transition_start
+        from app.services.cycle_end_service import get_cycle_end_day
         try:
             cycle_end_day = await get_cycle_end_day(db)
-            transition_start = await get_cycle_transition_start(db)
             ck = current_cycle_key(_date.today(), cycle_end_day=cycle_end_day)
-            start, end = billing_cycle(ck, cycle_end_day=cycle_end_day, transition_start=transition_start)
+            start, end = billing_cycle(ck, cycle_end_day=cycle_end_day)
             return start.isoformat(), end.isoformat()
         except Exception:
             return None, None

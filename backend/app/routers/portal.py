@@ -586,15 +586,14 @@ async def get_my_dashboard(
     """
     from datetime import datetime, time, timezone
     from app.services.cycle_engine import current_cycle_key, billing_cycle
-    from app.services.cycle_end_service import get_cycle_end_day, get_cycle_transition_start
+    from app.services.cycle_end_service import get_cycle_end_day
 
-    # 读 cycle_end_day + transition_start 配置，保证 cycle_engine 用最新配置而非默认 20
+    # 读 cycle_end_day 配置，保证 cycle_engine 用最新配置而非默认 20
     cycle_end_day = await get_cycle_end_day(db)
-    transition_start = await get_cycle_transition_start(db)
     # 当前报销周期：上月 (cycle_end_day+1) 日 ~ 本月 cycle_end_day 日
     today = datetime.utcnow().date()
     ck = current_cycle_key(today, cycle_end_day=cycle_end_day)
-    cycle_start, cycle_end = billing_cycle(ck, cycle_end_day=cycle_end_day, transition_start=transition_start)
+    cycle_start, cycle_end = billing_cycle(ck, cycle_end_day=cycle_end_day)
     # 转为带时区的 datetime 边界（UTC），与 Invoice.created_at (timestamptz) 对齐
     start_dt = datetime.combine(cycle_start, time.min, tzinfo=timezone.utc)
     end_dt = datetime.combine(cycle_end, time.max, tzinfo=timezone.utc)

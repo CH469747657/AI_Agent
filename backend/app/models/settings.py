@@ -49,22 +49,11 @@ class SystemSettings(TimestampMixin, Base):
                 "cycle_end_day 不存在时取该月最后一日。"
     )
 
-    # 下个周期起生效的 cycle_end_day（管理员修改时写入，下个周期开始时切换到 cycle_end_day）
-    # 设计原则：修改的永远是下个周期的截止日，当前周期不变。
-    # 切换时机：每月 (cycle_end_day + 1) 0:00 封账后，由 _cycle_lock_job 检查并应用。
-    pending_cycle_end_day: Mapped[int | None] = mapped_column(
+    # 下个周期截止日（1-31）。管理员可设，下个周期开始时（封账任务触发后）切换为 cycle_end_day。
+    # 设计原则：一次只设一个下个周期。下个周期起点 = 上个周期截止的次日（自动算）。
+    # 例：当前 cycle_end_day=25（8/26~9/25），设 next_cycle_end_day=20 → 下个周期 9/26~10/20（26 天短周期）。
+    # 封账后 cycle_end_day=20，next_cycle_end_day=None，后续周期按公式算。
+    next_cycle_end_day: Mapped[int | None] = mapped_column(
         Integer, default=None, nullable=True,
-        comment="下个周期起生效的 cycle_end_day（管理员修改时写入，下个周期开始时切换）"
-    )
-
-    # 过渡周期起点（仅用于 pending 切换后的下个周期）
-    # 设计原则：方案A 消除周期切换时的日期重叠/真空期。
-    # 切换 cycle_end_day 后的下个周期用此日期作为起点，而非公式（end+1day-1月）。
-    # 例：cycle_end_day 25→21，9/26 0:00 封账后切换 → transition_start=9/26，新周期 9/26~10/21（26 天短周期）。
-    # 该周期封账后清空 transition_start，后续周期恢复正常公式计算。
-    cycle_transition_start: Mapped[None] = mapped_column(
-        Date, default=None, nullable=True,
-        comment="过渡周期起点（仅 pending 切换后的下个周期用）。"
-                "例：pending 25→21，9/26 封账后切换，transition_start=9/26，新周期 9/26~10/21。"
-                "该周期封账后清空 transition_start，后续周期恢复正常公式"
+        comment="下个周期截止日（仅下个周期用，封账后切换到 cycle_end_day 并清空）"
     )

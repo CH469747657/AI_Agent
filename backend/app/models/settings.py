@@ -1,6 +1,6 @@
 """系统设置模型 — 单行配置表（id=1）"""
 
-from sqlalchemy import String, Integer, Date
+from sqlalchemy import String, Integer, Date, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import TimestampMixin
@@ -25,6 +25,13 @@ class SystemSettings(TimestampMixin, Base):
     verify_secret_key: Mapped[str] = mapped_column(String(256), default="")
     aliyun_verify_appcode: Mapped[str] = mapped_column(String(256), default="")
     aliyun_verify_appsecret: Mapped[str] = mapped_column(String(256), default="")
+
+    # 是否开启发票验真功能（True=开启，发票必须验真通过才能归集；False=关闭，忽略验真状态）
+    # 场景：验真账户欠费时关闭，发票可正常上传归集，由管理员人工审核
+    verify_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True,
+        comment="是否开启发票验真（True=开启，发票必须验真通过才能归集；False=关闭，忽略验真状态）"
+    )
 
     # 管理员密码哈希（改密后写入此字段；为空时回退到 .env 的 ADMIN_PASSWORD_HASH）
     admin_password_hash: Mapped[str] = mapped_column(String(256), default="")

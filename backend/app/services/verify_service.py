@@ -86,12 +86,17 @@ class VerifyService:
 
         # 整体 enabled: 主通道可用即为 true
         if self.provider == "aliyun":
-            self.enabled = self.aliyun_enabled
+            self.provider_enabled = self.aliyun_enabled
         elif self.provider == "baidu":
-            self.enabled = self.baidu_enabled
+            self.provider_enabled = self.baidu_enabled
         else:
             # 未知 provider，尝试任一通道
-            self.enabled = self.aliyun_enabled or self.baidu_enabled
+            self.provider_enabled = self.aliyun_enabled or self.baidu_enabled
+
+    @property
+    def enabled(self) -> bool:
+        """实时读取 settings.verify_enabled — 管理员关闭开关后立即生效，无需重建单例"""
+        return bool(settings.verify_enabled) and self.provider_enabled
 
     # ------------------------------------------------------------------
     # 公共入口：自动分发到对应验真通道

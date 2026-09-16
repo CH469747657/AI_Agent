@@ -90,11 +90,15 @@ def _apply_settings_to_config(row: SystemSettings) -> None:
 
 
 async def load_settings_from_db(db: AsyncSession) -> None:
-    """启动时从数据库加载配置覆写到运行时 settings"""
+    """启动时从数据库加载配置覆写到运行时 settings（LLM + 验真 + verify_enabled 开关）"""
     row = (await db.execute(select(SystemSettings).where(SystemSettings.id == 1))).scalar_one_or_none()
     if row:
         _apply_settings_to_config(row)
-        logger.info("Loaded LLM settings from DB on startup")
+        _apply_verify_settings_to_config(row)
+        logger.info(
+            "Loaded LLM + verify settings from DB on startup (verify_enabled=%s)",
+            row.verify_enabled,
+        )
     else:
         logger.info("No system_settings row in DB, using .env defaults")
 
@@ -235,6 +239,7 @@ class VerifySettingsRead(BaseModel):
     verify_secret_key: str  # 掩码后返回
     aliyun_verify_appcode: str  # 掩码后返回
     aliyun_verify_appsecret: str  # 掩码后返回
+    verify_enabled: bool  # 是否开启发票验真（开关）
 
 
 class VerifySettingsUpdate(BaseModel):
@@ -243,6 +248,7 @@ class VerifySettingsUpdate(BaseModel):
     verify_secret_key: str | None = None
     aliyun_verify_appcode: str | None = None
     aliyun_verify_appsecret: str | None = None
+    verify_enabled: bool | None = None
 
 
 def _apply_verify_settings_to_config(row: SystemSettings) -> None:
@@ -257,6 +263,8 @@ def _apply_verify_settings_to_config(row: SystemSettings) -> None:
         settings.aliyun_verify_appcode = row.aliyun_verify_appcode
     if row.aliyun_verify_appsecret and row.aliyun_verify_appsecret != settings.aliyun_verify_appsecret:
         settings.aliyun_verify_appsecret = row.aliyun_verify_appsecret
+    # verify_enabled 始终覆写（bool 允许 False，需区别于「未配置」语义）
+    settings.verify_enabled = bool(row.verify_enabled)
 
 
 @router.get("/verify", response_model=VerifySettingsRead)
@@ -271,6 +279,7 @@ async def get_verify_settings(db: AsyncSession = Depends(get_db)):
             verify_secret_key=_mask_api_key(row.verify_secret_key),
             aliyun_verify_appcode=_mask_api_key(row.aliyun_verify_appcode),
             aliyun_verify_appsecret=_mask_api_key(row.aliyun_verify_appsecret),
+            verify_enabled=row.verify_enabled,
         )
     else:
         # 数据库无记录 → 返回 .env 默认值
@@ -280,6 +289,7 @@ async def get_verify_settings(db: AsyncSession = Depends(get_db)):
             verify_secret_key=_mask_api_key(settings.verify_secret_key),
             aliyun_verify_appcode=_mask_api_key(settings.aliyun_verify_appcode),
             aliyun_verify_appsecret=_mask_api_key(settings.aliyun_verify_appsecret),
+            verify_enabled=settings.verify_enabled,
         )
 
 
@@ -300,6 +310,7 @@ async def update_verify_settings(
             verify_secret_key=data.verify_secret_key or settings.verify_secret_key,
             aliyun_verify_appcode=data.aliyun_verify_appcode or settings.aliyun_verify_appcode,
             aliyun_verify_appsecret=data.aliyun_verify_appsecret or settings.aliyun_verify_appsecret,
+            verify_enabled=data.verify_enabled if data.verify_enabled is not None else settings.verify_enabled,
         )
         db.add(row)
     else:
@@ -314,6 +325,9 @@ async def update_verify_settings(
             row.aliyun_verify_appcode = data.aliyun_verify_appcode
         if data.aliyun_verify_appsecret is not None:
             row.aliyun_verify_appsecret = data.aliyun_verify_appsecret
+        # verify_enabled 允许 False，需用 is not None 判断
+        if data.verify_enabled is not None:
+            row.verify_enabled = data.verify_enabled
 
     await db.commit()
     await db.refresh(row)
@@ -327,6 +341,7 @@ async def update_verify_settings(
         verify_secret_key=_mask_api_key(row.verify_secret_key),
         aliyun_verify_appcode=_mask_api_key(row.aliyun_verify_appcode),
         aliyun_verify_appsecret=_mask_api_key(row.aliyun_verify_appsecret),
+        verify_enabled=row.verify_enabled,
     )
 
 

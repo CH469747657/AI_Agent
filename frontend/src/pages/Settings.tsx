@@ -495,6 +495,7 @@ function VerifyTab() {
     verify_secret_key: "",
     aliyun_verify_appcode: "",
     aliyun_verify_appsecret: "",
+    verify_enabled: true,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -508,7 +509,8 @@ function VerifyTab() {
       form.verify_api_key !== saved.verify_api_key ||
       form.verify_secret_key !== saved.verify_secret_key ||
       form.aliyun_verify_appcode !== saved.aliyun_verify_appcode ||
-      form.aliyun_verify_appsecret !== saved.aliyun_verify_appsecret);
+      form.aliyun_verify_appsecret !== saved.aliyun_verify_appsecret ||
+      form.verify_enabled !== saved.verify_enabled);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -544,6 +546,8 @@ function VerifyTab() {
         payload.aliyun_verify_appcode = form.aliyun_verify_appcode;
       if (form.aliyun_verify_appsecret !== saved?.aliyun_verify_appsecret)
         payload.aliyun_verify_appsecret = form.aliyun_verify_appsecret;
+      if (form.verify_enabled !== saved?.verify_enabled)
+        payload.verify_enabled = form.verify_enabled;
 
       if (Object.keys(payload).length === 0) {
         setSaveMsg("配置未变化，无需保存");
@@ -601,6 +605,38 @@ function VerifyTab() {
         </div>
 
         <div className="space-y-5 max-w-2xl">
+          {/* 是否开启发票验真 开关 */}
+          <div className="rounded-xl border border-border bg-muted/40 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <label className="text-sm font-semibold text-foreground">
+                  是否开启发票验真
+                </label>
+                <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                  <b>开启</b>：发票必须验真通过才能归集到报销单（默认行为，符合财务合规）。<br />
+                  <b>关闭</b>：忽略验真状态，发票可正常上传并归集到报销单，由管理员人工审核。
+                  适用场景：验真账户欠费、API 暂时不可用时，避免影响员工正常报销流程。
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={form.verify_enabled}
+                onClick={() => setForm({ ...form, verify_enabled: !form.verify_enabled })}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors ${
+                  form.verify_enabled ? "bg-primary-600" : "bg-border"
+                }`}
+                title={form.verify_enabled ? "当前开启，点击关闭" : "当前关闭，点击开启"}
+              >
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-background shadow transition-transform ${
+                    form.verify_enabled ? "translate-x-5" : "translate-x-0.5"
+                  } mt-0.5`}
+                />
+              </button>
+            </div>
+          </div>
+
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-foreground">
               验真服务商

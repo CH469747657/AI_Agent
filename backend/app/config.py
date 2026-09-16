@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     verify_secret_key: str = os.getenv("VERIFY_SECRET_KEY", "")  # 百度 AI 的 Secret Key (SK)
     aliyun_verify_appcode: str = os.getenv("ALIYUN_VERIFY_APPCODE", "")    # 阿里云云市场 AppCode
     aliyun_verify_appsecret: str = os.getenv("ALIYUN_VERIFY_APPSECRET", "")  # 阿里云云市场 AppSecret
+    # 是否开启发票验真（开关，可热更新；False 时跳过验真调用，发票可正常归集）
+    verify_enabled: bool = os.getenv("VERIFY_ENABLED", "true").lower() in ("true", "1", "yes")
 
     # JWT 配置
     jwt_secret: str = os.getenv("JWT_SECRET", "")

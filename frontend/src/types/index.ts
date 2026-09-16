@@ -441,4 +441,6 @@ export interface VerifySettings {
   verify_secret_key: string;
   aliyun_verify_appcode: string;
   aliyun_verify_appsecret: string;
+  /** 是否开启发票验真（开关，False 时跳过验真，发票可正常归集） */
+  verify_enabled: boolean;
 }

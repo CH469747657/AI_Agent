@@ -97,12 +97,15 @@ async def assert_not_locked(reimbursement: Reimbursement) -> None:
 def _assert_invoice_linkable(inv: Invoice) -> None:
     """校验发票是否可关联到报销单
 
-    标准发票：验真通过 + 查重唯一
+    标准发票：验真通过（开关开启时）+ 查重唯一
     非标票据：已处理完成（非 processing）+ 查重唯一
     通用约束：未关联其他报销单
 
-    说明：非标票据（支付截图、收据等）无法在线验真，reviewing/reviewed 都允许关联，
-    与归集任务（aggregate_pending_invoices）规则一致；报销单提交时由管理员审核拦截。
+    说明：
+    - 非标票据（支付截图、收据等）无法在线验真，reviewing/reviewed 都允许关联，
+      与归集任务（aggregate_pending_invoices）规则一致；报销单提交时由管理员审核拦截。
+    - verify_enabled=False（管理员关闭验真开关）时跳过标准发票的验真状态检查，
+      场景：验真账户欠费无法调用 API，发票可正常归集报销，由管理员人工审核。
     """
     if inv.reimbursement_id is not None:
         raise HTTPException(
@@ -123,12 +126,14 @@ def _assert_invoice_linkable(inv: Invoice) -> None:
                 detail=f"非标票据 #{inv.id} 查重状态为「{inv.duplicate_status.value if inv.duplicate_status else '未知'}」，仅查重唯一的票据可关联报销单。",
             )
     else:
-        # 标准发票：验真通过 + 查重唯一
-        if inv.verify_status != VerifyStatus.valid:
-            raise HTTPException(
-                status_code=400,
-                detail=f"发票 #{inv.id} 验真状态为「{inv.verify_status.value if inv.verify_status else '未知'}」，仅验真通过的发票可关联报销单。",
-            )
+        # 标准发票：验真通过（开关开启时）+ 查重唯一
+        from app.config import settings as _settings
+        if _settings.verify_enabled:
+            if inv.verify_status != VerifyStatus.valid:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"发票 #{inv.id} 验真状态为「{inv.verify_status.value if inv.verify_status else '未知'}」，仅验真通过的发票可关联报销单。",
+                )
         if inv.duplicate_status != DuplicateStatus.unique:
             raise HTTPException(
                 status_code=400,

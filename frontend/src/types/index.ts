@@ -286,6 +286,10 @@ export interface DialogMessage {
   /** Insight 结果附带的周期范围 */
   cycleStart?: string;
   cycleEnd?: string;
+  /** 标记「正在思考」的临时消息（流式响应未完成时为 true，完成/出错后替换） */
+  isThinking?: boolean;
+  /** 流式响应中断（连接断开/超时），需要用户重试 */
+  stale?: boolean;
 }
 
 export interface BatchInvoiceSummary {

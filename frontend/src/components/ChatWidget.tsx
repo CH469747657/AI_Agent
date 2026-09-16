@@ -317,9 +317,11 @@ function BatchSummaryCard({
 function MessageBubble({
   msg,
   onUndo,
+  onRetry,
 }: {
   msg: DialogMessage;
   onUndo?: (invoiceId: number) => void;
+  onRetry?: () => void;
 }) {
   const isUser = msg.role === "user";
   const isSystem = msg.role === "system";
@@ -432,6 +434,16 @@ function MessageBubble({
             <ArrowCounterClockwise size={12} weight="bold" />
             撤销上传
           </motion.button>
+        )}
+        {/* 流式响应中断提示 + 重试按钮 */}
+        {!isUser && msg.stale && onRetry && (
+          <button
+            onClick={onRetry}
+            className="mt-1 inline-flex items-center gap-1 rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200 transition-colors hover:bg-amber-100"
+          >
+            <ArrowCounterClockwise size={12} weight="bold" />
+            响应中断，点击重试
+          </button>
         )}
         {/* 操作标记 + 时间 */}
         <div className={`mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground`}>
@@ -601,7 +613,12 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
     try {
       const saved = sessionStorage.getItem(storageKey);
       if (saved) {
-        setMessages(JSON.parse(saved));
+        const parsed: DialogMessage[] = JSON.parse(saved);
+        // 把上次未完成的 thinking 消息标记为 stale（流被中断），引导用户重试
+        const recovered = parsed.map((m) =>
+          m.isThinking ? { ...m, isThinking: false, stale: true, text: m.text || "（连接中断，请重新发送）" } : m
+        );
+        setMessages(recovered);
       } else {
         setMessages([createWelcomeMessage(role, displayName)]);
       }
@@ -620,6 +637,40 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
       // sessionStorage 满了就跳过
     }
   }, [messages, storageKey]);
+
+  // 检测停滞的 thinking message（>60 秒未完成）→ 标记 stale，引导用户重试
+  // 处理场景：移动端切 App / 锁屏导致流连接断开，onDone/onError 都没回调
+  useEffect(() => {
+    const thinkingMsg = messages.find((m) => m.isThinking);
+    if (!thinkingMsg) return;
+    const elapsed = Date.now() - thinkingMsg.timestamp;
+    const remaining = 60_000 - elapsed;  // 60 秒超时
+    if (remaining <= 0) {
+      // 已超时，立即标记
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === thinkingMsg.id
+            ? { ...m, isThinking: false, stale: true, text: m.text || "（响应超时，请重新发送）" }
+            : m
+        )
+      );
+      setIsTyping(false);
+      isTypingRef.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === thinkingMsg.id
+            ? { ...m, isThinking: false, stale: true, text: m.text || "（响应超时，请重新发送）" }
+            : m
+        )
+      );
+      setIsTyping(false);
+      isTypingRef.current = false;
+    }, remaining);
+    return () => clearTimeout(timer);
+  }, [messages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -789,12 +840,14 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
       setIsTyping(true);
 
       // 临时"思考"消息占位，后续流式替换为最终响应
+      // 标记 isThinking: true，组件重新挂载时若发现仍 isThinking 的消息，说明流被中断
       const thinkingId = genId();
       const thinkingMsg: DialogMessage = {
         id: thinkingId,
         role: "assistant",
         text: "正在思考…",
         timestamp: Date.now(),
+        isThinking: true,
       };
       setMessages((prev) => [...prev, thinkingMsg]);
 
@@ -1130,8 +1183,35 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
               ref={messagesContainerRef}
               className="min-h-0 flex-1 space-y-2.5 overflow-y-auto bg-muted px-2.5 py-3 sm:space-y-3 sm:px-4 sm:py-4"
             >
-              {messages.map((msg) => (
-                <MessageBubble key={msg.id} msg={msg} onUndo={handleUndo} />
+              {messages.map((msg, idx) => (
+                <MessageBubble
+                  key={msg.id}
+                  msg={msg}
+                  onUndo={handleUndo}
+                  onRetry={
+                    msg.stale
+                      ? () => {
+                          // 找到 stale 消息之前的最近一条 user 消息，作为重试内容
+                          // 跳过 stale 消息本身（role=assistant），从 idx-1 往前找
+                          let retryText = "";
+                          let retryFile: File | null = null;
+                          for (let i = idx - 1; i >= 0; i--) {
+                            const m = messages[i];
+                            if (m.role === "user") {
+                              retryText = m.text;
+                              break;
+                            }
+                          }
+                          // 清理 stale 标记 + 移除该消息
+                          setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+                          // 重新发送（若有文本）
+                          if (retryText) {
+                            handleSend(retryText, retryFile);
+                          }
+                        }
+                      : undefined
+                  }
+                />
               ))}
 
               {/* 打字指示器 */}

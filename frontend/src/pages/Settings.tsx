@@ -984,6 +984,13 @@ function CycleTab() {
             onClick={handleSaveCycle}
             disabled={saving || !isDirty}
             className="flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:opacity-50"
+            title={
+              !isDirty
+                ? (savedEndDay === cycleEndDay
+                    ? "当前周期已使用此值，无需修改"
+                    : "请输入与当前值不同的截止日")
+                : "保存配置"
+            }
           >
             {saving ? (
               <Spinner size={16} className="animate-spin" />
@@ -992,6 +999,19 @@ function CycleTab() {
             )}
             {saving ? "保存中..." : "保存配置"}
           </button>
+
+          {/* 当输入值与当前值相同时提示，避免用户疑惑「为何按钮变灰」 */}
+          {!isDirty && savedEndDay === cycleEndDay && pendingEndDay === null && (
+            <span className="text-xs text-muted-foreground">
+              当前周期已是 {cycleEndDay} 日，无需修改
+            </span>
+          )}
+          {/* pending 已等于输入值时提示已设置 */}
+          {!isDirty && pendingEndDay === cycleEndDay && pendingEndDay !== null && (
+            <span className="text-xs text-amber-600">
+              已设置下个周期截止日为 {pendingEndDay}，下个周期开始时生效
+            </span>
+          )}
 
           <AnimatePresence>
             {saveMsg && (

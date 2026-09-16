@@ -373,6 +373,10 @@ class ActionExecutor:
             invoice.expense_date = parsed_date
             invoice.expense_date_source = "note"  # 用户口述的日期
             date_updated = True
+        # 重新分类：用户改了用途描述，分类应跟随更新（如"住宿费"→"差旅"，
+        # 改成"快递费"后应重新分为"快递物流费"）
+        from app.services.invoice_service import reclassify_by_description
+        await reclassify_by_description(invoice, purpose_text)
         await db.commit()
 
         # 清除待处理标记

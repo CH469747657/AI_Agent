@@ -469,6 +469,9 @@ async def update_invoice(
         if parsed_date:
             invoice.expense_date = parsed_date
             invoice.expense_date_source = "note"
+        # 用户改了用途描述，重新分类（"住宿费"→"差旅" 改成"快递费"时应重分为"快递物流费"）
+        from app.services.invoice_service import reclassify_by_description
+        await reclassify_by_description(invoice, invoice.user_description)
 
     await db.commit()
     await db.refresh(invoice)

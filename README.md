@@ -95,7 +95,7 @@ WECOM_ENCODING_AES_KEY=...
 
 报销周期默认按 21-20 制（每月 21 日到次月 20 日，20 号是本月最后一天）。管理员可在系统设置页面修改 cycle_end_day（1-31），该日为本周期最后一天（含）。cycle_end_day 不存在时取该月最后一日。
 
-修改后从下个完整周期生效，当前周期内不动。定时任务会动态更新 cron trigger，无需重启后端。
+**下个周期生效机制**：修改时写入 `pending_cycle_end_day` 字段，**当前周期不变**。封账任务触发后（每月 cycle_end_day+1 日 00:00），自动切换 `cycle_end_day` 为 pending 值、清空 pending、失效缓存、重新调度 cron。新周期立即按新配置算 cycle_key 和周期范围。
 
 例：
 - cycle_end_day=20（默认）→ 每月 21 日到次月 20 日（21-20 制）

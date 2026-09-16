@@ -798,6 +798,7 @@ function VerifyTab() {
 function CycleTab() {
   const [cycleEndDay, setCycleEndDay] = useState(20);
   const [savedEndDay, setSavedEndDay] = useState<number | null>(null);
+  const [pendingEndDay, setPendingEndDay] = useState<number | null>(null);
   const [currentCycleStart, setCurrentCycleStart] = useState<string | null>(null);
   const [currentCycleEnd, setCurrentCycleEnd] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -814,6 +815,7 @@ function CycleTab() {
       const r = await settingsApi.cycle.get();
       setCycleEndDay(r.cycle_end_day);
       setSavedEndDay(r.cycle_end_day);
+      setPendingEndDay(r.pending_cycle_end_day);
       setCurrentCycleStart(r.current_cycle_start);
       setCurrentCycleEnd(r.current_cycle_end);
     } catch (e) {
@@ -837,11 +839,18 @@ function CycleTab() {
     setError(null);
     try {
       const r = await settingsApi.cycle.update(cycleEndDay);
-      setSavedEndDay(r.cycle_end_day);
+      // PUT 后端不修改 cycle_end_day（当前周期不变），只更新 pending_cycle_end_day
+      // 所以前端 cycle_end_day 回到旧的 savedEndDay，UI 显示 pending 值
       setCycleEndDay(r.cycle_end_day);
+      setSavedEndDay(r.cycle_end_day);
+      setPendingEndDay(r.pending_cycle_end_day);
       setCurrentCycleStart(r.current_cycle_start);
       setCurrentCycleEnd(r.current_cycle_end);
-      setSaveMsg("保存成功，下个完整周期生效");
+      setSaveMsg(
+        r.pending_cycle_end_day !== null
+          ? `已设置下个周期截止日为 ${r.pending_cycle_end_day}，下个周期开始时生效`
+          : "保存成功"
+      );
       setTimeout(() => setSaveMsg(null), 5000);
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存失败");
@@ -903,8 +912,19 @@ function CycleTab() {
                 当前周期：{currentCycleStart} ~ {currentCycleEnd}
               </p>
             )}
+            {pendingEndDay !== null && (
+              <div className="mt-2 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                <span className="mt-0.5">⏳</span>
+                <span>
+                  下个周期生效：{pendingEndDay}
+                  <span className="ml-2 text-xs text-amber-600">
+                    （当前周期仍按 {cycleEndDay} 计算，下个周期切换到 {pendingEndDay}）
+                  </span>
+                </span>
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">
-              截止日不存在时取该月最后一日。例：20 = 上月 21 日到本月 20 日（含 20 日当天）。修改后下个完整周期生效。
+              截止日不存在时取该月最后一日。例：20 = 上月 21 日到本月 20 日（含 20 日当天）。修改后写入「下个周期待生效值」，下个周期开始时（封账任务触发后）自动切换。
             </p>
           </div>
         </div>
@@ -954,7 +974,7 @@ function CycleTab() {
           </li>
           <li className="flex items-start gap-2">
             <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-            修改截止日仅影响后续生成的周期，当前周期不变
+            修改截止日写入「下个周期待生效值」，当前周期不变。封账任务触发后切换到新值
           </li>
         </ul>
       </div>

@@ -58,8 +58,48 @@ async def _cycle_lock_job() -> None:
             agg_reimb_ids = agg_result.get("reimb_ids", []) if agg_result else []
             if agg_reimb_ids:
                 await _generate_reports_for_ids(db, agg_reimb_ids)
+
+            # 5. 应用 pending_cycle_end_day（下个周期生效机制）
+            # 封账刚结束的周期已锁定，下个周期开始；此时切换 cycle_end_day
+            # 让新周期立即按新配置算，同时 reschedule_job 用新值
+            await _apply_pending_cycle_end_day(db)
     except Exception:
         logger.exception("Cycle lock job failed")
+
+
+async def _apply_pending_cycle_end_day(db) -> None:
+    """若 pending_cycle_end_day 不为 None 且 ≠ 当前 cycle_end_day，切换 + 重新调度 cron
+
+    设计原则：管理员修改的是下个周期的截止日。封账刚完成的时刻切到新值，
+    新周期立即按新配置算 cycle_key 和周期范围。
+    """
+    from app.models.settings import SystemSettings
+    from sqlalchemy import select
+    from app.services.cycle_end_service import invalidate_cache
+
+    row = (
+        await db.execute(select(SystemSettings).where(SystemSettings.id == 1))
+    ).scalar_one_or_none()
+    if not row:
+        return
+
+    pending = row.pending_cycle_end_day
+    if pending is None or pending == row.cycle_end_day:
+        return  # 无待生效值或与当前一致
+
+    old = row.cycle_end_day
+    row.cycle_end_day = pending
+    row.pending_cycle_end_day = None
+    await db.commit()
+    invalidate_cache()  # 失效 cycle_end_service 缓存
+    logger.info(
+        f"Cycle end_day switched: {old} → {pending} (pending cleared, next cycle uses new value)"
+    )
+    # 触发 cron 重新调度（用新 cycle_end_day 算 day=next）
+    try:
+        reschedule_cycle_lock_job()
+    except Exception as e:
+        logger.warning(f"reschedule_cycle_lock_job failed after pending apply: {e}")
 
 
 async def _generate_reports_for_ids(db, reimb_ids: list[int]) -> None:

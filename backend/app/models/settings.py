@@ -41,3 +41,11 @@ class SystemSettings(TimestampMixin, Base):
                 "例：cycle_end_day=25 → 8/26~9/25；cycle_end_day=20 → 7/21~8/20（默认 21-20 制）。"
                 "cycle_end_day 不存在时取该月最后一日。"
     )
+
+    # 下个周期起生效的 cycle_end_day（管理员修改时写入，下个周期开始时切换到 cycle_end_day）
+    # 设计原则：修改的永远是下个周期的截止日，当前周期不变。
+    # 切换时机：每月 (cycle_end_day + 1) 0:00 封账后，由 _cycle_lock_job 检查并应用。
+    pending_cycle_end_day: Mapped[int | None] = mapped_column(
+        Integer, default=None, nullable=True,
+        comment="下个周期起生效的 cycle_end_day（管理员修改时写入，下个周期开始时切换）"
+    )

@@ -334,25 +334,33 @@ async def update_verify_settings(
 
 class CycleSettingsRead(BaseModel):
     cycle_end_day: int
-    current_cycle_start: str  # 新字段，YYYY-MM-DD
-    current_cycle_end: str  # 新字段，YYYY-MM-DD
+    pending_cycle_end_day: int | None = None  # 下个周期起生效的值，None 表示无待生效变更
+    current_cycle_start: str  # YYYY-MM-DD
+    current_cycle_end: str  # YYYY-MM-DD
 
 
 class CycleSettingsUpdate(BaseModel):
-    cycle_end_day: int = Field(ge=1, le=31, description="周期截止日 1-31")
+    cycle_end_day: int = Field(ge=1, le=31, description="周期截止日 1-31（写入 pending_cycle_end_day，下个周期开始时生效）")
 
 
 @router.get("/cycle", response_model=CycleSettingsRead)
 async def get_cycle_settings(db: AsyncSession = Depends(get_db)):
-    """读取周期配置 + 当前周期范围"""
+    """读取周期配置 + 当前周期范围 + 待生效值"""
     from app.services.cycle_end_service import get_cycle_end_day
     from app.services.cycle_engine import current_cycle_key, billing_cycle
 
     cycle_end_day = await get_cycle_end_day(db)
     ck = current_cycle_key(cycle_end_day=cycle_end_day)
     start, end = billing_cycle(ck, cycle_end_day=cycle_end_day)
+
+    row = (
+        await db.execute(select(SystemSettings).where(SystemSettings.id == 1))
+    ).scalar_one_or_none()
+    pending = row.pending_cycle_end_day if row else None
+
     return CycleSettingsRead(
         cycle_end_day=cycle_end_day,
+        pending_cycle_end_day=pending,
         current_cycle_start=start.isoformat(),
         current_cycle_end=end.isoformat(),
     )
@@ -365,7 +373,8 @@ async def update_cycle_settings(
 ):
     """更新周期配置
 
-    生效规则：当前周期不动，下个完整周期生效。
+    生效规则：写入 pending_cycle_end_day，下个周期开始时切换到 cycle_end_day。
+    当前周期不变（用旧 cycle_end_day 算）。
     """
     from app.services.cycle_end_service import invalidate_cache
     from app.services.cycle_engine import current_cycle_key, billing_cycle
@@ -374,21 +383,27 @@ async def update_cycle_settings(
         await db.execute(select(SystemSettings).where(SystemSettings.id == 1))
     ).scalar_one_or_none()
     if row is None:
-        row = SystemSettings(id=1, cycle_end_day=data.cycle_end_day)
+        # 首次配置（无配置行）：无当前周期，直接生效
+        row = SystemSettings(id=1, cycle_end_day=data.cycle_end_day, pending_cycle_end_day=None)
         db.add(row)
     else:
-        row.cycle_end_day = data.cycle_end_day
+        # 不直接改 cycle_end_day（当前周期不变），写入 pending_cycle_end_day
+        # 下个周期开始时（封账任务触发后）切换到 cycle_end_day
+        row.pending_cycle_end_day = data.cycle_end_day
 
     await db.commit()
     await db.refresh(row)
 
-    # 失效缓存 + 触发 reschedule_job
+    # 失效缓存（让 cycle_end_service 下次读 DB 拿 pending 值，但当前周期仍用旧 cycle_end_day）
     invalidate_cache()
 
-    ck = current_cycle_key(cycle_end_day=data.cycle_end_day)
-    start, end = billing_cycle(ck, cycle_end_day=data.cycle_end_day)
+    # 返回当前周期（用旧 cycle_end_day 算，不变）+ pending 值（前端显示「下个周期生效」）
+    current_end_day = row.cycle_end_day
+    ck = current_cycle_key(cycle_end_day=current_end_day)
+    start, end = billing_cycle(ck, cycle_end_day=current_end_day)
     return CycleSettingsRead(
-        cycle_end_day=row.cycle_end_day,
+        cycle_end_day=current_end_day,
+        pending_cycle_end_day=row.pending_cycle_end_day,
         current_cycle_start=start.isoformat(),
         current_cycle_end=end.isoformat(),
     )

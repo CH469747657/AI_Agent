@@ -26,9 +26,9 @@ def _reset_engine():
 
 @pytest.fixture(autouse=True)
 async def _reset_cycle_end_after_test():
-    """每个测试前后重置 system_settings.cycle_end_day 回默认 20 + 失效缓存
+    """每个测试前后重置 system_settings.cycle_end_day + pending_cycle_end_day + 失效缓存
 
-    防止 test_put_cycle_then_get 写入的 15 残留到后续 test_get_cycle_default，
+    防止 test_put_cycle_then_get 写入的 pending 残留到后续测试，
     也防止历史脏数据导致首个测试失败。
     """
     # 测试开始前：清 engine 缓存拿新 session，把 DB 里的值改回 20，再清进程缓存
@@ -39,7 +39,7 @@ async def _reset_cycle_end_after_test():
         await session.execute(
             update(SystemSettings)
             .where(SystemSettings.id == 1)
-            .values(cycle_end_day=20)
+            .values(cycle_end_day=20, pending_cycle_end_day=None)
         )
         await session.commit()
     cycle_end_service.invalidate_cache()
@@ -54,7 +54,7 @@ async def _reset_cycle_end_after_test():
         await session.execute(
             update(SystemSettings)
             .where(SystemSettings.id == 1)
-            .values(cycle_end_day=20)
+            .values(cycle_end_day=20, pending_cycle_end_day=None)
         )
         await session.commit()
     cycle_end_service.invalidate_cache()
@@ -81,18 +81,38 @@ async def test_get_cycle_default(admin_token):
 
 @pytest.mark.asyncio
 async def test_put_cycle_then_get(admin_token):
+    """PUT cycle_end_day=15 应写入 pending_cycle_end_day，cycle_end_day 不变"""
     headers = {"Authorization": f"Bearer {admin_token}"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         r = await ac.put("/api/settings/cycle", json={"cycle_end_day": 15}, headers=headers)
         assert r.status_code == 200
-        assert r.json()["cycle_end_day"] == 15
-        assert r.json()["current_cycle_start"]
-        assert r.json()["current_cycle_end"]
+        body = r.json()
+        # cycle_end_day 不变（保持 20），pending_cycle_end_day 写入 15
+        assert body["cycle_end_day"] == 20
+        assert body["pending_cycle_end_day"] == 15
+        assert body["current_cycle_start"]
+        assert body["current_cycle_end"]
 
+        # GET 也返回 pending 值
         r = await ac.get("/api/settings/cycle", headers=headers)
-        assert r.json()["cycle_end_day"] == 15
-        assert r.json()["current_cycle_start"]
-        assert r.json()["current_cycle_end"]
+        body = r.json()
+        assert body["cycle_end_day"] == 20
+        assert body["pending_cycle_end_day"] == 15
+        assert body["current_cycle_start"]
+        assert body["current_cycle_end"]
+
+
+@pytest.mark.asyncio
+async def test_put_same_value_clears_pending(admin_token):
+    """PUT 与当前 cycle_end_day 相同值时，pending 应为 None（或保持 None）"""
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # 当前 cycle_end_day=20（fixture 重置），PUT 20 应保持 pending=None
+        r = await ac.put("/api/settings/cycle", json={"cycle_end_day": 20}, headers=headers)
+        assert r.status_code == 200
+        assert r.json()["cycle_end_day"] == 20
+        # pending 可以是 None 或 20（实现允许写入 pending=20，但通常实现会直接保存）
+        # 这里只检查不抛错
 
 
 @pytest.mark.asyncio

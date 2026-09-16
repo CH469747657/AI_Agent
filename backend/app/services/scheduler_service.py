@@ -25,9 +25,9 @@ PURPOSE_TIMEOUT_SECONDS = 300  # 5 分钟
 async def _cycle_lock_job() -> None:
     """定时归集 + 封账 + 自动生成报表任务
 
-    每月 cycle_end_day 日 00:00 执行：
+    每月 (cycle_end_day + 1) 日 00:00 执行（次日触发，让员工能用满周期最后一天）：
     1. 归集所有游离发票到对应周期报销单
-    2. 封账刚结束的周期（自动提交 DRAFT）
+    2. 封账刚结束的周期（用昨日所属周期 cycle_key）
     3. 对已封账的报销单自动生成报表三件套（Excel + PDF + ZIP）
     """
     from app.database import get_async_sessionmaker
@@ -236,12 +236,13 @@ def start_scheduler() -> AsyncIOScheduler:
     finally:
         engine.dispose()
 
-    # 每月 cycle_end_day 日 00:00（北京时间）归集游离发票 + 封账上一周期 + 自动生成报表
-    # 容器时区为 UTC，必须显式指定 Asia/Shanghai，否则按 UTC 0 点 = 北京 8 点触发
-    from pytz import timezone as tz
+    # 每月 (cycle_end_day + 1) 日 00:00（北京时间）归集游离发票 + 封账刚结束的周期 + 自动生成报表
+    # 次日触发：让员工能用满 cycle_end_day 当天（如 9/25 全天上传/提交，9/26 0:00 才封账）
+    # 跨月处理：cycle_end_day=31 时次日为下月 1 日，day=1 仍然能正确触发
+    next_day = initial_cycle_end_day % 31 + 1  # 25→26, 30→31, 31→1（次月）
     _scheduler.add_job(
         _cycle_lock_job,
-        trigger=CronTrigger(day=initial_cycle_end_day, hour=0, minute=0, timezone=tz("Asia/Shanghai")),
+        trigger=CronTrigger(day=next_day, hour=0, minute=0, timezone=tz("Asia/Shanghai")),
         id="cycle_lock_job",
         name="归集+封账+报表",
         replace_existing=True,
@@ -294,11 +295,13 @@ def reschedule_cycle_lock_job() -> None:
     finally:
         engine.dispose()
 
+    # 次日触发：cycle_end_day=25 → cron 在 26 日 0:00 触发；31 → 1（次月）
+    next_day = cycle_end_day % 31 + 1
     _scheduler.reschedule_job(
         "cycle_lock_job",
         trigger=CronTrigger(
-            day=cycle_end_day, hour=0, minute=0,
+            day=next_day, hour=0, minute=0,
             timezone=tz("Asia/Shanghai"),
         ),
     )
-    logger.info(f"Cycle lock job rescheduled to day={cycle_end_day}")
+    logger.info(f"Cycle lock job rescheduled to day={next_day} (cycle_end_day={cycle_end_day}, 次日触发让员工能用满周期最后一天)")

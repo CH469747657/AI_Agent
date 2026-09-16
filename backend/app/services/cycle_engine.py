@@ -81,11 +81,15 @@ def current_cycle_key(today: date | None = None, cycle_end_day: int = 20) -> str
 
 
 def just_ended_cycle_key(on_date: date | None = None, cycle_end_day: int = 20) -> str:
-    """封账任务用：cycle_end_day 当天执行，刚结束的周期 cycle_key
+    """封账任务用：cycle_end_day 次日 00:00 执行，刚结束的周期 cycle_key
 
-    cycle_end_day=20 时 9月20日执行 → 锁定 cycle_key="2026-09"（8/21–9/20）
-    cycle_end_day=25 时 9月25日执行 → 锁定 cycle_key="2026-09"（8/26–9/25）
+    cycle_end_day=20 时 9月21日 00:00 执行 → 锁定 cycle_key="2026-09"（8/21–9/20）
+    cycle_end_day=25 时 9月26日 00:00 执行 → 锁定 cycle_key="2026-09"（8/26–9/25）
+
+    实现说明：on_date 是触发日期（次日 0:00），刚结束的周期最后一天 = on_date - 1。
+    用 cycle_key_of(on_date - 1) 算周期 cycle_key，正确处理跨月。
     """
     on_date = on_date or date.today()
-    # cycle_end_day 当天执行，刚结束的周期 = 本月 cycle_key
-    return on_date.strftime("%Y-%m")
+    from datetime import timedelta
+    yesterday = on_date - timedelta(days=1)
+    return cycle_key_of(yesterday, cycle_end_day=cycle_end_day)

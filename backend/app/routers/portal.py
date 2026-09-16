@@ -7,6 +7,7 @@
 import logging
 import os
 import json
+import asyncio
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, Form
 from sqlalchemy import select, func
@@ -692,47 +693,70 @@ async def portal_stream_message(
     if attachment_data and req.attachment_file_type:
         attachment_data["file_type"] = req.attachment_file_type
 
-    progress_queue: list[dict] = []
+    progress_queue: asyncio.Queue = asyncio.Queue()
 
     async def on_progress(text: str) -> None:
-        progress_queue.append({"text": text})
+        await progress_queue.put({"phase": "progress", "text": text})
 
     async def event_gen():
+        # 真流式：process_message 跑在后台 task，进度事件实时 put 到 queue，
+        # event_gen 并发消费 queue 立即 yield 给客户端
+        # （旧实现是「假流式」：await process_message 阻塞完成后才一次性 yield 所有进度）
+        task = asyncio.create_task(engine.process_message(
+            user_id=employee.employee_no,
+            text=req.text,
+            role=UserRole.EMPLOYEE,
+            has_attachment=req.has_attachment,
+            attachment_data=attachment_data,
+            receipt_type=req.receipt_type,
+            user_description=req.user_description,
+            no_receipt_amount=req.no_receipt_amount,
+            on_progress=on_progress,
+        ))
         try:
-            response = await engine.process_message(
-                user_id=employee.employee_no,   # 强制覆盖
-                text=req.text,
-                role=UserRole.EMPLOYEE,         # 强制覆盖
-                has_attachment=req.has_attachment,
-                attachment_data=attachment_data,
-                receipt_type=req.receipt_type,
-                user_description=req.user_description,
-                no_receipt_amount=req.no_receipt_amount,
-                on_progress=on_progress,
-            )
-            for ev in progress_queue:
-                yield f"data: {json.dumps({'phase': 'progress', 'text': ev['text']}, ensure_ascii=False)}\n\n"
+            while True:
+                if task.done():
+                    # process_message 完成 — 先消费完队列里残留的进度事件
+                    while not progress_queue.empty():
+                        ev = progress_queue.get_nowait()
+                        yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+                    # 检查是否抛异常
+                    response = task.result()
+                    # 构造最终响应
+                    action_data: Optional[dict] = None
+                    if isinstance(response.action_result, dict):
+                        dd = response.action_result.get("data")
+                        if dd:
+                            action_data = dd
 
-            action_data: Optional[dict] = None
-            if isinstance(response.action_result, dict):
-                d = response.action_result.get("data")
-                if d:
-                    action_data = d
-
-            final = DialogAPIResponse(
-                text=response.text,
-                state=response.state.value,
-                intent=response.intent_name,
-                action_taken=response.action_taken,
-                need_user_input=response.need_user_input,
-                quick_replies=response.quick_replies,
-                error=response.error,
-                data=action_data,
-            )
-            yield f"data: {json.dumps({'phase': 'done', 'response': final.model_dump()}, ensure_ascii=False)}\n\n"
+                    final = DialogAPIResponse(
+                        text=response.text,
+                        state=response.state.value,
+                        intent=response.intent_name,
+                        action_taken=response.action_taken,
+                        need_user_input=response.need_user_input,
+                        quick_replies=response.quick_replies,
+                        error=response.error,
+                        data=action_data,
+                    )
+                    yield f"data: {json.dumps({'phase': 'done', 'response': final.model_dump()}, ensure_ascii=False)}\n\n"
+                    return
+                # task 还没完成：等 queue 事件，短超时让上面的 task.done() 能被检查到
+                try:
+                    ev = await asyncio.wait_for(progress_queue.get(), timeout=0.1)
+                    yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+                except asyncio.TimeoutError:
+                    continue
         except Exception as e:
             logger.exception("Portal SSE stream error: %s", e)
             yield f"data: {json.dumps({'phase': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+        finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
     return StreamingResponse(
         event_gen(),

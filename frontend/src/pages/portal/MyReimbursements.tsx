@@ -194,50 +194,53 @@ export function PortalMyReimbursements() {
               return (
                 <div
                   key={r.id}
-                  className="flex cursor-pointer items-center justify-between rounded-2xl border border-border bg-background p-5 shadow-sm transition-all hover:shadow-md hover:border-primary-200"
+                  className="cursor-pointer rounded-2xl border border-border bg-background p-4 shadow-sm transition-all hover:shadow-md hover:border-primary-200 sm:p-5"
                   onClick={() => goDetail(r.id)}
                 >
-                  <div className="flex-1 space-y-1">
-                    <div className="flex items-center gap-2">
+                  {/* 第一行：编号 + 状态 + 金额（手机端换行） */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                       <p className="text-sm font-semibold text-foreground">
                         报销单 #{r.id}
                       </p>
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${st.color}`}>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${st.color}`}>
                         {st.label}
                       </span>
-                    </div>
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                      <span>{r.reason || "未填写"}</span>
-                      {r.cycle_start && r.cycle_end && (
-                        <span className="text-sm text-gray-600">
-                          {r.cycle_start} ~ {r.cycle_end}
-                        </span>
-                      )}
-                      {r.cycle_key && <span className="text-primary-600">{r.cycle_key}</span>}
                       {r.is_cycle_locked && (
-                        <span className="inline-flex items-center gap-0.5 text-error-600">
+                        <span className="inline-flex shrink-0 items-center gap-0.5 text-xs text-error-600">
                           <Lock size={10} />
                           已封账
                         </span>
                       )}
-                      <span>{r.invoice_count} 张发票</span>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
-                    <p className="font-display text-base font-bold text-foreground">
+                    <p className="shrink-0 font-display text-base font-bold text-foreground">
                       ¥{r.total_amount?.toLocaleString("zh-CN", { minimumFractionDigits: 2 }) ?? "0.00"}
                     </p>
+                  </div>
+
+                  {/* 第二行：事由 + 周期范围（手机端换行） */}
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    <span className="truncate">{r.reason || "未填写"}</span>
+                    {r.cycle_start && r.cycle_end && (
+                      <span className="text-gray-600">
+                        {r.cycle_start} ~ {r.cycle_end}
+                      </span>
+                    )}
+                    {r.cycle_key && <span className="text-primary-600">{r.cycle_key}</span>}
+                    <span>{r.invoice_count} 张发票</span>
+                  </div>
+
+                  {/* 第三行：操作按钮（手机端右对齐） */}
+                  <div className="mt-3 flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                     {r.status === "SUBMITTED" && (
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => handleWithdraw(r.id)}
-                          disabled={withdrawing === r.id}
-                          className="flex items-center gap-1 rounded-lg bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-100 disabled:opacity-50"
-                        >
-                          {withdrawing === r.id ? <Spinner size={14} className="animate-spin" /> : <ArrowUUpLeft size={14} />}
-                          撤回
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => handleWithdraw(r.id)}
+                        disabled={withdrawing === r.id}
+                        className="flex items-center gap-1 rounded-lg bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-100 disabled:opacity-50"
+                      >
+                        {withdrawing === r.id ? <Spinner size={14} className="animate-spin" /> : <ArrowUUpLeft size={14} />}
+                        撤回
+                      </button>
                     )}
                     {r.status === "DRAFT" && !r.is_cycle_locked && (
                       <button
@@ -649,21 +652,24 @@ function ReimbursementDetail({
   return (
     <div className="space-y-6">
       {detail.cycle_start && detail.cycle_end && (
-        <div className="mb-4 p-3 bg-gray-50 rounded">
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 p-3">
           <span className="text-sm">周期范围：{detail.cycle_start} ~ {detail.cycle_end}</span>
           {cycleLocked && (
-            <span className="ml-2 text-red-600 text-sm font-medium">🔒 已封账</span>
+            <span className="inline-flex items-center gap-1 text-sm font-medium text-red-600">
+              <Lock size={12} />
+              已封账
+            </span>
           )}
         </div>
       )}
 
       {/* 顶部导航 */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <button onClick={onBack} className="flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground">
           <ArrowLeft size={18} />
           返回列表
         </button>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {isDraft && !editMode && !cycleLocked && (
             <button
               onClick={handleSubmit}
@@ -740,34 +746,34 @@ function ReimbursementDetail({
       )}
 
       {/* 报销单信息卡片 */}
-      <div className="rounded-2xl border border-border/60 bg-background p-6 shadow-sm">
-        <div className="mb-4 flex items-center gap-2">
+      <div className="rounded-2xl border border-border/60 bg-background p-4 shadow-sm sm:p-6">
+        <div className="mb-4 flex flex-wrap items-center gap-2">
           <h2 className="font-display text-base font-semibold text-foreground">
             报销单 #{detail.id}
           </h2>
-          <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${st.color}`}>
+          <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${st.color}`}>
             {st.label}
           </span>
           {detail.cycle_key && (
-            <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-600">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-600">
               <CalendarStar size={12} />
               {detail.cycle_key}
             </span>
           )}
           {detail.is_cycle_locked && (
-            <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-600">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-600">
               <Lock size={12} />
               已封账
             </span>
           )}
           {detail.auto_generated && (
-            <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+            <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
               自动生成
             </span>
           )}
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
           {/* 报销期间 */}
           <div className="rounded-xl bg-muted p-3">
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -787,7 +793,7 @@ function ReimbursementDetail({
           </div>
 
           {/* 报销事由 */}
-          <div className="col-span-2 rounded-xl bg-muted p-3">
+          <div className="rounded-xl bg-muted p-3 sm:col-span-2">
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
               <FileText size={14} />
               报销事由
@@ -801,20 +807,20 @@ function ReimbursementDetail({
                 className="mt-1 w-full rounded-lg border border-border bg-background px-2 py-1 text-sm text-foreground/90 outline-none focus:border-primary-400"
               />
             ) : (
-              <p className="mt-1 text-sm font-medium text-foreground">{detail.reason || "未填写"}</p>
+              <p className="mt-1 break-words text-sm font-medium text-foreground">{detail.reason || "未填写"}</p>
             )}
           </div>
 
           {/* 申请人 */}
           <div className="rounded-xl bg-muted p-3">
             <div className="text-xs text-muted-foreground">申请人</div>
-            <p className="mt-1 text-sm font-medium text-foreground">{detail.applicant_name || "—"}</p>
+            <p className="mt-1 truncate text-sm font-medium text-foreground">{detail.applicant_name || "—"}</p>
           </div>
 
           {/* 部门 */}
           <div className="rounded-xl bg-muted p-3">
             <div className="text-xs text-muted-foreground">部门</div>
-            <p className="mt-1 text-sm font-medium text-foreground">{detail.department || "—"}</p>
+            <p className="mt-1 truncate text-sm font-medium text-foreground">{detail.department || "—"}</p>
           </div>
 
           {/* 周期范围 */}
@@ -823,14 +829,14 @@ function ReimbursementDetail({
               <CalendarStar size={14} />
               周期范围
             </div>
-            <p className="mt-1 text-sm font-medium text-foreground">
+            <p className="mt-1 break-words text-sm font-medium text-foreground">
               {formatCycleRange(detail.cycle_start, detail.cycle_end)}
             </p>
           </div>
         </div>
 
         {/* 金额明细 */}
-        <div className="mt-4 grid grid-cols-3 gap-4 border-t border-border pt-4">
+        <div className="mt-4 grid grid-cols-1 gap-3 border-t border-border pt-4 sm:grid-cols-3 sm:gap-4">
           <div className="rounded-xl bg-muted p-3">
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
               <Receipt size={14} />
@@ -862,24 +868,27 @@ function ReimbursementDetail({
 
         {/* 报表下载 */}
         <div className="mt-4 rounded-xl border border-border bg-muted/30 p-4">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2">
-              <FileText size={16} className="text-primary-600" />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <FileText size={16} className="shrink-0 text-primary-600" />
               <span className="text-sm font-medium text-foreground">报销单报表</span>
-              <span className="text-xs text-muted-foreground">
+              <span className="hidden text-xs text-muted-foreground sm:inline">
                 （Excel 费用清单 / PDF 发票汇总 / ZIP 完整包）
               </span>
             </div>
             <button
               onClick={handleGenerateReports}
               disabled={generatingReports}
-              className="flex items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground/70 transition-colors hover:bg-muted disabled:opacity-50"
+              className="flex shrink-0 items-center gap-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground/70 transition-colors hover:bg-muted disabled:opacity-50"
               title="生成或刷新报表包"
             >
               {generatingReports ? <Spinner size={14} className="animate-spin" /> : <Sparkle size={14} />}
               生成报表
             </button>
           </div>
+          <p className="mt-1 text-xs text-muted-foreground sm:hidden">
+            Excel 费用清单 / PDF 发票汇总 / ZIP 完整包
+          </p>
           {reportError && (
             <p className="mt-2 text-xs text-red-600">{reportError}</p>
           )}
@@ -922,15 +931,42 @@ function ReimbursementDetail({
 
       {/* 费用明细 */}
       {detail.items && detail.items.length > 0 && (
-        <div className="rounded-2xl border border-border/60 bg-background p-6 shadow-sm">
-          <div className="mb-4 flex items-center gap-2">
+        <div className="rounded-2xl border border-border/60 bg-background p-4 shadow-sm sm:p-6">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
             <ListChecks size={18} className="text-primary-600" />
             <h2 className="font-display text-sm font-semibold text-foreground/90">费用明细</h2>
             <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
               {detail.items.length} 条
             </span>
           </div>
-          <div className="overflow-x-auto">
+          {/* 移动端卡片列表 */}
+          <div className="space-y-2 sm:hidden">
+            {detail.items.map((item) => (
+              <div key={item.id} className="rounded-lg border border-border/60 bg-muted/30 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium text-foreground/90">{item.item_date || "—"}</span>
+                  <span className="font-display text-sm font-bold text-foreground">
+                    ¥{item.amount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                  <span>{weekdayName(item.weekday)}</span>
+                  <span>·</span>
+                  <span>{item.fee_subcategory || item.fee_category || "—"}</span>
+                  {item.is_late_charge && (
+                    <span className="inline-flex items-center gap-0.5 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-600">
+                      跨期
+                    </span>
+                  )}
+                </div>
+                {item.description && (
+                  <p className="mt-1 break-words text-xs text-muted-foreground">{item.description}</p>
+                )}
+              </div>
+            ))}
+          </div>
+          {/* 桌面端表格 */}
+          <div className="hidden overflow-x-auto sm:block">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-xs text-muted-foreground">
@@ -1030,15 +1066,62 @@ function ReimbursementDetail({
 
       {/* 日补贴 */}
       {detail.day_subsidies && detail.day_subsidies.length > 0 && (
-        <div className="rounded-2xl border border-border/60 bg-background p-6 shadow-sm">
-          <div className="mb-4 flex items-center gap-2">
+        <div className="rounded-2xl border border-border/60 bg-background p-4 shadow-sm sm:p-6">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
             <Coins size={18} className="text-primary-600" />
             <h2 className="font-display text-sm font-semibold text-foreground/90">日补贴</h2>
             <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
               {detail.day_subsidies.filter((d) => d.included).length}/{detail.day_subsidies.length} 天
             </span>
           </div>
-          <div className="overflow-x-auto">
+          {/* 移动端卡片列表 */}
+          <div className="space-y-2 sm:hidden">
+            {detail.day_subsidies.map((ds) => (
+              <div key={ds.id} className={`rounded-lg border border-border/60 bg-muted/30 p-3 ${!ds.included ? "opacity-50" : ""}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <span className="text-sm font-medium text-foreground/90">{ds.subsidy_date}</span>
+                    <span className="text-xs text-muted-foreground">{weekdayName(ds.weekday)}</span>
+                    <span className={`inline-flex shrink-0 items-center rounded-md px-2 py-0.5 text-xs font-medium ${dayTypeBadge(ds.day_type)}`}>
+                      {dayTypeLabel(ds.day_type)}
+                    </span>
+                  </div>
+                  <span className="shrink-0 font-display text-sm font-bold text-foreground">
+                    ¥{ds.subsidy_amount.toFixed(2)}
+                  </span>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>基准 ¥{(ds.base_rate ?? 0).toFixed(0)}</span>
+                  {isDraft ? (
+                    <button
+                      onClick={() => handleToggleSubsidy(ds.subsidy_date, !ds.included)}
+                      disabled={togglingSubsidyDate === ds.subsidy_date || cycleLocked}
+                      title={cycleLocked ? lockTitle : ds.included ? "点击取消补贴" : "点击计入补贴"}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                        ds.included ? "bg-emerald-500" : "bg-border"
+                      } disabled:opacity-50`}
+                    >
+                      {togglingSubsidyDate === ds.subsidy_date ? (
+                        <Spinner size={12} className="absolute left-1 animate-spin text-white" />
+                      ) : (
+                        <span
+                          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-background transition-transform ${
+                            ds.included ? "translate-x-4" : "translate-x-1"
+                          }`}
+                        />
+                      )}
+                    </button>
+                  ) : (
+                    <span className={`text-xs font-medium ${ds.included ? "text-emerald-600" : "text-muted-foreground"}`}>
+                      {ds.included ? "计入" : "不计入"}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          {/* 桌面端表格 */}
+          <div className="hidden overflow-x-auto sm:block">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-xs text-muted-foreground">
@@ -1097,8 +1180,8 @@ function ReimbursementDetail({
       )}
 
       {/* 关联发票 */}
-      <div className="rounded-2xl border border-border/60 bg-background p-6 shadow-sm">
-        <div className="mb-4 flex items-center justify-between">
+      <div className="rounded-2xl border border-border/60 bg-background p-4 shadow-sm sm:p-6">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-1.5 font-display text-sm font-semibold text-foreground/90">
             <Receipt size={18} className="text-primary-600" />
             关联发票
@@ -1125,34 +1208,32 @@ function ReimbursementDetail({
             {detail.invoices.map((inv) => (
               <div
                 key={inv.id}
-                className="flex items-center justify-between rounded-xl border border-border p-3"
+                className="rounded-xl border border-border p-3"
               >
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-foreground">
-                      {inv.seller_name || "未识别"}
-                    </p>
-                    {inv.verify_status === "VALID" && (
-                      <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600">验真通过</span>
-                    )}
-                    {inv.verify_status === "INVALID" && (
-                      <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-600">验真失败</span>
-                    )}
-                    {inv.duplicate_status === "DUPLICATE" && (
-                      <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-600">重复</span>
-                    )}
-                  </div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    {inv.fee_subcategory || inv.fee_category || "未分类"}
-                    {inv.invoice_number && ` · ${inv.invoice_number}`}
-                    {inv.issue_date && ` · ${inv.issue_date}`}
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="font-display text-sm font-bold text-foreground">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                    {inv.seller_name || "未识别"}
+                  </p>
+                  <span className="shrink-0 font-display text-sm font-bold text-foreground">
                     ¥{inv.total_with_tax || "-"}
                   </span>
-                  {isDraft && (
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                  {inv.verify_status === "VALID" && (
+                    <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600">验真通过</span>
+                  )}
+                  {inv.verify_status === "INVALID" && (
+                    <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-600">验真失败</span>
+                  )}
+                  {inv.duplicate_status === "DUPLICATE" && (
+                    <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-600">重复</span>
+                  )}
+                  <span>{inv.fee_subcategory || inv.fee_category || "未分类"}</span>
+                  {inv.invoice_number && <span>· {inv.invoice_number}</span>}
+                  {inv.issue_date && <span>· {inv.issue_date}</span>}
+                </div>
+                {isDraft && (
+                  <div className="mt-2 flex justify-end">
                     <button
                       onClick={() => handleUnlink(inv.id)}
                       disabled={unlinking === inv.id || cycleLocked}
@@ -1162,8 +1243,8 @@ function ReimbursementDetail({
                       {unlinking === inv.id ? <Spinner size={12} className="animate-spin" /> : <LinkBreak size={14} />}
                       移除
                     </button>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -1187,7 +1268,7 @@ function ReimbursementDetail({
         {/* 添加发票面板 */}
         {showLinkPanel && (
           <div className="mt-4 rounded-xl border border-primary-200 bg-primary-50/30 p-4">
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-medium text-foreground/90">选择要添加的发票</h3>
               <div className="flex items-center gap-2">
                 {linkSelectedIds.size > 0 && (
@@ -1228,19 +1309,19 @@ function ReimbursementDetail({
                         type="checkbox"
                         checked={checked}
                         onChange={() => toggleLinkInvoice(inv.id)}
-                        className="h-4 w-4 rounded border-border text-primary-600 focus:ring-primary-500"
+                        className="h-4 w-4 shrink-0 rounded border-border text-primary-600 focus:ring-primary-500"
                       />
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-foreground">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-foreground">
                           {inv.seller_name || "未识别"}
                         </p>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="truncate text-xs text-muted-foreground">
                           {inv.fee_subcategory || inv.fee_category || "未分类"}
                           {inv.invoice_number && ` · ${inv.invoice_number}`}
                           {inv.issue_date && ` · ${inv.issue_date}`}
                         </p>
                       </div>
-                      <span className="text-sm font-bold text-foreground">
+                      <span className="shrink-0 text-sm font-bold text-foreground">
                         ¥{inv.total_with_tax || "-"}
                       </span>
                     </label>
@@ -1253,8 +1334,8 @@ function ReimbursementDetail({
       </div>
 
       {/* 附件 */}
-      <div className="rounded-2xl border border-border/60 bg-background p-6 shadow-sm">
-        <div className="mb-4 flex items-center justify-between">
+      <div className="rounded-2xl border border-border/60 bg-background p-4 shadow-sm sm:p-6">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-1.5 font-display text-sm font-semibold text-foreground/90">
             <Paperclip size={18} className="text-primary-600" />
             附件

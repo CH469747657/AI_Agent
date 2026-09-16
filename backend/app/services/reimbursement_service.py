@@ -98,8 +98,11 @@ def _assert_invoice_linkable(inv: Invoice) -> None:
     """校验发票是否可关联到报销单
 
     标准发票：验真通过 + 查重唯一
-    非标票据：状态=已确认 + 查重唯一
+    非标票据：已处理完成（非 processing）+ 查重唯一
     通用约束：未关联其他报销单
+
+    说明：非标票据（支付截图、收据等）无法在线验真，reviewing/reviewed 都允许关联，
+    与归集任务（aggregate_pending_invoices）规则一致；报销单提交时由管理员审核拦截。
     """
     if inv.reimbursement_id is not None:
         raise HTTPException(
@@ -108,11 +111,11 @@ def _assert_invoice_linkable(inv: Invoice) -> None:
         )
 
     if inv.is_nonstandard:
-        # 非标票据：管理员审核通过 + 查重唯一
-        if inv.status != InvoiceStatus.reviewed:
+        # 非标票据：已处理完成（非 processing）+ 查重唯一
+        if inv.status == InvoiceStatus.processing:
             raise HTTPException(
                 status_code=400,
-                detail=f"非标票据 #{inv.id} 状态为「{inv.status.value}」，需管理员审核通过后才能关联报销单。",
+                detail=f"非标票据 #{inv.id} 正在处理中，请等待处理完成后再关联报销单。",
             )
         if inv.duplicate_status != DuplicateStatus.unique:
             raise HTTPException(

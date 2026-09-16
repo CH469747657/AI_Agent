@@ -512,12 +512,15 @@ function ReimbursementDetail({
   const loadAvailableInvoices = async () => {
     try {
       const all = await portalApi.myInvoices();
-      // 可关联：标准发票需验真通过，非标票据需审核通过，均需查重唯一且未关联报销单
+      // 可关联条件：
+      // - 标准发票：验真通过（VALID）+ 查重唯一 + 未关联其他报销单
+      // - 非标票据（支付截图/收据等）：已处理完成（非 processing）+ 查重唯一 + 未关联其他报销单
+      //   与归集任务规则一致：reviewing/reviewed 都允许关联，提交报销单时由管理员审核
       setAvailableInvoices(
         all.filter(
           (inv) =>
             (inv.is_nonstandard
-              ? inv.status === "REVIEWED"
+              ? inv.status && inv.status !== "PROCESSING"
               : inv.verify_status === "VALID") &&
             inv.duplicate_status === "UNIQUE" &&
             !inv.reimbursement_id

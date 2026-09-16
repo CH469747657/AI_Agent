@@ -81,8 +81,11 @@ async def get_or_create_reimbursement(
     if reimb:
         return reimb
 
-    # 创建新报销单
-    cycle_start, cycle_end = billing_cycle(cycle_key)
+    # 创建新报销单（读 cycle_end_day + transition_start 配置算范围）
+    from app.services.cycle_end_service import get_cycle_end_day, get_cycle_transition_start
+    cycle_end_day = await get_cycle_end_day(db)
+    transition_start = await get_cycle_transition_start(db)
+    cycle_start, cycle_end = billing_cycle(cycle_key, cycle_end_day=cycle_end_day, transition_start=transition_start)
     name, dept = await _resolve_employee_info(db, applicant_id)
 
     reimb = Reimbursement(

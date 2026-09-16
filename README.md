@@ -95,7 +95,18 @@ WECOM_ENCODING_AES_KEY=...
 
 报销周期默认按 21-20 制（每月 21 日到次月 20 日，20 号是本月最后一天）。管理员可在系统设置页面修改 cycle_end_day（1-31），该日为本周期最后一天（含）。cycle_end_day 不存在时取该月最后一日。
 
-**下个周期生效机制**：修改时写入 `pending_cycle_end_day` 字段，**当前周期不变**。封账任务触发后（每月 cycle_end_day+1 日 00:00），自动切换 `cycle_end_day` 为 pending 值、清空 pending、失效缓存、重新调度 cron。新周期立即按新配置算 cycle_key 和周期范围。
+**下个周期生效机制 + 过渡周期（方案A）**：
+- 修改时写入 `pending_cycle_end_day` 字段，**当前周期不变**。
+- 封账任务触发后（每月 cycle_end_day+1 日 00:00），自动切换 `cycle_end_day` 为 pending 值、清空 pending、失效缓存、重新调度 cron。
+- 同时设置 `cycle_transition_start=封账日`，让新周期用此日期作起点（而非公式 end+1day-1月），消除日期重叠/真空期。
+- 该过渡周期封账后清空 `cycle_transition_start`，后续周期恢复正常公式计算。
+
+**方案A 推演示例**（cycle_end_day 25→21）：
+1. 现在（9/16）：管理员设置 pending=21，当前周期 8/26~9/25 不变
+2. 9/26 0:00 封账任务触发：封账 2026-09 周期（8/26~9/25）+ 切换 cycle_end_day=21 + 设置 transition_start=9/26
+3. 9/26 之后：新周期 2026-10 = 9/26~10/21（26 天短周期，无重叠）
+4. 10/22 0:00 封账任务触发：封账过渡周期 2026-10 + 清空 transition_start
+5. 10/22 之后：恢复正常公式，下个周期 2026-11 = 10/22~11/21
 
 例：
 - cycle_end_day=20（默认）→ 每月 21 日到次月 20 日（21-20 制）

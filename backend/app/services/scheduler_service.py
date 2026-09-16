@@ -29,25 +29,30 @@ async def _cycle_lock_job() -> None:
     1. 归集所有游离发票到对应周期报销单
     2. 封账刚结束的周期（用昨日所属周期 cycle_key）
     3. 对已封账的报销单自动生成报表三件套（Excel + PDF + ZIP）
+    4. 清理过渡周期 transition_start（若刚封账的是过渡周期）
+    5. 应用 pending_cycle_end_day（下个周期生效机制）+ 设置新 transition_start
     """
     from app.database import get_async_sessionmaker
     from app.services.aggregation_service import aggregate_pending_invoices
     from app.services.cycle_lock_service import lock_just_ended_cycle
-    from app.services.cycle_end_service import get_cycle_end_day
+    from app.services.cycle_end_service import get_cycle_end_day, get_cycle_transition_start
 
     logger.info("Cycle lock job triggered at %s", datetime.now().isoformat())
     try:
         sm = get_async_sessionmaker()
         async with sm() as db:
-            # 读最新 cycle_end_day 配置（管理员改后立即生效，无需重启）
+            # 读最新 cycle_end_day + transition_start 配置
             cycle_end_day = await get_cycle_end_day(db)
+            transition_start = await get_cycle_transition_start(db)
 
             # 1. 先归集所有游离发票
             agg_result = await aggregate_pending_invoices(db, cycle_end_day=cycle_end_day)
             logger.info("Pre-lock aggregation: %s", agg_result)
 
-            # 2. 再封账刚结束的周期
-            lock_result = await lock_just_ended_cycle(db, cycle_end_day=cycle_end_day)
+            # 2. 再封账刚结束的周期（用今日作 on_date，让 just_ended_cycle_key 算昨日所属周期）
+            from datetime import date as _date
+            today = _date.today()
+            lock_result = await lock_just_ended_cycle(db, cycle_end_day=cycle_end_day, on_date=today)
             logger.info("Cycle lock job result: %s", lock_result)
 
             # 3. 封账后自动生成报表三件套（Excel + PDF + ZIP）
@@ -59,12 +64,43 @@ async def _cycle_lock_job() -> None:
             if agg_reimb_ids:
                 await _generate_reports_for_ids(db, agg_reimb_ids)
 
-            # 5. 应用 pending_cycle_end_day（下个周期生效机制）
+            # 5. 清理刚封账周期的 transition_start（若它是过渡周期）
+            if transition_start is not None:
+                await _clear_transition_start(db)
+                logger.info(
+                    "Transition cycle locked (was %s), cleared cycle_transition_start",
+                    transition_start.isoformat()
+                )
+
+            # 6. 应用 pending_cycle_end_day（下个周期生效机制）+ 设置新 transition_start
             # 封账刚结束的周期已锁定，下个周期开始；此时切换 cycle_end_day
             # 让新周期立即按新配置算，同时 reschedule_job 用新值
+            # 方案A：设置 transition_start=今天（封账日 = 新周期第一天），消除日期重叠/真空
             await _apply_pending_cycle_end_day(db)
     except Exception:
         logger.exception("Cycle lock job failed")
+
+
+async def _clear_transition_start(db) -> None:
+    """清理过渡周期 transition_start（刚封账的过渡周期已结束，后续周期恢复正常公式）"""
+    from app.models.settings import SystemSettings
+    from sqlalchemy import select, update
+
+    row = (
+        await db.execute(select(SystemSettings).where(SystemSettings.id == 1))
+    ).scalar_one_or_none()
+    if not row or row.cycle_transition_start is None:
+        return
+
+    await db.execute(
+        update(SystemSettings)
+        .where(SystemSettings.id == 1)
+        .values(cycle_transition_start=None)
+    )
+    await db.commit()
+    from app.services.cycle_end_service import invalidate_cache
+    invalidate_cache()
+    logger.info("Cleared cycle_transition_start (transitional cycle locked, normal formula resumes)")
 
 
 async def _apply_pending_cycle_end_day(db) -> None:
@@ -72,10 +108,15 @@ async def _apply_pending_cycle_end_day(db) -> None:
 
     设计原则：管理员修改的是下个周期的截止日。封账刚完成的时刻切到新值，
     新周期立即按新配置算 cycle_key 和周期范围。
+
+    方案A 过渡周期：切换 cycle_end_day 时，同时设置 cycle_transition_start=今天
+    （封账日 = 新周期第一天），让新周期用此日期作起点，而非公式（end+1day-1月）。
+    消除 cycle_end_day 变更时新周期与旧周期的日期重叠/真空期。
     """
     from app.models.settings import SystemSettings
     from sqlalchemy import select
     from app.services.cycle_end_service import invalidate_cache
+    from datetime import date
 
     row = (
         await db.execute(select(SystemSettings).where(SystemSettings.id == 1))
@@ -88,12 +129,15 @@ async def _apply_pending_cycle_end_day(db) -> None:
         return  # 无待生效值或与当前一致
 
     old = row.cycle_end_day
+    today = date.today()
     row.cycle_end_day = pending
     row.pending_cycle_end_day = None
+    row.cycle_transition_start = today  # 方案A：新周期用今天作起点，消除重叠/真空
     await db.commit()
     invalidate_cache()  # 失效 cycle_end_service 缓存
     logger.info(
-        f"Cycle end_day switched: {old} → {pending} (pending cleared, next cycle uses new value)"
+        f"Cycle end_day switched: {old} → {pending} (pending cleared, "
+        f"transition_start={today.isoformat()}, next cycle uses new value with transitional start)"
     )
     # 触发 cron 重新调度（用新 cycle_end_day 算 day=next）
     try:

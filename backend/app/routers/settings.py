@@ -335,6 +335,7 @@ async def update_verify_settings(
 class CycleSettingsRead(BaseModel):
     cycle_end_day: int
     pending_cycle_end_day: int | None = None  # 下个周期起生效的值，None 表示无待生效变更
+    cycle_transition_start: str | None = None  # 过渡周期起点（YYYY-MM-DD），None 表示无过渡
     current_cycle_start: str  # YYYY-MM-DD
     current_cycle_end: str  # YYYY-MM-DD
 
@@ -345,13 +346,14 @@ class CycleSettingsUpdate(BaseModel):
 
 @router.get("/cycle", response_model=CycleSettingsRead)
 async def get_cycle_settings(db: AsyncSession = Depends(get_db)):
-    """读取周期配置 + 当前周期范围 + 待生效值"""
-    from app.services.cycle_end_service import get_cycle_end_day
+    """读取周期配置 + 当前周期范围 + 待生效值 + 过渡周期起点"""
+    from app.services.cycle_end_service import get_cycle_end_day, get_cycle_transition_start
     from app.services.cycle_engine import current_cycle_key, billing_cycle
 
     cycle_end_day = await get_cycle_end_day(db)
+    transition_start = await get_cycle_transition_start(db)
     ck = current_cycle_key(cycle_end_day=cycle_end_day)
-    start, end = billing_cycle(ck, cycle_end_day=cycle_end_day)
+    start, end = billing_cycle(ck, cycle_end_day=cycle_end_day, transition_start=transition_start)
 
     row = (
         await db.execute(select(SystemSettings).where(SystemSettings.id == 1))
@@ -361,6 +363,7 @@ async def get_cycle_settings(db: AsyncSession = Depends(get_db)):
     return CycleSettingsRead(
         cycle_end_day=cycle_end_day,
         pending_cycle_end_day=pending,
+        cycle_transition_start=transition_start.isoformat() if transition_start else None,
         current_cycle_start=start.isoformat(),
         current_cycle_end=end.isoformat(),
     )
@@ -375,8 +378,9 @@ async def update_cycle_settings(
 
     生效规则：写入 pending_cycle_end_day，下个周期开始时切换到 cycle_end_day。
     当前周期不变（用旧 cycle_end_day 算）。
+    transition_start 由 _cycle_lock_job 封账切换 pending 时自动写入。
     """
-    from app.services.cycle_end_service import invalidate_cache
+    from app.services.cycle_end_service import invalidate_cache, get_cycle_transition_start
     from app.services.cycle_engine import current_cycle_key, billing_cycle
 
     row = (
@@ -397,13 +401,15 @@ async def update_cycle_settings(
     # 失效缓存（让 cycle_end_service 下次读 DB 拿 pending 值，但当前周期仍用旧 cycle_end_day）
     invalidate_cache()
 
-    # 返回当前周期（用旧 cycle_end_day 算，不变）+ pending 值（前端显示「下个周期生效」）
+    # 返回当前周期（用旧 cycle_end_day 算，不变）+ pending 值（前端显示「下个周期生效」）+ transition_start（如有）
     current_end_day = row.cycle_end_day
+    transition_start = await get_cycle_transition_start(db)
     ck = current_cycle_key(cycle_end_day=current_end_day)
-    start, end = billing_cycle(ck, cycle_end_day=current_end_day)
+    start, end = billing_cycle(ck, cycle_end_day=current_end_day, transition_start=transition_start)
     return CycleSettingsRead(
         cycle_end_day=current_end_day,
         pending_cycle_end_day=row.pending_cycle_end_day,
+        cycle_transition_start=transition_start.isoformat() if transition_start else None,
         current_cycle_start=start.isoformat(),
         current_cycle_end=end.isoformat(),
     )

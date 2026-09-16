@@ -12,10 +12,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 def reset_cache():
     """每个测试前重置缓存 + mock scheduler.reschedule_cycle_lock_job"""
     from app.services import cycle_end_service
-    cycle_end_service._cycle_end_cache = None
+    cycle_end_service._cache = None
     with patch("app.services.scheduler_service.reschedule_cycle_lock_job") as mock_reschedule:
         yield mock_reschedule
-    cycle_end_service._cycle_end_cache = None
+    cycle_end_service._cache = None
 
 
 @pytest.mark.asyncio
@@ -39,6 +39,7 @@ async def test_get_cycle_end_day_reads_from_db():
 
     fake_row = MagicMock()
     fake_row.cycle_end_day = 25
+    fake_row.cycle_transition_start = None
 
     db = MagicMock()
     mock_execute = AsyncMock()
@@ -56,6 +57,7 @@ async def test_get_cycle_end_day_uses_cache_on_second_call():
 
     fake_row = MagicMock()
     fake_row.cycle_end_day = 25
+    fake_row.cycle_transition_start = None
 
     db = MagicMock()
     mock_execute = AsyncMock()
@@ -75,6 +77,7 @@ async def test_invalidate_cache_forces_reload(reset_cache):
 
     fake_row = MagicMock()
     fake_row.cycle_end_day = 15
+    fake_row.cycle_transition_start = None
 
     db = MagicMock()
     mock_execute = AsyncMock()
@@ -89,3 +92,41 @@ async def test_invalidate_cache_forces_reload(reset_cache):
 
     await cycle_end_service.get_cycle_end_day(db)
     assert db.execute.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_cycle_transition_start_returns_none_by_default():
+    """无过渡周期时返回 None"""
+    from app.services import cycle_end_service
+
+    fake_row = MagicMock()
+    fake_row.cycle_end_day = 25
+    fake_row.cycle_transition_start = None
+
+    db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=fake_row))
+    db.execute = mock_execute
+
+    result = await cycle_end_service.get_cycle_transition_start(db)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_cycle_transition_start_returns_date_when_set():
+    """有过渡周期时返回日期"""
+    from datetime import date
+    from app.services import cycle_end_service
+
+    fake_row = MagicMock()
+    fake_row.cycle_end_day = 21
+    fake_row.cycle_transition_start = date(2026, 9, 26)
+
+    db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=fake_row))
+    db.execute = mock_execute
+
+    result = await cycle_end_service.get_cycle_transition_start(db)
+    assert result == date(2026, 9, 26)
+

@@ -44,6 +44,22 @@ class TestBillingCycle:
         assert end == date(2024, 2, 29)
         assert start == date(2024, 2, 1)
 
+    def test_transition_start_overrides_formula_start(self):
+        """方案A：transition_start 覆盖公式起点，end 仍按 cycle_end_day 算
+
+        例：cycle_end_day 25→21，9/26 封账后切换，transition_start=9/26
+        新周期 2026-10 应为 9/26~10/21（而非公式算的 9/22~10/21）
+        """
+        start, end = billing_cycle("2026-10", cycle_end_day=21, transition_start=date(2026, 9, 26))
+        assert start == date(2026, 9, 26)  # 过渡起点覆盖公式
+        assert end == date(2026, 10, 21)   # end 仍按 cycle_end_day 算
+
+    def test_transition_start_none_uses_formula(self):
+        """无 transition_start 时用公式（end+1day-1月）"""
+        start, end = billing_cycle("2026-10", cycle_end_day=21)
+        assert start == date(2026, 9, 22)
+        assert end == date(2026, 10, 21)
+
 
 class TestCycleKeyOf:
     def test_default_20_boundary(self):

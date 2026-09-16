@@ -1086,11 +1086,12 @@ export const settingsApi = {
 
   /** 周期配置（截止日） */
   cycle: {
-    /** 获取当前周期截止日与当前周期起止 + 下个周期待生效值 */
+    /** 获取当前周期截止日与当前周期起止 + 下个周期待生效值 + 过渡周期起点 */
     get: () =>
       request<{
         cycle_end_day: number;
         pending_cycle_end_day: number | null; // 下个周期生效值，null 表示无待生效变更
+        cycle_transition_start: string | null; // 过渡周期起点（YYYY-MM-DD），null 表示无过渡
         current_cycle_start: string; // YYYY-MM-DD
         current_cycle_end: string; // YYYY-MM-DD
       }>("/settings/cycle"),
@@ -1099,6 +1100,7 @@ export const settingsApi = {
       request<{
         cycle_end_day: number;
         pending_cycle_end_day: number | null;
+        cycle_transition_start: string | null;
         current_cycle_start: string; // YYYY-MM-DD
         current_cycle_end: string; // YYYY-MM-DD
       }>("/settings/cycle", {

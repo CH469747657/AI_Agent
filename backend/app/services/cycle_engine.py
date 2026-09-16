@@ -5,6 +5,11 @@ cycle_end_day 不存在时（如 2/29、2/30、2/31）取该月最后一日。
 
 设计依据：周期以结算月（结束月）为标识，上月 (cycle_end_day+1) 日到本月 cycle_end_day 日。
 默认 cycle_end_day=20 → 21-20 制（21 号属下月，20 号是本月最后一天）。
+
+方案A 过渡周期机制：
+- 当 pending_cycle_end_day 切换后，下个周期用 cycle_transition_start 作起点
+- 该周期封账后清空 transition_start，后续周期恢复正常公式计算
+- 消除 cycle_end_day 变更时的日期重叠/真空期
 """
 
 import calendar
@@ -25,27 +30,42 @@ def _actual_end_day(year: int, month: int, cycle_end_day: int) -> int:
     return min(cycle_end_day, last_day)
 
 
-def billing_cycle(cycle_key: str, cycle_end_day: int = 20) -> tuple[date, date]:
+def billing_cycle(
+    cycle_key: str,
+    cycle_end_day: int = 20,
+    transition_start: date | None = None,
+) -> tuple[date, date]:
     """cycle_key(结束月YYYY-MM) → (周期起, 周期末)
 
     cycle_end_day 是本周期最后一天（含）。
+    transition_start 是过渡周期起点（仅 pending 切换后的下个周期用），覆盖公式起点。
+
     例：
       billing_cycle("2026-09") → (date(2026,8,21), date(2026,9,20))  # 默认 21-20 制
       billing_cycle("2026-09", cycle_end_day=25) → (date(2026,8,26), date(2026,9,25))
       billing_cycle("2026-09", cycle_end_day=1) → (date(2026,8,2), date(2026,9,1))
+      billing_cycle("2026-10", cycle_end_day=21, transition_start=date(2026,9,26)) → (date(2026,9,26), date(2026,10,21))  # 过渡周期
     """
     y, m = map(int, cycle_key.split("-"))
     # 周期末 = 本月 cycle_end_day（如果该月没有这天，取月末）
     end_actual = _actual_end_day(y, m, cycle_end_day)
     end = date(y, m, end_actual)
-    # 周期起 = end + 1 day - 1 month（用 relativedelta 安全处理跨月/2月）
-    start = end + relativedelta(days=1) - relativedelta(months=1)
+    if transition_start is not None:
+        # 过渡周期：起点用显式 transition_start，终点不变（仍按 cycle_end_day 算）
+        start = transition_start
+    else:
+        # 周期起 = end + 1 day - 1 month（用 relativedelta 安全处理跨月/2月）
+        start = end + relativedelta(days=1) - relativedelta(months=1)
     return (start, end)
 
 
-def cycle_display(cycle_key: str, cycle_end_day: int = 20) -> str:
+def cycle_display(
+    cycle_key: str,
+    cycle_end_day: int = 20,
+    transition_start: date | None = None,
+) -> str:
     """cycle_key → 显示名，如「2026年8月21日–9月20日」"""
-    start, end = billing_cycle(cycle_key, cycle_end_day)
+    start, end = billing_cycle(cycle_key, cycle_end_day, transition_start=transition_start)
     if start.year == end.year:
         return f"{start.year}年{start.month}月{start.day}日–{end.month}月{end.day}日"
     return f"{start.year}年{start.month}月{start.day}日–{end.year}年{end.month}月{end.day}日"
@@ -93,3 +113,4 @@ def just_ended_cycle_key(on_date: date | None = None, cycle_end_day: int = 20) -
     from datetime import timedelta
     yesterday = on_date - timedelta(days=1)
     return cycle_key_of(yesterday, cycle_end_day=cycle_end_day)
+

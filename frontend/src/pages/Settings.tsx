@@ -799,6 +799,7 @@ function CycleTab() {
   const [cycleEndDay, setCycleEndDay] = useState(20);
   const [savedEndDay, setSavedEndDay] = useState<number | null>(null);
   const [pendingEndDay, setPendingEndDay] = useState<number | null>(null);
+  const [transitionStart, setTransitionStart] = useState<string | null>(null);
   const [currentCycleStart, setCurrentCycleStart] = useState<string | null>(null);
   const [currentCycleEnd, setCurrentCycleEnd] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -816,6 +817,7 @@ function CycleTab() {
       setCycleEndDay(r.cycle_end_day);
       setSavedEndDay(r.cycle_end_day);
       setPendingEndDay(r.pending_cycle_end_day);
+      setTransitionStart(r.cycle_transition_start);
       setCurrentCycleStart(r.current_cycle_start);
       setCurrentCycleEnd(r.current_cycle_end);
     } catch (e) {
@@ -844,11 +846,12 @@ function CycleTab() {
       setCycleEndDay(r.cycle_end_day);
       setSavedEndDay(r.cycle_end_day);
       setPendingEndDay(r.pending_cycle_end_day);
+      setTransitionStart(r.cycle_transition_start);
       setCurrentCycleStart(r.current_cycle_start);
       setCurrentCycleEnd(r.current_cycle_end);
       setSaveMsg(
         r.pending_cycle_end_day !== null
-          ? `已设置下个周期截止日为 ${r.pending_cycle_end_day}，下个周期开始时生效`
+          ? `已设置下个周期截止日为 ${r.pending_cycle_end_day}，下个周期开始时生效（过渡周期从封账日开始，无日期重叠）`
           : "保存成功"
       );
       setTimeout(() => setSaveMsg(null), 5000);
@@ -923,6 +926,17 @@ function CycleTab() {
                 </span>
               </div>
             )}
+            {transitionStart && (
+              <div className="mt-2 flex items-start gap-2 rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-700">
+                <span className="mt-0.5">🔄</span>
+                <span>
+                  过渡周期：从 {transitionStart} 开始
+                  <span className="ml-2 text-xs text-sky-600">
+                    （cycle_end_day 已切换，新周期用此日期作起点避免重叠；该周期封账后恢复正常公式）
+                  </span>
+                </span>
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">
               截止日不存在时取该月最后一日。例：20 = 上月 21 日到本月 20 日（含 20 日当天）。修改后写入「下个周期待生效值」，下个周期开始时（封账任务触发后）自动切换。
             </p>
@@ -975,6 +989,10 @@ function CycleTab() {
           <li className="flex items-start gap-2">
             <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
             修改截止日写入「下个周期待生效值」，当前周期不变。封账任务触发后切换到新值
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
+            方案A 过渡周期：切换 cycle_end_day 时，新周期用封账日作起点（短/长过渡周期），消除日期重叠/真空；过渡周期封账后恢复正常公式
           </li>
         </ul>
       </div>

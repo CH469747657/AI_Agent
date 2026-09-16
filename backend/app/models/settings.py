@@ -1,6 +1,6 @@
 """系统设置模型 — 单行配置表（id=1）"""
 
-from sqlalchemy import String, Integer
+from sqlalchemy import String, Integer, Date
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import TimestampMixin
@@ -48,4 +48,16 @@ class SystemSettings(TimestampMixin, Base):
     pending_cycle_end_day: Mapped[int | None] = mapped_column(
         Integer, default=None, nullable=True,
         comment="下个周期起生效的 cycle_end_day（管理员修改时写入，下个周期开始时切换）"
+    )
+
+    # 过渡周期起点（仅用于 pending 切换后的下个周期）
+    # 设计原则：方案A 消除周期切换时的日期重叠/真空期。
+    # 切换 cycle_end_day 后的下个周期用此日期作为起点，而非公式（end+1day-1月）。
+    # 例：cycle_end_day 25→21，9/26 0:00 封账后切换 → transition_start=9/26，新周期 9/26~10/21（26 天短周期）。
+    # 该周期封账后清空 transition_start，后续周期恢复正常公式计算。
+    cycle_transition_start: Mapped[None] = mapped_column(
+        Date, default=None, nullable=True,
+        comment="过渡周期起点（仅 pending 切换后的下个周期用）。"
+                "例：pending 25→21，9/26 封账后切换，transition_start=9/26，新周期 9/26~10/21。"
+                "该周期封账后清空 transition_start，后续周期恢复正常公式"
     )

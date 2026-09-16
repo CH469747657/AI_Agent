@@ -43,16 +43,9 @@ class FillInvoiceDescParams(BaseModel):
     expense_date: Optional[str] = Field(
         default=None,
         description=(
-            "出差/费用发生日期，YYYY-MM-DD 格式。用户文本中提到日期时必须提取并填入此字段，"
-            "不要把日期塞进 purpose。如：用户说「8月2日 打车费」→ purpose=\"打车费\" + expense_date=\"2026-08-02\"。"
-            "用户只说月日未带年份时用当前年份 2026 补全。未识别到日期则留空。"
-        ),
-    )
-    expense_date: Optional[str] = Field(
-        default=None,
-        description=(
             "出差日期/费用发生日期，格式 YYYY-MM-DD（如 2026-08-01）。"
             "用户提到'出差时间8月1日''7月15号出差''费用日期2026-08-01'时填此参数。"
+            "不要把日期塞进 purpose。如：用户说「8月2日 打车费」→ purpose=\"打车费\" + expense_date=\"2026-08-02\"。"
             "不涉及日期时留空。年份缺省时用当前年份 2026"
         ),
     )
@@ -76,6 +69,7 @@ class NoReceiptParams(BaseModel):
     LLM 通过 function calling 输出参数时由 Pydantic 自动校验：
     - amount 必须为正数（> 0），负数 / 零 / 非数字 / 过大金额（>100000）会被拒绝
     - description 不能为空或仅含符号/单字符
+    - expense_date 可选，用户文本中提到日期时必须提取（YYYY-MM-DD 格式）
     """
     model_config = {"extra": "allow"}
     amount: float = Field(
@@ -87,6 +81,15 @@ class NoReceiptParams(BaseModel):
         min_length=2,
         max_length=200,
         description="费用用途说明（2-200 字，需为有意义的中文描述，不能仅为符号或单字符）",
+    )
+    expense_date: Optional[str] = Field(
+        default=None,
+        description=(
+            "费用发生日期，YYYY-MM-DD 格式。用户文本中提到日期时必须提取并填入此字段，"
+            "不要把日期塞进 description。"
+            "如：用户说「无发票报销 8月5日 120元 打车费」→ amount=120 + description=\"打车费\" + expense_date=\"2026-08-05\"。"
+            "用户只说月日未带年份时用当前年份 2026 补全。未识别到日期则留空"
+        ),
     )
 
 

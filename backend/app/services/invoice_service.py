@@ -10,7 +10,7 @@ import os
 import asyncio
 import io
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 
 from sqlalchemy import select
@@ -827,11 +827,17 @@ class InvoiceService:
         return VerifyStatus.pending
 
     async def process_no_receipt(
-        self, user_id: str, user_description: str, amount: str = ""
+        self,
+        user_id: str,
+        user_description: str,
+        amount: str = "",
+        expense_date: Optional[date] = None,
     ) -> Invoice:
         """处理无票报销场景
 
-        纯 LLM 路径：用户描述 → LLM 提取金额/类别/项目 → 人工复核
+        纯 LLM 路径：用户描述 → LLM 提取金额/类别/项目/日期 → 人工复核
+        expense_date 由调用方（_handle_no_receipt）从 LLM 提取的字符串解析为 date 对象传入，
+        来源标记为 "note"（用户口述日期）。
         """
         invoice = Invoice(
             receipt_type=ReceiptType.no_receipt,
@@ -842,6 +848,9 @@ class InvoiceService:
             status=InvoiceStatus.processing,
             total_with_tax=amount,
         )
+        if expense_date is not None:
+            invoice.expense_date = expense_date
+            invoice.expense_date_source = "note"  # 用户口述的日期
         self.db.add(invoice)
         await self.db.commit()
         await self.db.refresh(invoice)

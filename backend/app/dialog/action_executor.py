@@ -665,11 +665,12 @@ class ActionExecutor:
     ) -> dict:
         """无票报销
 
-        LLM 通过 function calling 输出 amount (float>0) + description (2-200 字)。
-        NoReceiptParams 已强制校验，handler 仅做兜底检查。
+        LLM 通过 function calling 输出 amount (float>0) + description (2-200 字) +
+        expense_date (可选 YYYY-MM-DD)。NoReceiptParams 已强制校验，handler 仅做兜底检查。
         """
         amount_slot = ctx.slots.get("amount")
         desc_slot = ctx.slots.get("description")
+        date_slot = ctx.slots.get("expense_date")
         # amount 期望为 float（来自 NoReceiptParams）；兼容 LLM 偶尔返回字符串
         amount_val = amount_slot.value if amount_slot and amount_slot.filled else None
         if isinstance(amount_val, (int, float)):
@@ -690,11 +691,20 @@ class ActionExecutor:
                 "data": {},
             }
 
+        # 费用发生日期（可选，LLM 识别到日期时填入）
+        expense_date_raw = (
+            str(date_slot.value).strip()
+            if date_slot and date_slot.filled
+            else None
+        )
+        parsed_date = self._parse_expense_date(expense_date_raw) if expense_date_raw else None
+
         service = InvoiceService(db)
         invoice = await service.process_no_receipt(
             user_id=ctx.user_id,
             user_description=description,
             amount=amount,
+            expense_date=parsed_date,
         )
 
         # 添加到批量列表
@@ -706,6 +716,10 @@ class ActionExecutor:
             f"📋 编号：#{invoice.id}\n"
             f"💰 金额：¥{amount or '待补充'}\n"
             f"📝 描述：{description}\n"
+        )
+        if parsed_date:
+            text += f"📅 日期：{parsed_date.isoformat()}\n"
+        text += (
             f"📊 分类：{invoice.fee_subcategory or '待确认'}\n"
             f"⏳ 状态：待人工复核\n\n"
             f"已添加到批量提交列表（当前 {len(ctx.batch_invoice_ids)} 条）\n"

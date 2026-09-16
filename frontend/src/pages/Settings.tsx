@@ -838,12 +838,18 @@ function CycleTab() {
   const [transitionStart, setTransitionStart] = useState<string | null>(null);
   const [currentCycleStart, setCurrentCycleStart] = useState<string | null>(null);
   const [currentCycleEnd, setCurrentCycleEnd] = useState<string | null>(null);
+  const [nextCycleStart, setNextCycleStart] = useState<string | null>(null);
+  const [nextCycleEnd, setNextCycleEnd] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
-  const isDirty = savedEndDay !== null && cycleEndDay !== savedEndDay;
+  // isDirty 判断：输入值 ≠ 「系统当前实际想要的下个周期截止日」即为脏
+  // 系统当前实际想要的下个周期截止日 = pendingEndDay ?? savedEndDay
+  // 场景：cycle_end_day=25，pending=20，用户输入 25 — 应该可保存（把 pending 从 20 改回 25）
+  const effectiveNextEndDay = pendingEndDay ?? savedEndDay;
+  const isDirty = savedEndDay !== null && cycleEndDay !== effectiveNextEndDay;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -856,6 +862,8 @@ function CycleTab() {
       setTransitionStart(r.cycle_transition_start);
       setCurrentCycleStart(r.current_cycle_start);
       setCurrentCycleEnd(r.current_cycle_end);
+      setNextCycleStart(r.next_cycle_start);
+      setNextCycleEnd(r.next_cycle_end);
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载周期配置失败");
     } finally {
@@ -885,12 +893,19 @@ function CycleTab() {
       setTransitionStart(r.cycle_transition_start);
       setCurrentCycleStart(r.current_cycle_start);
       setCurrentCycleEnd(r.current_cycle_end);
-      setSaveMsg(
-        r.pending_cycle_end_day !== null
-          ? `已设置下个周期截止日为 ${r.pending_cycle_end_day}，下个周期开始时生效（过渡周期从封账日开始，无日期重叠）`
-          : "保存成功"
-      );
-      setTimeout(() => setSaveMsg(null), 5000);
+      setNextCycleStart(r.next_cycle_start);
+      setNextCycleEnd(r.next_cycle_end);
+      // 保存成功后显示下个周期实际时间范围
+      if (r.pending_cycle_end_day !== null && r.next_cycle_start && r.next_cycle_end) {
+        setSaveMsg(
+          `已设置下个周期截止日为 ${r.pending_cycle_end_day}，下个周期范围：${r.next_cycle_start} ~ ${r.next_cycle_end}（封账后生效）`
+        );
+      } else if (r.pending_cycle_end_day !== null) {
+        setSaveMsg(`已设置下个周期截止日为 ${r.pending_cycle_end_day}，下个周期开始时生效`);
+      } else {
+        setSaveMsg("保存成功");
+      }
+      setTimeout(() => setSaveMsg(null), 8000);
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存失败");
     } finally {
@@ -957,7 +972,19 @@ function CycleTab() {
                 <span>
                   下个周期生效：{pendingEndDay}
                   <span className="ml-2 text-xs text-amber-600">
-                    （当前周期仍按 {cycleEndDay} 计算，下个周期切换到 {pendingEndDay}）
+                    （当前周期仍按 {savedEndDay} 计算，下个周期切换到 {pendingEndDay}）
+                  </span>
+                </span>
+              </div>
+            )}
+            {/* 下个周期实际范围（有 pending 时显示，让用户直观看到未来周期） */}
+            {pendingEndDay !== null && nextCycleStart && nextCycleEnd && (
+              <div className="mt-2 flex items-start gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                <span className="mt-0.5">📅</span>
+                <span>
+                  下个周期范围：{nextCycleStart} ~ {nextCycleEnd}
+                  <span className="ml-2 text-xs text-emerald-600">
+                    （封账任务触发后生效，过渡周期从封账日起算，无日期重叠）
                   </span>
                 </span>
               </div>
@@ -1000,16 +1027,12 @@ function CycleTab() {
             {saving ? "保存中..." : "保存配置"}
           </button>
 
-          {/* 当输入值与当前值相同时提示，避免用户疑惑「为何按钮变灰」 */}
-          {!isDirty && savedEndDay === cycleEndDay && pendingEndDay === null && (
+          {/* 当输入值与「系统当前实际想要的下个周期截止日」相同时提示，避免用户疑惑「为何按钮变灰」 */}
+          {!isDirty && savedEndDay !== null && (
             <span className="text-xs text-muted-foreground">
-              当前周期已是 {cycleEndDay} 日，无需修改
-            </span>
-          )}
-          {/* pending 已等于输入值时提示已设置 */}
-          {!isDirty && pendingEndDay === cycleEndDay && pendingEndDay !== null && (
-            <span className="text-xs text-amber-600">
-              已设置下个周期截止日为 {pendingEndDay}，下个周期开始时生效
+              {pendingEndDay !== null
+                ? `下个周期已设置为 ${pendingEndDay} 日，输入其他值可修改`
+                : `当前周期已是 ${savedEndDay} 日，无需修改`}
             </span>
           )}
 

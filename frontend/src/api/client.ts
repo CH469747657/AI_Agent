@@ -1090,7 +1090,7 @@ export const settingsApi = {
 
   /** 周期配置（截止日） */
   cycle: {
-    /** 获取当前周期截止日与当前周期起止 + 下个周期待生效值 + 过渡周期起点 */
+    /** 获取当前周期截止日与当前周期起止 + 下个周期待生效值 + 过渡周期起点 + 下个周期范围 */
     get: () =>
       request<{
         cycle_end_day: number;
@@ -1098,6 +1098,8 @@ export const settingsApi = {
         cycle_transition_start: string | null; // 过渡周期起点（YYYY-MM-DD），null 表示无过渡
         current_cycle_start: string; // YYYY-MM-DD
         current_cycle_end: string; // YYYY-MM-DD
+        next_cycle_start: string | null; // 下个周期起点（YYYY-MM-DD），基于 pending 算
+        next_cycle_end: string | null; // 下个周期终点（YYYY-MM-DD），基于 pending 算
       }>("/settings/cycle"),
     /** 更新周期截止日（PUT，写入 pending_cycle_end_day，下个周期开始时生效） */
     update: (cycle_end_day: number) =>
@@ -1107,6 +1109,8 @@ export const settingsApi = {
         cycle_transition_start: string | null;
         current_cycle_start: string; // YYYY-MM-DD
         current_cycle_end: string; // YYYY-MM-DD
+        next_cycle_start: string | null;
+        next_cycle_end: string | null;
       }>("/settings/cycle", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },

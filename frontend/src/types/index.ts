@@ -263,13 +263,19 @@ export interface DialogMessage {
   timestamp: number;
   /** 附件缩略图（base64 data URL，仅用户消息） */
   attachmentPreview?: string;
+  /** 附件元信息（非图片文件用，仅用户消息；图片文件优先用 attachmentPreview） */
+  attachmentMeta?: {
+    name: string;
+    size: number;  // 字节
+    type: string;  // MIME 类型或扩展名（pdf/ofd 等）
+  };
   /** 快捷回复选项（仅 assistant 消息） */
   quickReplies?: string[];
   /** 是否正在执行操作 */
   actionTaken?: boolean;
   /** 错误信息 */
   error?: string | null;
-  /** 上传成功消息附带的发票 ID（用于显示“撤销”按钮） */
+  /** 上传成功消息附带的发票 ID（用于显示”撤销”按钮） */
   invoiceId?: number;
   /** 是否已撤销（隐藏撤销按钮） */
   undone?: boolean;

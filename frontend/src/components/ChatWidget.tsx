@@ -70,6 +70,22 @@ function deriveFileType(file: File): string {
   return ext || "jpg";
 }
 
+/** 格式化文件大小为人类可读（KB/MB） */
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+/** 根据文件名/MIME 推导文件类型标签 */
+function getFileTypeLabel(name: string, mime: string): string {
+  const ext = name.split(".").pop()?.toLowerCase() || "";
+  if (ext === "pdf" || mime === "application/pdf") return "PDF";
+  if (ext === "ofd") return "OFD";
+  if (["png", "jpg", "jpeg", "gif", "bmp", "webp"].includes(ext)) return "图片";
+  return ext ? ext.toUpperCase() : "文件";
+}
+
 /** 从路由推导角色与用户ID */
 function useRoleAndUserId(): { role: DialogRole; userId: string; displayName: string } {
   const location = useLocation();
@@ -349,13 +365,29 @@ function MessageBubble({
 
       {/* 消息内容 */}
       <div className={`flex max-w-[88%] flex-col sm:max-w-[78%] ${isUser ? "items-end" : "items-start"}`}>
-        {/* 附件预览 */}
+        {/* 附件预览（图片） */}
         {msg.attachmentPreview && (
           <img
             src={msg.attachmentPreview}
             alt="附件"
             className="mb-1 max-h-32 rounded-lg border border-border object-cover"
           />
+        )}
+        {/* 附件元信息（非图片文件，如 PDF/OFD） */}
+        {msg.attachmentMeta && !msg.attachmentPreview && (
+          <div className="mb-1 flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 max-w-xs">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary-100 text-primary-700">
+              <FileText size={18} weight="bold" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-foreground truncate" title={msg.attachmentMeta.name}>
+                {msg.attachmentMeta.name}
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {getFileTypeLabel(msg.attachmentMeta.name, msg.attachmentMeta.type)} · {formatFileSize(msg.attachmentMeta.size)}
+              </p>
+            </div>
+          </div>
         )}
         {/* 文本气泡 */}
         <div
@@ -700,6 +732,12 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
               text: purpose,
               timestamp: Date.now(),
               attachmentPreview: firstPreview || undefined,
+              // 非图片文件：补充元信息，让对话框显示文件卡片
+              attachmentMeta: !firstPreview ? {
+                name: pendingFiles[0].name,
+                size: pendingFiles[0].size,
+                type: pendingFiles[0].type || deriveFileType(pendingFiles[0]),
+              } : undefined,
             },
           ]);
         }
@@ -717,10 +755,19 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
       // 构造用户消息
       let attachmentPreview = "";
       let attachmentBase64: string | null = null;
+      let attachmentMeta: DialogMessage["attachmentMeta"];
 
       if (attachFile) {
         attachmentPreview = opts?.preview ?? await fileToPreview(attachFile);
         attachmentBase64 = await fileToBase64(attachFile);
+        // 非图片文件：补充元信息
+        if (!attachmentPreview) {
+          attachmentMeta = {
+            name: attachFile.name,
+            size: attachFile.size,
+            type: attachFile.type || deriveFileType(attachFile),
+          };
+        }
       }
 
       // 跳过追加 user message（外层 batch 路径已显示过用户消息，避免重复）
@@ -731,6 +778,7 @@ export function ChatWidget({ mode = "floating" }: { mode?: "floating" | "fullscr
           text: content || (attachFile ? "（发票附件）" : ""),
           timestamp: Date.now(),
           attachmentPreview: attachmentPreview || undefined,
+          attachmentMeta,
         };
 
         setMessages((prev) => [...prev, userMsg]);

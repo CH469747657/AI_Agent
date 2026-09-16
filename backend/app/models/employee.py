@@ -25,8 +25,8 @@ class Employee(Base, TimestampMixin):
         String(100), unique=True, index=True, comment="企微UserID"
     )
     name: Mapped[str] = mapped_column(String(100), comment="员工姓名")
-    employee_no: Mapped[str | None] = mapped_column(
-        String(50), nullable=True, index=True, comment="工号"
+    employee_no: Mapped[str] = mapped_column(
+        String(50), nullable=False, unique=True, index=True, comment="工号，必填且唯一（员工登录账号）"
     )
     department: Mapped[str | None] = mapped_column(
         String(200), nullable=True, comment="部门名称"

@@ -29,7 +29,7 @@ router = APIRouter(dependencies=[Depends(get_current_admin_or_boss)])
 # (字段名, 是否必填, 说明)
 BATCH_FIELDS: list[tuple[str, bool, str]] = [
     ("姓名", True, "员工真实姓名，必填"),
-    ("工号", False, "如 EMP-001，留空时自动生成"),
+    ("工号", True, "员工工号，必填且唯一（登录账号），如 EMP-001"),
     ("部门", False, "如 技术部"),
     ("职务", False, "如 工程师"),
     ("手机号", False, "如 13800001234"),
@@ -143,6 +143,17 @@ async def _create_employee_record(
             status_code=409,
             detail=f"wecom_user_id '{wecom_user_id}' 已存在",
         )
+
+    # 检查 employee_no 唯一性（工号是登录账号，必须唯一）
+    if request.employee_no:
+        dup = await db.execute(
+            select(Employee).where(Employee.employee_no == request.employee_no)
+        )
+        if dup.scalars().first():
+            raise HTTPException(
+                status_code=409,
+                detail=f"工号 '{request.employee_no}' 已存在，请使用其他工号",
+            )
 
     emp = Employee(
         wecom_user_id=wecom_user_id,
@@ -289,11 +300,17 @@ async def batch_upload_employees(
             errors.append(f"第 {i} 行：姓名为空")
             continue
 
+        # 工号必填（员工登录账号）
+        if not employee_no:
+            failed += 1
+            errors.append(f"第 {i} 行 {name or ''}：工号为空（必填）")
+            continue
+
         try:
             await _create_employee_record(
                 EmployeeCreateRequest(
                     name=name,
-                    employee_no=employee_no or None,
+                    employee_no=employee_no,
                     department=department or None,
                     position=position or None,
                     mobile=mobile or None,

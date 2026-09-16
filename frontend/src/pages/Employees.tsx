@@ -487,7 +487,8 @@ export function Employees() {
                   label="工号"
                   value={form.employee_no}
                   onChange={(v) => setForm({ ...form, employee_no: v })}
-                  placeholder="如 EMP-001"
+                  placeholder="如 EMP-001（必填，登录账号）"
+                  required
                 />
                 <FormField
                   label="部门"

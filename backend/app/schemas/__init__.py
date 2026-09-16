@@ -217,7 +217,7 @@ class WeComProcessRequest(BaseModel):
 class EmployeeCreateRequest(BaseModel):
     wecom_user_id: str | None = None  # 手动创建时可留空，自动生成
     name: str
-    employee_no: str | None = None
+    employee_no: str = Field(..., min_length=1, max_length=100, description="员工工号，必填且唯一（登录账号）")
     department: str | None = None
     department_id: int | None = None
     position: str | None = None

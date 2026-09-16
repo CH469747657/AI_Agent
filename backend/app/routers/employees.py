@@ -35,6 +35,7 @@ BATCH_FIELDS: list[tuple[str, bool, str]] = [
     ("手机号", False, "如 13800001234"),
     ("邮箱", False, "如 name@company.com"),
     ("企微ID", False, "企微 UserID，留空时自动生成 manual_xxx"),
+    ("登录密码", False, "员工端登录密码，留空时默认 123456（员工可登录后修改）"),
 ]
 
 
@@ -204,8 +205,8 @@ async def download_batch_template():
 
     # 示例数据（2 行）
     samples = [
-        ["张三", "EMP-001", "技术部", "工程师", "13800001234", "zhangsan@company.com", ""],
-        ["李四", "EMP-002", "销售部", "经理", "13800005678", "lisi@company.com", "wecom_lisi"],
+        ["张三", "EMP-001", "技术部", "工程师", "13800001234", "zhangsan@company.com", "", "Abc@1234"],
+        ["李四", "EMP-002", "销售部", "经理", "13800005678", "lisi@company.com", "wecom_lisi", ""],
     ]
     for row_idx, sample in enumerate(samples, 2):
         for col_idx, value in enumerate(sample, 1):
@@ -294,6 +295,7 @@ async def batch_upload_employees(
         mobile = str(values[4]).strip() if values[4] is not None else ""
         email = str(values[5]).strip() if values[5] is not None else ""
         wecom_user_id = str(values[6]).strip() if values[6] is not None else ""
+        password = str(values[7]).strip() if len(values) > 7 and values[7] is not None else ""
 
         if not name:
             failed += 1
@@ -316,6 +318,7 @@ async def batch_upload_employees(
                     mobile=mobile or None,
                     email=email or None,
                     wecom_user_id=wecom_user_id or None,
+                    password=password or None,  # 留空时 _create_employee_record 默认 123456
                     status=1,
                 ),
                 db,

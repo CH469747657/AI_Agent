@@ -537,11 +537,11 @@ export function Employees() {
                     type="text"
                     value={form.password}
                     onChange={(e) => setForm({ ...form, password: e.target.value })}
-                    placeholder={editing ? "留空则不修改" : "如 Abc@1234"}
+                    placeholder={editing ? "留空则不修改" : "留空则默认 123456"}
                     className="w-full rounded-lg border border-border bg-muted px-3 py-2.5 text-sm focus:border-primary-400 focus:bg-background"
                   />
                   <p className="text-xs text-muted-foreground">
-                    {editing ? "设置后原密码将被覆盖" : "员工可用此密码登录员工端"}
+                    {editing ? "设置后原密码将被覆盖" : "留空时默认密码 123456，员工可登录后修改"}
                   </p>
                 </div>
               </div>

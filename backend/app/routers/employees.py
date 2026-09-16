@@ -156,9 +156,9 @@ async def _create_employee_record(
         status=EmployeeStatus(request.status),
     )
 
-    # 如果请求中有密码字段，设置密码
-    if request.password:
-        emp.password_hash = hash_password(request.password)
+    # 密码：未填时默认 "123456"（员工首次登录后可在个人中心修改）
+    password = request.password or "123456"
+    emp.password_hash = hash_password(password)
 
     db.add(emp)
     await db.commit()

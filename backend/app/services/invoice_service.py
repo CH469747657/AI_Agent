@@ -48,35 +48,6 @@ class InvoiceService:
         self.llm = get_llm_service()
         self.classifier = FeeClassifier()
 
-
-async def reclassify_by_description(
-    invoice: Invoice,
-    user_description: str,
-) -> None:
-    """根据新的 user_description 重新分类发票（员工补填/修改备注 + admin 修改用途时调用）
-
-    修复场景：
-    - 员工上传时填"住宿费"→ 分类为"差旅-住宿"
-    - 员工重新修改备注为"快递费"→ 应重新分类为"快递物流费"
-      （之前没调分类器，导致分类停留在旧值）
-    """
-    classifier = FeeClassifier()
-    invoice_data = {
-        "receipt_type": invoice.receipt_type.value if invoice.receipt_type else None,
-        "seller_name": invoice.seller_name,
-        "total_with_tax": invoice.total_with_tax,
-        "item_name": invoice.item_name,
-    }
-    try:
-        classify_result = await classifier.classify(invoice_data, user_description)
-        if classify_result:
-            invoice.fee_category = classify_result["category"]
-            invoice.fee_subcategory = classify_result["subcategory"]
-            invoice.classify_source = classify_result["source"]
-            invoice.classify_confidence = classify_result["confidence"]
-    except Exception as e:
-        logger.warning(f"Reclassify invoice #{invoice.id} failed: {e}")
-
     def _compress_image_for_vlm(self, file_data: bytes) -> bytes:
         """压缩图片用于 VLM 调用（长边 ≤768，JPEG q85）
 
@@ -1020,3 +991,32 @@ async def reclassify_by_description(
 
         logger.info("Invoice deleted: id=%s user=%s", invoice_id, user_id or "N/A")
         return {"message": f"发票 #{invoice_id} 已删除", "deleted": True}
+
+
+async def reclassify_by_description(
+    invoice: Invoice,
+    user_description: str,
+) -> None:
+    """根据新的 user_description 重新分类发票（员工补填/修改备注 + admin 修改用途时调用）
+
+    修复场景：
+    - 员工上传时填"住宿费"→ 分类为"差旅-住宿"
+    - 员工重新修改备注为"快递费"→ 应重新分类为"快递物流费"
+      （之前没调分类器，导致分类停留在旧值）
+    """
+    classifier = FeeClassifier()
+    invoice_data = {
+        "receipt_type": invoice.receipt_type.value if invoice.receipt_type else None,
+        "seller_name": invoice.seller_name,
+        "total_with_tax": invoice.total_with_tax,
+        "item_name": invoice.item_name,
+    }
+    try:
+        classify_result = await classifier.classify(invoice_data, user_description)
+        if classify_result:
+            invoice.fee_category = classify_result["category"]
+            invoice.fee_subcategory = classify_result["subcategory"]
+            invoice.classify_source = classify_result["source"]
+            invoice.classify_confidence = classify_result["confidence"]
+    except Exception as e:
+        logger.warning(f"Reclassify invoice #{invoice.id} failed: {e}")

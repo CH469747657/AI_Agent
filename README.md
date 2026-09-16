@@ -104,7 +104,7 @@ WECOM_ENCODING_AES_KEY=...
 - cycle_end_day=31 → 每月 1 日到该月最后一天（自然月，2 月取 28/29 日）
 
 **封账规则**：
-- 每月 cycle_end_day 00:00 定时任务自动归集游离发票 + 封账上一周期
+- 每月 (cycle_end_day + 1) 日 00:00 定时任务自动归集游离发票 + 封账刚结束周期（让员工能用满周期最后一天）
 - 封账后员工不能 submit/withdraw/update/delete/link/unlink/toggle subsidy
 - 管理员可在管理端报销单详情页手动 unlock（需填原因），员工改完后管理员重新 lock
 

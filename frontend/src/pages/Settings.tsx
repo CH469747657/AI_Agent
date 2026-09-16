@@ -904,7 +904,7 @@ function CycleTab() {
               </p>
             )}
             <p className="text-xs text-muted-foreground">
-              截止日不存在时取该月最后一日。例：20 = 每月 20 日到次月 19 日。修改后下个完整周期生效。
+              截止日不存在时取该月最后一日。例：20 = 上月 21 日到本月 20 日（含 20 日当天）。修改后下个完整周期生效。
             </p>
           </div>
         </div>
@@ -946,11 +946,11 @@ function CycleTab() {
         <ul className="space-y-2 text-sm text-muted-foreground">
           <li className="flex items-start gap-2">
             <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-primary-400" />
-            周期截止日 = 报销周期的结束日，次日 00:00 起为新周期
+            周期截止日 = 报销周期的结束日（含当天），次日 00:00 触发封账并开始新周期
           </li>
           <li className="flex items-start gap-2">
             <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-primary-400" />
-            例：截止日=20，则 9 月 20 日 00:00 ~ 10 月 19 日 23:59 为一个周期
+            例：截止日=20，则 8 月 21 日 ~ 9 月 20 日（含 20 日当天）为一个周期，9 月 21 日 0:00 封账并开始下一周期
           </li>
           <li className="flex items-start gap-2">
             <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />

@@ -60,10 +60,12 @@ async def test_default_value_is_20():
 
 
 @pytest.mark.asyncio
-async def test_alembic_version_is_0017():
-    """alembic 版本是 0017_reimbursement_unlock_audit"""
+async def test_alembic_version_at_least_0017():
+    """alembic 版本至少是 0017_reimbursement_unlock_audit（后续 migration 可能更新版本号）"""
     async with get_async_sessionmaker()() as db:
         result = await db.execute(text("SELECT version_num FROM alembic_version"))
         version = result.scalar()
-        # 0017 依赖 0016，所以跑完 0017 后 version 是 0017
-        assert version == "0017_reimbursement_unlock_audit"
+        # 0017 依赖 0016，所以跑完 0017 后 version 至少是 0017
+        # 后续 migration（0018-0022）会更新版本号，断言用「至少 0017」而非固定值
+        assert version is not None
+        assert version >= "0017_reimbursement_unlock_audit"

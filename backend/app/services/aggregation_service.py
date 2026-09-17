@@ -221,6 +221,8 @@ async def aggregate_pending_invoices(
                     logger.info(f"Report generated for auto-submitted reimbursement #{rid}")
                 except Exception as e:
                     logger.warning(f"Report generation failed for #{rid}: {e}")
+                    # 报表错误记录到 errors，不影响归集结果（与测试期望一致）
+                    errors.append({"reimbursement_id": rid, "error": str(e)})
 
     logger.info(
         f"aggregate_pending_invoices: {attached}/{len(invoices)} invoices aggregated "

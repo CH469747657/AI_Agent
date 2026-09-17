@@ -104,6 +104,26 @@ def _reset_engine_after():
 
 
 @pytest.fixture(autouse=True)
+def _cleanup_travel_days():
+    """每个测试前清理 EMP001 的 travel_days + 解封报销单，避免测试间数据污染"""
+    from sqlalchemy import create_engine, text
+    from app.config import settings as app_settings
+    try:
+        sync_url = app_settings.database_url.replace("+asyncpg", "+psycopg2")
+        engine = create_engine(sync_url)
+        with engine.connect() as conn:
+            # 清理 travel_days
+            conn.execute(text("DELETE FROM reimbursement_travel_days WHERE applicant_id = :uid"), {"uid": EMP_NO})
+            # 解封所有报销单（前一个测试可能封账了）
+            conn.execute(text("UPDATE reimbursements SET is_cycle_locked = false WHERE applicant_id = :uid"), {"uid": EMP_NO})
+            conn.commit()
+        engine.dispose()
+    except Exception:
+        pass
+    yield
+
+
+@pytest.fixture(autouse=True)
 def setup_creds(monkeypatch):
     """注入 admin/boss 凭证到 settings"""
     monkeypatch.setattr(settings, "admin_username", "admin")
@@ -141,11 +161,27 @@ def _boss_token(client) -> str:
 
 
 def _today_in_cycle() -> str:
-    """返回当前周期内一个日期字符串 YYYY-MM-DD"""
+    """返回当前周期内一个日期字符串 YYYY-MM-DD（读 DB 配置的 cycle_end_day）"""
+    from sqlalchemy import create_engine, text
+    from app.config import settings as app_settings
     from app.services.cycle_engine import current_cycle_key, billing_cycle
     today = date.today()
-    ck = current_cycle_key(today)
-    start, _ = billing_cycle(ck)
+    # 同步读 DB 的 cycle_end_day（生产可能是 25 等非默认值）
+    cycle_end_day = 20
+    try:
+        sync_url = app_settings.database_url.replace("+asyncpg", "+psycopg2")
+        engine = create_engine(sync_url)
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT cycle_end_day FROM system_settings WHERE id=1")
+            ).fetchone()
+            if row:
+                cycle_end_day = row[0]
+        engine.dispose()
+    except Exception:
+        pass
+    ck = current_cycle_key(today, cycle_end_day=cycle_end_day)
+    start, _ = billing_cycle(ck, cycle_end_day=cycle_end_day)
     return start.isoformat()
 
 

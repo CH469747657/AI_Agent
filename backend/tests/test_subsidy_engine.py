@@ -148,7 +148,7 @@ async def _subsidy_only_counts_travel_days_scenario():
             user_id=applicant_id,
             amount="100.00",
             total_with_tax="100.00",
-            status=InvoiceStatus.confirmed,
+            status=InvoiceStatus.reviewed,
         )
         db.add(inv)
         await db.flush()

@@ -436,13 +436,28 @@ async def update_invoice(
     db: AsyncSession = Depends(get_db),
     _admin: dict = Depends(get_current_admin),
 ):
-    """更新发票信息（人工修正分类/项目/状态）"""
+    """更新发票信息（人工修正分类/项目/状态）
+
+    权限规则：
+    - 管理员可修改任意发票（含已关联报销单的）
+    - 但发票所属报销单已封账时禁止修改（影响报表一致性，与 _handle_modify_field 行为一致）
+    """
     from sqlalchemy import select
     from app.models.invoice import Invoice, InvoiceStatus, FeeCategory
     result = await db.execute(select(Invoice).where(Invoice.id == invoice_id))
     invoice = result.scalars().first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
+
+    # 封账检查：发票所属报销单已锁定则禁止修改（避免影响已生成的报表）
+    if invoice.reimbursement_id:
+        from app.models.reimbursement import Reimbursement
+        reimb = await db.get(Reimbursement, invoice.reimbursement_id)
+        if reimb and reimb.is_cycle_locked:
+            raise HTTPException(
+                status_code=400,
+                detail=f"发票所属报销单 #{reimb.id} 已封账，无法修改。如需修正，请先解锁报销单。",
+            )
 
     if request.fee_category:
         try:
@@ -453,9 +468,6 @@ async def update_invoice(
     if request.fee_subcategory:
         invoice.fee_subcategory = request.fee_subcategory
         invoice.classify_source = "manual"
-    if request.project_id:
-        invoice.project_id = request.project_id
-        invoice.project_match_source = "manual"
     if request.status:
         try:
             invoice.status = InvoiceStatus(request.status)

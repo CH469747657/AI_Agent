@@ -367,6 +367,28 @@ class ActionExecutor:
             ctx.pending_invoice_id = None
             return {"text": f"未找到发票 #{invoice_id}。", "data": {}}
 
+        # 员工端约束：仅允许修改未关联报销单的发票（与 _handle_modify_field 行为一致）
+        if ctx.role == UserRole.EMPLOYEE and invoice.reimbursement_id is not None:
+            ctx.pending_invoice_id = None
+            return {
+                "text": (
+                    f"发票 #{invoice_id} 已关联到报销单 #{invoice.reimbursement_id}，"
+                    f"无法修改用途。仅未关联报销单的发票允许修改。"
+                ),
+                "data": {},
+            }
+
+        # 封账检查：发票所属报销单已锁定则禁止修改
+        if invoice.reimbursement_id:
+            from app.models.reimbursement import Reimbursement
+            reimb = await db.get(Reimbursement, invoice.reimbursement_id)
+            if reimb and reimb.is_cycle_locked:
+                ctx.pending_invoice_id = None
+                return {
+                    "text": f"❌ 发票所属报销单 #{reimb.id} 已封账，无法修改用途。",
+                    "data": {},
+                }
+
         invoice.user_description = purpose_text
         date_updated = False
         if parsed_date:

@@ -367,25 +367,18 @@ class ActionExecutor:
             ctx.pending_invoice_id = None
             return {"text": f"未找到发票 #{invoice_id}。", "data": {}}
 
-        # 员工端约束：仅允许修改未关联报销单的发票（与 _handle_modify_field 行为一致）
-        if ctx.role == UserRole.EMPLOYEE and invoice.reimbursement_id is not None:
-            ctx.pending_invoice_id = None
-            return {
-                "text": (
-                    f"发票 #{invoice_id} 已关联到报销单 #{invoice.reimbursement_id}，"
-                    f"无法修改用途。仅未关联报销单的发票允许修改。"
-                ),
-                "data": {},
-            }
-
-        # 封账检查：发票所属报销单已锁定则禁止修改
+        # 权限检查：发票所属报销单已封账 → 拒绝
+        # 管理员解锁后 is_cycle_locked=false，员工可继续修改用途（与 _handle_modify_field 一致）
         if invoice.reimbursement_id:
             from app.models.reimbursement import Reimbursement
             reimb = await db.get(Reimbursement, invoice.reimbursement_id)
             if reimb and reimb.is_cycle_locked:
                 ctx.pending_invoice_id = None
                 return {
-                    "text": f"❌ 发票所属报销单 #{reimb.id} 已封账，无法修改用途。",
+                    "text": (
+                        f"❌ 发票 #{invoice_id} 所属报销单 #{reimb.id} 已封账，无法修改用途。"
+                        f"请联系管理员解锁报销单后再修改。"
+                    ),
                     "data": {},
                 }
 
@@ -1032,23 +1025,19 @@ class ActionExecutor:
         if not invoice:
             return {"text": f"未找到发票 #{invoice_id}。", "data": {}}
 
-        # 员工端约束：仅允许修改未关联报销单的发票（与删除接口 portal.py:161 行为一致）
-        if ctx.role == UserRole.EMPLOYEE and invoice.reimbursement_id is not None:
-            return {
-                "text": (
-                    f"发票 #{invoice_id} 已关联到报销单 #{invoice.reimbursement_id}，"
-                    f"无法修改。仅未关联报销单的发票允许修改。"
-                ),
-                "data": {},
-            }
-
-        # 封账检查：发票所属报销单已锁定则禁止修改
+        # 权限检查：
+        # - 员工：发票所属报销单已封账 → 拒绝（管理员解锁后 is_cycle_locked=false，员工可改）
+        #   未关联报销单的发票，员工可自由修改
+        # - 任意角色：发票所属报销单已封账 → 拒绝
         if invoice.reimbursement_id:
             from app.models.reimbursement import Reimbursement
             reimb = await db.get(Reimbursement, invoice.reimbursement_id)
             if reimb and reimb.is_cycle_locked:
                 return {
-                    "text": f"❌ 发票所属报销单 #{reimb.id} 已封账，无法修改。",
+                    "text": (
+                        f"❌ 发票 #{invoice_id} 所属报销单 #{reimb.id} 已封账，无法修改。"
+                        f"请联系管理员解锁报销单后再修改。"
+                    ),
                     "data": {},
                 }
 

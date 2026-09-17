@@ -1064,6 +1064,25 @@ class ActionExecutor:
                     for item in items_result.scalars().all():
                         item.item_date = parsed
                         item.item_date_source = "note"
+                elif model_attr == "user_description":
+                    # 修改用途：与 process_upload 行为一致，拆分日期 + 纯用途
+                    from app.services.expense_date_engine import extract_date_and_purpose
+                    parsed_date, clean_purpose = extract_date_and_purpose(fv)
+                    invoice.user_description = clean_purpose if parsed_date else fv
+                    if parsed_date:
+                        invoice.expense_date = parsed_date
+                        invoice.expense_date_source = "note"
+                        # 同步更新已生成报销单明细行的 item_date
+                        from app.models.reimbursement import ReimbursementItem
+                        items_result = await db.execute(
+                            select(ReimbursementItem).where(ReimbursementItem.invoice_id == invoice.id)
+                        )
+                        for item in items_result.scalars().all():
+                            item.item_date = parsed_date
+                            item.item_date_source = "note"
+                    # 修改用途后重新分类（"住宿费"→"差旅" 改成"快递费"时应重分为"快递物流费"）
+                    from app.services.invoice_service import reclassify_by_description
+                    await reclassify_by_description(invoice, invoice.user_description)
                 else:
                     setattr(invoice, model_attr, fv)
                 await db.commit()

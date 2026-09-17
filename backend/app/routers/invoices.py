@@ -485,6 +485,27 @@ async def update_invoice(
         from app.services.invoice_service import reclassify_by_description
         await reclassify_by_description(invoice, invoice.user_description)
 
+    # 同步发票字段到关联的 ReimbursementItem 快照（Excel 报表数据源）
+    # 发票修改后，ReimbursementItem 的 description/fee_subcategory/amount/item_date 需同步更新，
+    # 否则 Excel 报表显示旧数据，与 PDF（实时读 Invoice）不一致
+    from app.models.reimbursement import ReimbursementItem
+    items_result = await db.execute(
+        select(ReimbursementItem).where(ReimbursementItem.invoice_id == invoice.id)
+    )
+    items = list(items_result.scalars().all())
+    for item in items:
+        if invoice.expense_date is not None:
+            item.item_date = invoice.expense_date
+            item.item_date_source = invoice.expense_date_source or "note"
+            item.weekday = invoice.expense_date.weekday()
+        item.fee_category = invoice.fee_category
+        item.fee_subcategory = invoice.fee_subcategory
+        try:
+            item.amount = float(str(invoice.total_with_tax).replace(",", "").replace("¥", "").replace("￥", "")) if invoice.total_with_tax else item.amount
+        except (ValueError, TypeError):
+            pass
+        item.description = invoice.user_description
+
     await db.commit()
     await db.refresh(invoice)
     return invoice

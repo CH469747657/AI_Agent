@@ -392,6 +392,8 @@ class ActionExecutor:
         # 改成"快递费"后应重新分为"快递物流费"）
         from app.services.invoice_service import reclassify_by_description
         await reclassify_by_description(invoice, purpose_text)
+        # 同步发票字段到关联的 ReimbursementItem 快照（Excel 报表数据源）
+        await self._sync_invoice_to_items(db, invoice)
         await db.commit()
 
         # 清除待处理标记
@@ -412,6 +414,43 @@ class ActionExecutor:
         else:
             text += "继续上传可发送更多发票，输入「完成」提交报销。"
         return {"text": text, "data": {"invoice_id": invoice_id}}
+
+    @staticmethod
+    async def _sync_invoice_to_items(db: AsyncSession, invoice: Invoice) -> None:
+        """同步发票字段到关联的 ReimbursementItem 快照
+
+        ReimbursementItem 是发票关联报销单时创建的快照，Excel 报表读它生成。
+        发票修改后（用途/分类/金额/日期等），需同步更新对应的 ReimbursementItem，
+        否则 Excel 报表会显示旧数据，与 PDF（实时读 Invoice）不一致。
+
+        同步字段：
+        - item.item_date ← invoice.expense_date（+ item_date_source）
+        - item.fee_category ← invoice.fee_category
+        - item.fee_subcategory ← invoice.fee_subcategory
+        - item.amount ← invoice.total_with_tax
+        - item.description ← invoice.user_description
+        """
+        from app.models.reimbursement import ReimbursementItem
+        items_result = await db.execute(
+            select(ReimbursementItem).where(ReimbursementItem.invoice_id == invoice.id)
+        )
+        items = list(items_result.scalars().all())
+        if not items:
+            return
+        for item in items:
+            if invoice.expense_date is not None:
+                item.item_date = invoice.expense_date
+                item.item_date_source = invoice.expense_date_source or "note"
+                # 同步 weekday（item_date 变了，weekday 也要重算）
+                item.weekday = invoice.expense_date.weekday()
+            item.fee_category = invoice.fee_category
+            item.fee_subcategory = invoice.fee_subcategory
+            # amount 是 float，total_with_tax 可能是字符串，做安全转换
+            try:
+                item.amount = float(str(invoice.total_with_tax).replace(",", "").replace("¥", "").replace("￥", "")) if invoice.total_with_tax else item.amount
+            except (ValueError, TypeError):
+                pass
+            item.description = invoice.user_description
 
     @staticmethod
     def _parse_expense_date(raw: str | None) -> Optional[date]:
@@ -1067,14 +1106,6 @@ class ActionExecutor:
                         }
                     invoice.expense_date = parsed
                     invoice.expense_date_source = "note"
-                    # 同步更新已生成报销单明细行的 item_date（item 是 invoice 的快照，需联动）
-                    from app.models.reimbursement import ReimbursementItem
-                    items_result = await db.execute(
-                        select(ReimbursementItem).where(ReimbursementItem.invoice_id == invoice.id)
-                    )
-                    for item in items_result.scalars().all():
-                        item.item_date = parsed
-                        item.item_date_source = "note"
                 elif model_attr == "user_description":
                     # 修改用途：与 process_upload 行为一致，拆分日期 + 纯用途
                     from app.services.expense_date_engine import extract_date_and_purpose
@@ -1083,19 +1114,13 @@ class ActionExecutor:
                     if parsed_date:
                         invoice.expense_date = parsed_date
                         invoice.expense_date_source = "note"
-                        # 同步更新已生成报销单明细行的 item_date
-                        from app.models.reimbursement import ReimbursementItem
-                        items_result = await db.execute(
-                            select(ReimbursementItem).where(ReimbursementItem.invoice_id == invoice.id)
-                        )
-                        for item in items_result.scalars().all():
-                            item.item_date = parsed_date
-                            item.item_date_source = "note"
                     # 修改用途后重新分类（"住宿费"→"差旅" 改成"快递费"时应重分为"快递物流费"）
                     from app.services.invoice_service import reclassify_by_description
                     await reclassify_by_description(invoice, invoice.user_description)
                 else:
                     setattr(invoice, model_attr, fv)
+                # 同步更新已关联的 ReimbursementItem 快照（item 是 invoice 的快照，报表 Excel 用它）
+                await self._sync_invoice_to_items(db, invoice)
                 await db.commit()
             except HTTPException as e:
                 if e.status_code == 409:

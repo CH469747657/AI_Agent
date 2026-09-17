@@ -449,16 +449,33 @@ def _reset_engine_for_cycle():
 
 @pytest.fixture(autouse=False)
 async def _restore_cutoff_after_cycle_test():
-    """测试后把 system_settings.cycle_end_day 重置回 20 + 失效缓存"""
-    yield
+    """测试后恢复 system_settings.cycle_end_day 为测试前的原值，避免污染生产配置
+
+    之前 fixture 硬编码把 cycle_end_day 重置为 20，导致用户配置的 25 被改成 20。
+    现改为：测试前记录原值，teardown 恢复为原值。
+    """
     db_module.get_engine.cache_clear()
     db_module.get_async_sessionmaker.cache_clear()
     session_factory = db_module.get_async_sessionmaker()
     async with session_factory() as session:
+        row = (
+            await session.execute(select(SystemSettings).where(SystemSettings.id == 1))
+        ).scalar_one_or_none()
+        original_cycle_end_day = row.cycle_end_day if row else 20
+        original_next_cycle_end_day = row.next_cycle_end_day if row else None
+
+    yield
+
+    db_module.get_engine.cache_clear()
+    db_module.get_async_sessionmaker.cache_clear()
+    async with session_factory() as session:
         await session.execute(
             update(SystemSettings)
             .where(SystemSettings.id == 1)
-            .values(cycle_end_day=20)
+            .values(
+                cycle_end_day=original_cycle_end_day,
+                next_cycle_end_day=original_next_cycle_end_day,
+            )
         )
         await session.commit()
     cycle_end_service.invalidate_cache()

@@ -658,6 +658,11 @@ async def serialize_reimbursement_detail(
                 "invoice_number": inv.invoice_number,
                 "verify_status": inv.verify_status.value if inv.verify_status else None,
                 "duplicate_status": inv.duplicate_status.value if inv.duplicate_status else None,
+                # 用户描述/费用日期需同步返回，否则前端发票列表显示旧值（DB 已更新但 API 没带）
+                "user_description": inv.user_description,
+                "expense_date": inv.expense_date.isoformat() if inv.expense_date else None,
+                "receipt_type": inv.receipt_type.value if inv.receipt_type else None,
+                "is_nonstandard": inv.is_nonstandard,
             }
             for inv in invoices
         ]

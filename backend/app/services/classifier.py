@@ -113,11 +113,12 @@ class RuleBasedClassifier:
             "subcategory": "咨询费",
             "priority": 20,
         },
-        # 软件信息技术
+        # 软件信息技术（销售方）
+        # 注：单独"科技"过宽，会误命中"XX科技股份有限公司"等非软件公司，故需组合"软件/信息科技"等更具体词
         {
             "field": "seller_name",
             "op": "contains_any",
-            "values": ["软件", "信息科技", "信息技术", "科技", "网络科技", "数据"],
+            "values": ["软件", "信息科技", "信息技术", "网络科技", "数据科技"],
             "category": FeeCategory.company,
             "subcategory": "软件开发费",
             "priority": 15,
@@ -219,6 +220,52 @@ class RuleBasedClassifier:
             "subcategory": "软件开发费",
             "priority": 30,
         },
+        # 餐饮（用途含"餐饮/餐费/吃饭/餐"等 → 差旅-餐饮）
+        # 避免销售方"XX科技"含"科技"被错误归为软件开发费 — 用途明确时应以用途为准
+        {
+            "field": "user_description",
+            "op": "contains_any",
+            "values": ["餐", "饭", "食", "伙食", "宴", "聚餐"],
+            "category": FeeCategory.personal,
+            "subcategory": "差旅-餐饮",
+            "priority": 30,
+        },
+        # 交通（用途含"打车/出行/交通"等 → 差旅-交通）
+        {
+            "field": "user_description",
+            "op": "contains_any",
+            "values": ["打车", "出租", "网约车", "滴滴", "出行", "交通", "加油", "过路", "停车", "车费", "高铁", "火车", "机票", "飞机", "地铁", "公交"],
+            "category": FeeCategory.personal,
+            "subcategory": "差旅-交通",
+            "priority": 30,
+        },
+        # 住宿（用途补充）
+        {
+            "field": "user_description",
+            "op": "contains_any",
+            "values": ["住宿", "住店", "宾馆", "酒店", "民宿", "住宿费"],
+            "category": FeeCategory.personal,
+            "subcategory": "差旅-住宿",
+            "priority": 30,
+        },
+        # 安装调试
+        {
+            "field": "user_description",
+            "op": "contains_any",
+            "values": ["安装", "调试", "维修", "维护", "检修"],
+            "category": FeeCategory.company,
+            "subcategory": "安装费",
+            "priority": 30,
+        },
+        # 搬运吊装
+        {
+            "field": "user_description",
+            "op": "contains_any",
+            "values": ["搬运", "吊装", "装卸", "搬运费"],
+            "category": FeeCategory.company,
+            "subcategory": "搬运费",
+            "priority": 30,
+        },
 
         # === 金额匹配补贴标准 ===
         {
@@ -232,11 +279,22 @@ class RuleBasedClassifier:
     ]
 
     def classify(self, invoice_data: dict, user_desc: str = "") -> dict | None:
-        """执行规则匹配，返回第一个命中的分类"""
-        # 合并票据数据和用户描述
-        context = {**invoice_data, "user_description": user_desc or ""}
+        """执行规则匹配，返回第一个命中的分类
 
+        分类策略：
+        - 客户明确填写用途（user_desc 非空）→ 严格按用途匹配 user_description 规则
+          （用途是用户最直接的表达，优先级最高，覆盖销售方等其它信号）
+        - 客户未填用途（user_desc 为空）→ 综合判断，所有规则（seller_name/receipt_type/金额等）均可命中
+        """
+        context = {**invoice_data, "user_description": user_desc or ""}
+        user_desc_filled = bool(user_desc and user_desc.strip())
+
+        # 规则按 priority 倒序遍历
         for rule in sorted(self.RULES, key=lambda r: r.get("priority", 0), reverse=True):
+            # 用途已填：仅匹配 user_description 规则（严格按用途分类）
+            if user_desc_filled and rule["field"] != "user_description":
+                continue
+
             field_val = context.get(rule["field"])
             if field_val is None:
                 continue
@@ -280,14 +338,46 @@ class FeeClassifier:
         self.llm = get_llm_service()
 
     async def classify(self, invoice_data: dict, user_desc: str = "") -> dict:
-        """执行三层分类策略"""
-        # === 第一层：规则匹配 ===
-        result = self.rule_engine.classify(invoice_data, user_desc)
-        if result and result["confidence"] >= CONFIDENCE_THRESHOLD:
-            logger.info(f"Rule-based classification: {result['subcategory']} (confidence=1.0)")
-            return result
+        """执行分类策略
 
-        # === 第二层：LLM 语义分类 ===
+        分类策略：
+        - 客户明确填写用途（user_desc 非空）→ 直接走 LLM 语义分类，按用途语义归类
+          （规则关键词覆盖不全，"餐""饭"等易误判或漏判；LLM 直接理解用途语义更准确）
+        - 客户未填用途（user_desc 为空）→ 综合判断：先规则匹配（seller_name/receipt_type 等），
+          规则未命中再走 LLM 兜底
+        - LLM 不可用 → 人工兜底
+        """
+        user_desc_filled = bool(user_desc and user_desc.strip())
+
+        # === 用途已填：直接 LLM 分类，按用途语义归类 ===
+        if user_desc_filled and self.llm.is_available():
+            llm_result = await self.llm.classify_fee(
+                receipt_type=str(invoice_data.get("receipt_type", "")),
+                seller_name=invoice_data.get("seller_name", ""),
+                amount=invoice_data.get("total_with_tax", ""),
+                user_desc=user_desc,
+            )
+            if llm_result and llm_result.get("subcategory"):
+                cat_str = llm_result.get("category", "company")
+                category = FeeCategory.personal if cat_str == "personal" else FeeCategory.company
+                confidence = float(llm_result.get("confidence", 0.5))
+                result = {
+                    "category": category,
+                    "subcategory": llm_result["subcategory"],
+                    "source": "llm",
+                    "confidence": confidence,
+                }
+                logger.info(f"LLM classification by user_desc: {result['subcategory']} (confidence={confidence})")
+                return result
+
+        # === 用途未填：综合判断，先规则匹配 ===
+        if not user_desc_filled:
+            rule_result = self.rule_engine.classify(invoice_data, user_desc)
+            if rule_result and rule_result["confidence"] >= CONFIDENCE_THRESHOLD:
+                logger.info(f"Rule-based classification (no user_desc): {rule_result['subcategory']}")
+                return rule_result
+
+        # === LLM 兜底（用途已填但 LLM 失败，或用途未填规则未命中）===
         if self.llm.is_available():
             llm_result = await self.llm.classify_fee(
                 receipt_type=str(invoice_data.get("receipt_type", "")),
@@ -305,10 +395,10 @@ class FeeClassifier:
                     "source": "llm",
                     "confidence": confidence,
                 }
-                logger.info(f"LLM classification: {result['subcategory']} (confidence={confidence})")
+                logger.info(f"LLM classification fallback: {result['subcategory']} (confidence={confidence})")
                 return result
 
-        # === 第三层：人工兜底 ===
+        # === 人工兜底 ===
         logger.warning("Classification confidence below threshold, marking for manual review")
         return {
             "category": None,

@@ -151,6 +151,8 @@ class AgentCore:
         ]
 
         response = AgentResponse()
+        # 保存 context 供 _rebuild_query_invoices_table 读取 user_id
+        response._context = context  # type: ignore[attr-defined]
 
         for step in range(self.MAX_STEPS):
             response.steps_taken = step + 1
@@ -180,7 +182,7 @@ class AgentCore:
                 response.final_response = content
                 response.text = content
                 # 折中方案：检测 tool 结果含表格但 LLM 未原样展示时，强制附加
-                appended = self._append_missing_table(response, content)
+                appended = await self._append_missing_table(response, content)
                 if appended:
                     response.text = content + appended
                     logger.info(
@@ -356,29 +358,56 @@ class AgentCore:
         __import__("re").MULTILINE,
     )
 
-    def _append_missing_table(self, response: AgentResponse, content: str) -> str:
+    async def _append_missing_table(self, response: AgentResponse, content: str) -> str:
         """检测 tool 结果含表格但 LLM 最终回复未展示时，返回需要附加的表格片段
 
         Returns: 附加的字符串（含分隔符 + 表格）；无需附加时返回空串
+
+        若同一轮中在查询类工具之后执行了修改/删除类工具（emp_modify_field 等），
+        查询表已是修改前的旧数据，附加会造成"发票信息已更新但列表还是旧数据"的错位。
+        此时若用户原本就要查询列表（emp_query_invoices），应重新查询获取最新数据附加；
+        否则跳过 — 让 LLM 文本中已展示的修改后单张发票表为权威。
         """
         if not response.tool_calls:
             return ""
 
-        # 从最后一次匹配白名单的 tool_call 倒序找
-        for tc in reversed(response.tool_calls):
+        # 修改/删除类工具：执行后会使前置查询表失效
+        MODIFY_TOOLS = {
+            "emp_modify_field", "emp_batch_modify", "emp_delete_invoice",
+            "emp_fill_invoice_desc", "emp_batch_describe",
+        }
+
+        # 判断本轮是否执行过修改类工具
+        has_modify = any(tc.get("name", "") in MODIFY_TOOLS for tc in response.tool_calls)
+
+        tool_calls = response.tool_calls
+        # 倒序遍历（晚执行的优先），但用 enumerate 精确索引避免 index() 在重复 tool 名时取错位置
+        for tc_idx in range(len(tool_calls) - 1, -1, -1):
+            tc = tool_calls[tc_idx]
             tool_name = tc.get("name", "")
             if tool_name not in self.TABLE_FORCING_TOOLS:
                 continue
+            # 若该查询工具之后还有修改类工具，查询表已是旧数据
+            later_calls = tool_calls[tc_idx + 1:]
+            stale_due_to_modify = any(c.get("name", "") in MODIFY_TOOLS for c in later_calls)
+
             result_text = tc.get("result_text", "")
-            if not result_text:
+            if not result_text and not stale_due_to_modify:
                 continue
 
             # 提取该 tool 结果中的第一个 markdown 表格
-            match = self._TABLE_RE.search(result_text)
-            if not match:
-                continue
+            table = ""
+            if result_text:
+                match = self._TABLE_RE.search(result_text)
+                if match:
+                    table = match.group(0).strip()
 
-            table = match.group(0).strip()
+            # 旧数据场景：若是 emp_query_invoices 触发的，重新查询获取最新列表
+            if stale_due_to_modify and tool_name == "emp_query_invoices" and has_modify:
+                fresh_table = await self._rebuild_query_invoices_table(response)
+                if fresh_table:
+                    table = fresh_table
+
             if not table:
                 continue
 
@@ -393,6 +422,27 @@ class AgentCore:
             return f"\n\n{table}"
 
         return ""
+
+    async def _rebuild_query_invoices_table(self, response: AgentResponse) -> str:
+        """重新查询用户发票列表并构建最新表格（用于修改后刷新 stale 查询表）
+
+        通过 ctx.user_id 重新查 DB，复用 ActionExecutor._build_user_invoices_table 表格格式。
+        """
+        try:
+            from app.database import get_async_sessionmaker
+            from app.dialog.action_executor import ActionExecutor
+
+            ctx = getattr(response, "_context", None)
+            if ctx is None:
+                return ""
+
+            sm = get_async_sessionmaker()
+            async with sm() as db:
+                executor = ActionExecutor()
+                return await executor._build_user_invoices_table(db, ctx.user_id)
+        except Exception as e:
+            logger.warning("Rebuild query_invoices table failed: %s", e)
+            return ""
 
     def _build_system_prompt(self, context: DialogContext) -> str:
         """构造 system prompt"""

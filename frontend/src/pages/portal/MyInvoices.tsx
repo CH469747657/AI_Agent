@@ -41,6 +41,13 @@ export function PortalMyInvoices() {
 
   useEffect(load, []);
 
+  // 对话窗口修改了发票（用途/时间等）后，刷新发票列表同步显示
+  useEffect(() => {
+    const handler = () => load();
+    window.addEventListener("chat-invoices-changed", handler);
+    return () => window.removeEventListener("chat-invoices-changed", handler);
+  }, []);
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);

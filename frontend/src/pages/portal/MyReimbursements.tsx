@@ -397,6 +397,13 @@ function ReimbursementDetail({
     loadDetail();
   }, [loadDetail]);
 
+  // 对话窗口修改了发票（用途/时间等）后，刷新关联发票列表同步显示
+  useEffect(() => {
+    const handler = () => loadDetail();
+    window.addEventListener("chat-invoices-changed", handler);
+    return () => window.removeEventListener("chat-invoices-changed", handler);
+  }, [loadDetail]);
+
   const isDraft = detail?.status === "DRAFT";
   const isSubmitted = detail?.status === "SUBMITTED";
 
@@ -1249,8 +1256,15 @@ function ReimbursementDetail({
                   )}
                   <span>{inv.fee_subcategory || inv.fee_category || "未分类"}</span>
                   {inv.invoice_number && <span>· {inv.invoice_number}</span>}
-                  {inv.issue_date && <span>· {inv.issue_date}</span>}
+                  {(inv.expense_date || inv.issue_date) && (
+                    <span>· {inv.expense_date || inv.issue_date}</span>
+                  )}
                 </div>
+                {inv.user_description && (
+                  <div className="mt-1 text-xs text-foreground/70">
+                    用途：{inv.user_description}
+                  </div>
+                )}
                 {isDraft && (
                   <div className="mt-2 flex justify-end">
                     <button

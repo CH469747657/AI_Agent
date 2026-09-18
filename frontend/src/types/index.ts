@@ -409,6 +409,10 @@ export interface PortalReimbursementDetail extends PortalReimbursement {
     invoice_number: string | null;
     verify_status: string | null;
     duplicate_status: string | null;
+    user_description?: string | null;
+    expense_date?: string | null;
+    receipt_type?: string | null;
+    is_nonstandard?: boolean | null;
   }[];
   attachments: ReimbursementAttachment[];
 }

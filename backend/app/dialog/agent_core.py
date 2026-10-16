@@ -606,6 +606,6 @@ def get_agent_core() -> AgentCore:
 
 
 def reset_agent_core() -> None:
-    """重置单例（测试用）"""
+    """重置单例（配置热更新/测试用）"""
     global _core
     _core = None

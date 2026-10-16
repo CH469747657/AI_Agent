@@ -353,9 +353,6 @@ function LlmTab() {
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-foreground">
               文本模型
-              <span className="ml-1 text-xs text-muted-foreground">
-                (用于意图识别、项目提取)
-              </span>
             </label>
             <input
               value={form.llm_text_model}
@@ -363,7 +360,7 @@ function LlmTab() {
                 setForm({ ...form, llm_text_model: e.target.value })
               }
               list="llm-text-model-options"
-              placeholder="留空则自动推导（如 qwen-plus）"
+              placeholder="留空则使用环境变量或默认路由"
               className="w-full rounded-lg border border-border bg-muted px-3 py-2.5 text-sm font-mono focus:border-primary-400 focus:bg-background"
             />
             <datalist id="llm-text-model-options">
@@ -384,7 +381,7 @@ function LlmTab() {
                 ))}
             </datalist>
             <p className="text-xs text-muted-foreground">
-              用于意图识别、Agent 推理、费用分类、批量描述；留空时服务端会从视觉模型名自动推导
+              用于意图识别、Agent 推理、费用分类、批量描述；留空时使用环境变量或服务端默认路由
             </p>
           </div>
 

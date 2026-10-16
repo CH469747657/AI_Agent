@@ -102,6 +102,14 @@ class InvoiceService:
 
         # 2. 创建发票记录（receipt_type 为空时默认 vat_normal，后续 LLM 识别后修正）
         actual_receipt_type = receipt_type if receipt_type else ReceiptType.vat_normal.value
+        # 防御：LLM 可能误把文件格式（OFD/PDF）当票据种类填入 → 回落默认值，
+        # 后续 Combined VLM 看图重判类型，无损
+        if actual_receipt_type not in {t.value for t in ReceiptType}:
+            logger.warning(
+                "Invalid receipt_type %r (likely file format), falling back to vat_normal",
+                actual_receipt_type,
+            )
+            actual_receipt_type = ReceiptType.vat_normal.value
         mime_map = {
             "pdf": "application/pdf",
             "ofd": "application/ofd",

@@ -20,7 +20,11 @@ class UploadInvoiceParams(BaseModel):
     model_config = {"extra": "allow"}  # 允许额外字段（如 base64 附件）
     receipt_type: Optional[str] = Field(
         default="增值税普通发票",
-        description="发票类型：增值税普通发票/增值税专用发票/火车票/机票/收据/支付截图/交易流水单",
+        description=(
+            "票据种类（不是文件格式！）：增值税普通发票/增值税专用发票/火车票/机票/收据/"
+            "支付截图/交易流水单。不要填 OFD/PDF/JPG 等文件格式，文件格式由附件自动识别。"
+            "不确定时保持默认值即可，系统会看图自动判断"
+        ),
     )
     user_description: Optional[str] = Field(default="", description="费用用途描述")
 

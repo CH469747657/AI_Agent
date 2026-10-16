@@ -88,6 +88,13 @@ def _apply_settings_to_config(row: SystemSettings) -> None:
         except Exception as e:
             logger.warning("Failed to reset LLM NLU client: %s", e)
 
+        # 重置 AgentCore 单例，下次智能问数用新模型
+        try:
+            from app.dialog.agent_core import reset_agent_core
+            reset_agent_core()
+        except Exception as e:
+            logger.warning("Failed to reset AgentCore: %s", e)
+
 
 async def load_settings_from_db(db: AsyncSession) -> None:
     """启动时从数据库加载配置覆写到运行时 settings（LLM + 验真 + verify_enabled 开关）"""

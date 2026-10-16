@@ -384,7 +384,7 @@ function LlmTab() {
                 ))}
             </datalist>
             <p className="text-xs text-muted-foreground">
-              留空时服务端会从视觉模型名自动推导：qwen3-vl-plus → qwen-plus
+              用于意图识别、Agent 推理、费用分类、批量描述；留空时服务端会从视觉模型名自动推导
             </p>
           </div>
 

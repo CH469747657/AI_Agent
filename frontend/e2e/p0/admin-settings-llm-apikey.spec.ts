@@ -13,7 +13,7 @@
 import { test, expect } from "../fixtures";
 import { loginAsAdmin } from "../helpers/auth";
 
-const NEW_API_KEY = "sk-wNA8pfjFYRX9G2oDnxHNwZbUvXrlwbqB";
+const NEW_API_KEY = "sk-TEST-PLACEHOLDER-KEY-2";
 
 test.describe("Settings LLM API key 修改", () => {
   test("管理员改 API Key 保存生效", async ({ page, request }) => {
@@ -63,7 +63,7 @@ test.describe("Settings LLM API key 修改", () => {
     // 9. 通过 API 验证 DB 已更新（掩码前 4 后 4 应是新 key）
     const getResp = await request.get("/api/settings/llm", { headers });
     const getBody = await getResp.json();
-    expect(getBody.llm_api_key).toBe("sk-w...wbqB");
+    expect(getBody.llm_api_key).toBe("sk-TEST...KEY-2");
 
     // 10. 验证新 key 能调 LLM（通过对话端点测试 agent 是否工作）
     const empLoginResp = await request.post("/api/portal/auth/login", {

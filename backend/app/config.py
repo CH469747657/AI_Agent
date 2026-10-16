@@ -94,18 +94,33 @@ class Settings(BaseSettings):
         """根据任务类型获取对应模型名（分层模型路由）
 
         优先级：
-        1. 环境变量 LLM_<SHORT>_MODEL（如 LLM_NLU_MODEL）— 最高优先级，便于灰度切换
-        2. MODEL_ROUTING[task_type] — 默认路由表
-        3. 兜底：invoice_ocr 用 llm_model（Vision），其他用 text_model
+        1. 页面配置（settings.llm_model / llm_text_model，由管理页 DB 覆写）
+           - invoice_ocr 用 llm_model（视觉模型）
+           - 其他任务用 llm_text_model（文本模型），留空则跳过本层
+        2. 环境变量 LLM_<SHORT>_MODEL（如 LLM_NLU_MODEL）— 灰度切换
+        3. MODEL_ROUTING[task_type] — 默认路由表
+        4. 兜底：invoice_ocr 用 llm_model（Vision），其他用 text_model
         """
+        # 1. 页面配置（DB 覆写的 settings 字段）
+        if task_type == "invoice_ocr":
+            if self.llm_model.strip():
+                return self.llm_model.strip()
+        elif self.llm_text_model.strip():
+            return self.llm_text_model.strip()
+
+        # 2. 环境变量
         env_var = _TASK_ENV_MAP.get(task_type)
         if env_var:
             env_val = os.getenv(env_var, "").strip()
             if env_val:
                 return env_val
+
+        # 3. 默认路由表
         routing = MODEL_ROUTING.get(task_type)
         if routing:
             return routing
+
+        # 4. 兜底
         return self.llm_model if task_type == "invoice_ocr" else self.text_model
 
     class Config:

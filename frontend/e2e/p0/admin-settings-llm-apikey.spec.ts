@@ -29,7 +29,7 @@ test.describe("Settings LLM API key 修改", () => {
     // 设回旧 key（避免测试前已被改成新 key）
     await request.put("/api/settings/llm", {
       headers,
-      data: { api_key: "sk-Oe45AqZGyKbqFZq5QvbdtRUzm4Q0IXNK" },
+      data: { api_key: "sk-TEST-PLACEHOLDER-KEY" },
     });
 
     // 2. 浏览器登录管理员

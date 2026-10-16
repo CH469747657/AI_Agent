@@ -134,15 +134,17 @@ settings = Settings()
 
 # 任务类型 → 默认模型映射（可被环境变量 LLM_<SHORT>_MODEL 覆盖）
 # 适配自建网关 https://aigw.telecomjs.com/v1 的可用模型列表
-# - qwen3.7-plus：文本模型，适合 NLU/分类/叙述（2026-10 验证可用，qwen3-max 已下线）
+# - qwen-plus：文本模型，非推理模型（响应快 ~1s）。qwen3.7-*/qwen3.8-max 均为推理模型，
+#   简单任务也深度思考 10-30s，不适合 NLU/分类/校验类调用（2026-10 实测）
 # - vlt_mm_31_ultra：视觉模型，适合 OCR（vlt_mm_31_vis 已下线）
+# 注：管理页/DB 配置的 llm_text_model 优先于此表（get_model_for_task 第一层）
 MODEL_ROUTING: dict[str, str] = {
-    "nlu_classify":    "qwen3.7-plus",
-    "fee_classify":    "qwen3.7-plus",
-    "project_extract": "qwen3.7-plus",
+    "nlu_classify":    "qwen-plus",
+    "fee_classify":    "qwen-plus",
+    "project_extract": "qwen-plus",
     "invoice_ocr":     "vlt_mm_31_ultra",
-    "insight_narrate": "qwen3.7-plus",
-    "batch_describe":  "qwen3.7-plus",
+    "insight_narrate": "qwen-plus",
+    "batch_describe":  "qwen-plus",
 }
 
 # 任务类型 → 环境变量名映射（用于灰度覆盖 MODEL_ROUTING）

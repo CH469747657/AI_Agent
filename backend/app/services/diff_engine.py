@@ -522,6 +522,23 @@ def get_best_value(field: str, ocr_val: Any, llm_val: Any) -> Any:
     return ocr_val or llm_val
 
 
+_LABEL_WORDS = {
+    "购", "销", "购买方信息", "销售方信息", "统一社会信用代码", "纳税人识别号",
+    "名称", "项目名称", "开票日期", "发票号码", "备注", "开票人",
+}
+
+
+def _looks_like_entity_name(val: str) -> bool:
+    """名称值合理性：须含中文（公司名），过滤 OFD 模板文本流错位抓到的
+    纯数字（票号）、标签词（'购'、'购买方信息'，含带空格变体）等非名称值"""
+    if not val or len(val) < 2:
+        return False
+    collapsed = re.sub(r"\s+", "", val)
+    if collapsed in _LABEL_WORDS:
+        return False
+    return any("一" <= ch <= "鿿" for ch in val)
+
+
 def _extract_field_from_raw_text(field: str, raw_text: str) -> str | None:
     """从 OCR/LLM 原始文本中正则提取指定字段值
 
@@ -549,16 +566,19 @@ def _extract_field_from_raw_text(field: str, raw_text: str) -> str | None:
             if m:
                 # 可能有多个"名称"，取销售方的（第二个）
                 names = re.findall(r"名称[：:]\s*([^\s]+?)(?:\s|统一社会|$)", flat)
-                if len(names) >= 2:
-                    return names[1].strip()
-        if m:
+                # OFD 模板文本流标签值错位：过滤不像公司名的值（纯数字/单字）
+                plausible = [n.strip() for n in names if _looks_like_entity_name(n)]
+                if len(plausible) >= 2:
+                    return plausible[1]
+        if m and _looks_like_entity_name(m.group(1)):
             return m.group(1).strip()
 
     elif field == "buyer_name":
         # 模式: 购买方信息 ... 名称：xxx（在"统一社会信用代码"之前）
         names = re.findall(r"名称[：:]\s*([^\s]+?)(?:\s|统一社会|$)", flat)
-        if len(names) >= 1:
-            return names[0].strip()
+        plausible = [n.strip() for n in names if _looks_like_entity_name(n)]
+        if plausible:
+            return plausible[0]
 
     elif field == "seller_tax_id":
         # 模式: 统一社会信用代码/纳税人识别号:91xxxxxxxx（在销售方段）

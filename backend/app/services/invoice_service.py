@@ -164,7 +164,9 @@ class InvoiceService:
                 return invoice
 
             # 3. 字段提取：优先用合并 VLM 的结果，否则走双源（OCR+LLM）
-            if vlm_fields:
+            # any() 守卫：OFD 电子发票无票面截图，VLM 拿到的是印章图，
+            # 返回全 null 的非空 dict —— 视为无效，回落双源（OFD 走 ofd_parser 矢量解析）
+            if vlm_fields and any(vlm_fields.values()):
                 llm_result = {"extracted_fields": vlm_fields}
                 ocr_result = None
             else:

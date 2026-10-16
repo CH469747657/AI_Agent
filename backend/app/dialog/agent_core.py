@@ -75,14 +75,21 @@ class AgentCore:
     TIMEOUT_SECONDS = 30.0
 
     def __init__(self):
-        self._client = None
-        self._model = None
-        self._initialized = False
+        self._clients: dict[str, Any] = {}  # model → OpenAI client（按模型缓存，支持热更新）
         self._role_gate = RoleGate()
 
+    def _resolve_model(self) -> str:
+        """解析当前应使用的模型名（每次调用都读，支持页面配置热更新）"""
+        from app.config import settings
+        return settings.get_model_for_task("insight_narrate")
+
     def _ensure_client(self):
-        """延迟初始化 LLM 客户端"""
-        if self._initialized:
+        """确保当前模型的 LLM 客户端存在（按 model 缓存，仿照 LlmNlu._ensure_client）
+
+        页面改模型后下次调用自动用新模型新建 client；旧 client 保留复用不销毁。
+        """
+        model = self._resolve_model()
+        if model in self._clients:
             return
         try:
             from app.config import settings, LLM_PROVIDERS
@@ -94,19 +101,13 @@ class AgentCore:
                 provider_info = LLM_PROVIDERS.get(provider, {})
                 base_url = provider_info.get("base_url", "")
 
-            # Agent mode 用 narrate 模型（推理能力强）
-            model = settings.get_model_for_task("insight_narrate")
-
-            self._client = OpenAI(
+            self._clients[model] = OpenAI(
                 api_key=settings.llm_api_key,
                 base_url=base_url,
             )
-            self._model = model
-            self._initialized = True
-            logger.info("AgentCore initialized: model=%s", model)
+            logger.info("AgentCore client created for model=%s", model)
         except Exception as e:
-            logger.warning("Failed to init AgentCore client: %s", e)
-            self._initialized = True
+            logger.warning("Failed to init AgentCore client for %s: %s", model, e)
 
     async def run(
         self,
@@ -127,7 +128,8 @@ class AgentCore:
             AgentResponse
         """
         self._ensure_client()
-        if not self._client:
+        model = self._resolve_model()
+        if model not in self._clients:
             return AgentResponse(
                 text="Agent 模式不可用：LLM 客户端未初始化",
                 error="client_unavailable",
@@ -161,7 +163,7 @@ class AgentCore:
 
             try:
                 llm_result = await asyncio.wait_for(
-                    self._call_llm(messages, tool_schemas),
+                    self._call_llm(model, messages, tool_schemas),
                     timeout=self.TIMEOUT_SECONDS,
                 )
             except asyncio.TimeoutError:
@@ -553,12 +555,12 @@ class AgentCore:
 """
         return prompt
 
-    async def _call_llm(self, messages: list[dict], tools: list[dict]) -> dict:
+    async def _call_llm(self, model: str, messages: list[dict], tools: list[dict]) -> dict:
         """调用 LLM（带 tools）"""
         try:
             resp = await asyncio.to_thread(
-                self._client.chat.completions.create,
-                model=self._model,
+                self._clients[model].chat.completions.create,
+                model=model,
                 messages=messages,
                 tools=tools,
                 tool_choice="auto",
@@ -584,7 +586,7 @@ class AgentCore:
                 "tool_calls": tool_calls,
             }
         except Exception as e:
-            logger.warning("AgentCore _call_llm error: %s", e)
+            logger.error("AgentCore _call_llm error (model=%s): %s", model, e)
             return {}
 
 

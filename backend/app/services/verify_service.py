@@ -72,26 +72,48 @@ class VerifyResult:
 
 
 class VerifyService:
-    """在线发票验真服务 — 支持 阿里云(主) / 百度(备用) 双通道"""
+    """在线发票验真服务 — 支持 阿里云(主) / 百度(备用) 双通道
 
-    def __init__(self):
-        self.provider = settings.verify_provider.lower()
-        self.api_key = settings.verify_api_key
-        self.secret_key = settings.verify_secret_key
-        self.aliyun_appcode = settings.aliyun_verify_appcode
+    所有凭据/通道属性实时读 settings（管理页 PUT /api/settings/verify 后
+    立即生效，无需重启后端），与 enabled 开关行为一致。
+    """
 
-        # 根据配置判断各通道可用性
-        self.baidu_enabled = bool(self.api_key and self.secret_key)
-        self.aliyun_enabled = bool(self.aliyun_appcode)
+    @property
+    def provider(self) -> str:
+        return settings.verify_provider.lower()
 
-        # 整体 enabled: 主通道可用即为 true
+    @property
+    def api_key(self) -> str:
+        return settings.verify_api_key
+
+    @property
+    def secret_key(self) -> str:
+        return settings.verify_secret_key
+
+    @property
+    def aliyun_appcode(self) -> str:
+        return settings.aliyun_verify_appcode
+
+    @property
+    def aliyun_appsecret(self) -> str:
+        return settings.aliyun_verify_appsecret
+
+    @property
+    def baidu_enabled(self) -> bool:
+        return bool(self.api_key and self.secret_key)
+
+    @property
+    def aliyun_enabled(self) -> bool:
+        return bool(self.aliyun_appcode)
+
+    @property
+    def provider_enabled(self) -> bool:
         if self.provider == "aliyun":
-            self.provider_enabled = self.aliyun_enabled
-        elif self.provider == "baidu":
-            self.provider_enabled = self.baidu_enabled
-        else:
-            # 未知 provider，尝试任一通道
-            self.provider_enabled = self.aliyun_enabled or self.baidu_enabled
+            return self.aliyun_enabled
+        if self.provider == "baidu":
+            return self.baidu_enabled
+        # 未知 provider，尝试任一通道
+        return self.aliyun_enabled or self.baidu_enabled
 
     @property
     def enabled(self) -> bool:
@@ -485,8 +507,13 @@ class VerifyService:
 
     def _invalidate_token(self):
         """清除 token 缓存（token 过期时调用）"""
-        _token_cache["token"] = None
-        _token_cache["expires_at"] = 0.0
+        _invalidate_token_cache()
+
+
+def _invalidate_token_cache():
+    """模块级 token 缓存清除（凭据变更/单例重置时调用）"""
+    _token_cache["token"] = None
+    _token_cache["expires_at"] = 0.0
 
     async def _verify_baidu(self, invoice_data: dict) -> VerifyResult:
         """百度智能云在线验真（备用通道）
@@ -690,3 +717,11 @@ def get_verify_service() -> VerifyService:
     if _verify_service is None:
         _verify_service = VerifyService()
     return _verify_service
+
+
+def reset_verify_service() -> None:
+    """重置单例（配置热更新/测试用）"""
+    global _verify_service
+    _verify_service = None
+    # 凭据变更后旧 token 缓存失效（百度 access_token 绑定凭据）
+    _invalidate_token_cache()

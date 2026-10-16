@@ -342,6 +342,13 @@ async def update_verify_settings(
     # 热更新运行时配置
     _apply_verify_settings_to_config(row)
 
+    # 重置验真服务单例（属性已实时读 settings，此处为清百度 token 缓存——旧凭据的 token 不再复用）
+    try:
+        from app.services.verify_service import reset_verify_service
+        reset_verify_service()
+    except Exception as e:
+        logger.warning("Failed to reset verify service: %s", e)
+
     return VerifySettingsRead(
         verify_provider=row.verify_provider,
         verify_api_key=_mask_api_key(row.verify_api_key),
